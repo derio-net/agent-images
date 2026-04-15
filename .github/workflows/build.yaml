@@ -47,6 +47,11 @@ jobs:
             context: kali
             build_args: |
               AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
+          - name: vk-local
+            context: vk-local
+            build_args: |
+              AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
+              VK_FORK_SHA=${{ github.event.client_payload.vk_fork_sha || 'latest' }}
     permissions:
       contents: read
       packages: write
