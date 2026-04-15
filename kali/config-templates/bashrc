@@ -1,0 +1,15 @@
+# .bashrc — secure-agent-pod environment
+# Seeded to ~/.bashrc on first boot. Secrets injected via K8s envFrom.
+
+# Extract env vars from PID 1 (K8s injects into entrypoint, not SSH sessions)
+_env_from_pid1() { cat /proc/1/environ 2>/dev/null | tr '\0' '\n' | grep "^${1}=" | cut -d= -f2-; }
+
+export GITHUB_TOKEN="${GITHUB_TOKEN:-$(_env_from_pid1 GITHUB_TOKEN)}"
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_env_from_pid1 TELEGRAM_BOT_TOKEN)}"
+export TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_env_from_pid1 TELEGRAM_CHAT_ID)}"
+export GRAFANA_API_KEY="${GRAFANA_API_KEY:-$(_env_from_pid1 GRAFANA_API_KEY)}"
+export GRAFANA_API_EDITOR_KEY="${GRAFANA_API_EDITOR_KEY:-$(_env_from_pid1 GRAFANA_API_EDITOR_KEY)}"
+
+export WILLIKINS_REPOS="/home/claude/repos/willikins:willikins"
+export PUSHGATEWAY_URL="http://pushgateway.monitoring.svc.cluster.local:9091"
+export PATH="$HOME/.local/bin:$PATH"

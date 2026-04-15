@@ -1,0 +1,29 @@
+# crontab.txt — Secure agent pod scheduled tasks
+# Seeded to ~/.crontab on first boot. Scripts at /opt/scripts/ (image-baked, immutable).
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin:/home/claude/.local/bin
+PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
+
+# Session manager — ensure remote-control sessions are alive (every 5 min)
+*/5 * * * * /opt/scripts/session-manager.sh
+
+# Self-update — pull latest Willikins config (daily 04:00 UTC / 06:00 Berlin)
+0 4 * * * cd /home/claude/repos/willikins && git pull --ff-only >> /home/claude/.willikins-agent/update.log 2>&1
+
+# Claude Code update (weekly Sunday 04:30 UTC)
+30 4 * * 0 claude update --yes >> /home/claude/.willikins-agent/update.log 2>&1
+
+# Exercise reminders (Berlin work hours — UTC+2)
+# Ioannis's business days are Fri-Mon (cron: 5=Fri, 6=Sat, 0=Sun, 1=Mon)
+# After each run, push next-expected timestamp so Grafana alert is schedule-aware.
+0 5 * * 0,1,5,6 /opt/scripts/exercise-cron.sh desk; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
+0 7 * * 0,1,5,6 /opt/scripts/exercise-cron.sh desk; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
+0 10 * * 0,1,5,6 /opt/scripts/exercise-cron.sh standing; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
+0 12 * * 0,1,5,6 /opt/scripts/exercise-cron.sh desk; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
+0 14 * * 0,1,5,6 /opt/scripts/exercise-cron.sh standing; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
+
+# VK Issue Bridge — sync vk-ready GitHub Issues to VK workspaces (every 2 min)
+*/2 * * * * /opt/scripts/vk-issue-bridge.py >> /home/claude/.willikins-agent/vk-bridge.log 2>&1
+
+# Audit digest — daily summary of all agent activity (21:00 UTC / 23:00 Berlin)
+0 21 * * * /opt/scripts/audit-digest.sh

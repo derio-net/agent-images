@@ -1,0 +1,82 @@
+name: Build agent images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [vibe-kanban-build-updated]
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: derio-net
+
+jobs:
+  build-base:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: base
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/agent-base:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/agent-base:latest
+          cache-from: type=gha,scope=agent-base
+          cache-to: type=gha,scope=agent-base,mode=max
+
+  build-children:
+    needs: build-base
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - name: secure-agent-kali
+            context: kali
+            build_args: |
+              AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }}:latest
+          build-args: ${{ matrix.image.build_args }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+
+  dispatch-frank:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.DISPATCH_PAT }}
+        run: |
+          gh api repos/derio-net/frank/dispatches \
+            -f event_type=agent-images-bumped \
+            -f client_payload[agent_images_sha]=$GITHUB_SHA

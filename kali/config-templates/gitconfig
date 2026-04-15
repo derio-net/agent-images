@@ -1,0 +1,5 @@
+[user]
+	email = clawdia-ai-assistant@gmail.com
+	name = Clawdia
+[credential]
+	helper = "!f() { echo \"username=clawdia-ai-assistant\"; echo \"password=$(tr '\\0' '\\n' < /proc/1/environ | sed -n 's/^GITHUB_TOKEN=//p')\"; }; f"
