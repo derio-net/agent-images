@@ -71,9 +71,6 @@ fi
 # ── Start supercronic (non-root cron) ──
 supercronic "$HOME/.crontab" &
 
-# ── Start VibeKanban in local mode (SQLite, port 8081) ──
-vibe-kanban &
-
 # Trap SIGTERM/SIGINT so K8s pod termination runs shutdown.sh before we exit.
 # shutdown.sh signals each claude remote-control PID, giving the CLI's own
 # bridge:shutdown handler a chance to deregister the environment in
@@ -91,7 +88,7 @@ shutdown_handler() {
 }
 trap shutdown_handler TERM INT
 
-echo "[agent] secure-agent-kali ready (sshd on :2222, supercronic active, vibe-kanban on :8081)"
+echo "[agent] secure-agent-kali ready (sshd on :2222, supercronic active — vibe-kanban served by vk-local sidecar on :8081)"
 
 # Wait for any child to exit — if sshd or supercronic dies, pod restarts.
 # `wait -n` returns early when a trap fires, so shutdown_handler runs on SIGTERM.
