@@ -1,6 +1,8 @@
 """Unit tests for vk-issue-bridge — parser + helpers, no I/O."""
 import importlib.util
+import json as _json
 import os
+import subprocess as _subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -246,7 +248,7 @@ def test_sync_creates_card_via_mcp(mock_run):
     client = _make_mock_client()
     mock_run.return_value = MagicMock(returncode=0)
 
-    result = sync_issue(issue, parsed, client)
+    result = sync_issue(issue, parsed, [], client)
 
     assert result is True
     # Card created via MCP
@@ -277,7 +279,7 @@ def test_sync_returns_true_even_when_label_fails(mock_run):
 
     mock_run.side_effect = run_side_effect
 
-    result = sync_issue(issue, parsed, client)
+    result = sync_issue(issue, parsed, [], client)
 
     # Must return True — workspace IS running regardless of label failure
     assert result is True
@@ -744,6 +746,152 @@ class TestParseDependenciesFailLoud:
         i = GhIssue(number=1, title="t", body="b",
                      html_url="u", repo="o/r")
         assert i.labels == ()
+
+
+# --- check_blockers fail-loud tests (Phase 1) ---
+
+
+class TestCheckBlockersFailLoud:
+    def test_check_blockers_raises_on_gh_error(self, monkeypatch):
+        def fake_run(*a, **kw):
+            raise _subprocess.CalledProcessError(1, "gh", stderr="auth required")
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+        with pytest.raises(RuntimeError, match="unreachable"):
+            mod.check_blockers("org/repo", [(None, 42)])
+
+    def test_check_blockers_returns_open_list_on_success(self, monkeypatch):
+        class _R:
+            stdout = _json.dumps({"state": "OPEN"})
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: _R())
+        assert mod.check_blockers("org/repo", [(None, 42)]) == ["#42"]
+
+    def test_check_blockers_skips_closed(self, monkeypatch):
+        class _R:
+            stdout = _json.dumps({"state": "CLOSED"})
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: _R())
+        assert mod.check_blockers("org/repo", [(None, 42)]) == []
+
+    def test_check_blockers_raises_on_non_json_response(self, monkeypatch):
+        class _R:
+            stdout = "not json at all"
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: _R())
+        with pytest.raises(RuntimeError, match="non-JSON"):
+            mod.check_blockers("org/repo", [(None, 42)])
+
+
+# --- check_blockers integration test: RuntimeError in main() ---
+
+BODY_WITH_SINGLE_DEP = """## Instruction
+
+Use superpowers:executing-plans to implement this task.
+
+## Workspace
+
+Repos: content-factory
+
+## Dependencies
+
+- Blocked by #8
+
+---
+"""
+
+
+@patch.object(mod, "push_heartbeat")
+@patch.object(mod, "gh_list_ready_issues")
+def test_main_counts_blocker_check_failure(mock_issues, mock_hb):
+    """When check_blockers raises RuntimeError, main() increments failed
+    and does not call sync_issue."""
+    mock_client = _make_mock_client()
+    mock_client.list_workspaces.return_value = {"workspaces": []}
+    mock_client.list_issues.return_value = {"issues": []}
+
+    issue = _make_issue(number=20, title="Task 20")
+    issue.body = BODY_WITH_SINGLE_DEP
+    mock_issues.return_value = [issue]
+
+    with patch.object(mod, "check_blockers", side_effect=RuntimeError("gh auth broke")), \
+         patch.object(mod, "sync_issue") as mock_sync, \
+         patch.object(mod, "VkMcpClient", return_value=mock_client):
+        orig = mod.MAX_CONCURRENT
+        mod.MAX_CONCURRENT = 3
+        try:
+            mod.main()
+        finally:
+            mod.MAX_CONCURRENT = orig
+
+    # sync_issue must NOT be called — issue was skipped due to blocker check failure
+    mock_sync.assert_not_called()
+
+
+# --- Blocker preamble in build_prompt tests (Phase 2) ---
+
+build_prompt = mod.build_prompt
+
+
+class TestBuildPromptBlockerPreamble:
+    def _issue(self):
+        return GhIssue(
+            number=77, title="Phase 2", body="body",
+            html_url="https://gh/org/r/issues/77", repo="org/r",
+            labels=(),
+        )
+
+    def _parsed(self):
+        return ParsedBody(skill="vk-execute", repos=["r"], raw_instruction="x")
+
+    def test_no_preamble_when_no_deps(self):
+        p = build_prompt(self._issue(), self._parsed(), deps=[])
+        assert "BEFORE YOU BEGIN" not in p
+
+    def test_preamble_when_deps_present(self):
+        deps = [(None, 42), ("other/repo", 7)]
+        p = build_prompt(self._issue(), self._parsed(), deps=deps)
+        assert "BEFORE YOU BEGIN" in p
+        assert "#42" in p
+        assert "other/repo#7" in p
+        assert "STOP" in p
+        assert "do not duplicate" in p.lower()
+
+
+class TestDiscoveryWarningFiltering:
+    """Phase 1: 404s from local-only mirrors should not surface as warnings."""
+
+    def test_gh_404_is_info_not_warn(self, monkeypatch, capsys):
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["derio-profile"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh",
+                stderr="HTTP 404: Not Found (https://api.github.com/repos/derio-net/derio-profile/issues)",
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" not in combined
+        assert "[info]" in combined
+        assert "derio-profile" in combined
+
+    def test_gh_generic_error_still_warns(self, monkeypatch, capsys):
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["willikins"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh", stderr="HTTP 500: Internal Server Error",
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" in combined
+        assert "willikins" in combined
 
 
 if __name__ == "__main__":

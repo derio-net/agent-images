@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get dist-upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
-# ── sshd + Kali tooling ──
+# ── sshd + Kali tooling + logrotate (for rotate-logs.sh) ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      openssh-server kali-tools-top10 nmap netcat-traditional \
+      openssh-server kali-tools-top10 nmap netcat-traditional logrotate \
     && mkdir -p /run/sshd /var/run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
