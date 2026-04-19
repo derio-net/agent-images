@@ -148,7 +148,15 @@ def handle_posttooluse(data: dict) -> None:
         return
 
     command = data.get("tool_input", {}).get("command", "")
-    exit_code = data.get("tool_output", {}).get("exit_code", None)
+    # Prefer current key (`tool_response`) over legacy (`tool_output`); treat
+    # missing (None) and empty-but-present ({}) as different: the first
+    # non-None wins, so an explicit `tool_response: {}` is respected and
+    # we don't fall through to legacy keys.
+    tool_result = next(
+        (x for x in (data.get("tool_response"), data.get("tool_output")) if x is not None),
+        {},
+    )
+    exit_code = tool_result.get("exit_code", None)
     session_id = data.get("session_id", "unknown")
 
     entry = {
@@ -202,7 +210,7 @@ def main() -> None:
         sys.exit(0)
 
     data = json.loads(raw)
-    hook_type = data.get("hook_type", "")
+    hook_type = data.get("hook_event_name") or data.get("hook_type", "")
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {})
 

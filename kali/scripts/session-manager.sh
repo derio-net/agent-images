@@ -11,9 +11,16 @@ set -euo pipefail
 
 LOGFILE="/home/claude/.willikins-agent/session-manager.log"
 PIDDIR="/home/claude/.willikins-agent/pids"
+SHUTDOWN_MARKER="/tmp/willikins-shutting-down"
 mkdir -p "$(dirname "$LOGFILE")" "$PIDDIR"
 
 log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOGFILE"; }
+
+# Bail out when entrypoint.sh is draining the pod. Prevents supercronic's
+# 5-min tick from respawning claude after shutdown.sh has killed it.
+if [[ -f "$SHUTDOWN_MARKER" ]]; then
+  log "Shutdown in progress — skipping session check"; exit 0
+fi
 
 if [[ -z "${WILLIKINS_REPOS:-}" ]]; then
   log "ERROR: WILLIKINS_REPOS not set"; exit 1
@@ -40,7 +47,11 @@ for ((i=0; i<${#ENTRIES[@]}; i+=2)); do
 
   log "Starting session '$SESSION_NAME' in $REPO_PATH"
   cd "$REPO_PATH"
-  nohup bash -c "echo y | claude remote-control --name '$SESSION_NAME'" \
+  # `exec` replaces the bash wrapper in place, so $! below is claude's own
+  # PID — required for SIGTERM to reach the bridge:shutdown handler that
+  # calls DELETE /v1/environments/bridge/<env_id>. Using a process-
+  # substitution stdin avoids a pipeline (which would again fork).
+  nohup bash -c "exec claude remote-control --name '$SESSION_NAME' < <(echo y)" \
     >> "/home/claude/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
   echo $! > "$PIDFILE"
   log "Session '$SESSION_NAME' started (PID $!)"

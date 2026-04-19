@@ -210,10 +210,9 @@ def parse_dependencies(
 def check_blockers(repo: str, deps: list[tuple[str | None, int]]) -> list[str]:
     """Return list of open blockers as human-readable strings.
 
-    For each (dep_repo, num) tuple, check the Issue state. Same-repo deps
-    (dep_repo is None) are checked in ``repo``; cross-repo deps use their
-    explicit repo. On any error (deleted issue, API failure), fail open —
-    omit that dep from blockers.
+    Fail-loud: any gh error or timeout raises RuntimeError. The previous
+    fail-open behavior silently bypassed dependency gating when gh was
+    misconfigured, which led to duplicate-work incidents.
     """
     open_blockers: list[str] = []
     for dep_repo, num in deps:
@@ -225,12 +224,21 @@ def check_blockers(repo: str, deps: list[tuple[str | None, int]]) -> list[str]:
                  "--repo", check_repo, "--json", "state"],
                 check=True, capture_output=True, text=True, timeout=10,
             ).stdout
-            state = json.loads(out).get("state", "").upper()
-            if state != "CLOSED":
-                open_blockers.append(display)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-                json.JSONDecodeError):
-            log(f"  ! could not check blocker {display} in {check_repo} — treating as resolved")
+                FileNotFoundError) as exc:
+            raise RuntimeError(
+                f"Blocker {display} in {check_repo} unreachable — cannot gate "
+                f"safely. Fix: check gh auth, network, or that the Issue exists. "
+                f"Underlying error: {exc}"
+            ) from exc
+        try:
+            state = json.loads(out).get("state", "").upper()
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Blocker {display}: gh returned non-JSON. Output: {out[:200]!r}"
+            ) from exc
+        if state != "CLOSED":
+            open_blockers.append(display)
     return open_blockers
 
 
@@ -371,7 +379,12 @@ def gh_list_ready_issues() -> list[GhIssue]:
                 check=True, capture_output=True, text=True,
             ).stdout
         except subprocess.CalledProcessError as e:
-            log(f"[warn] gh issue list failed for {repo}: {e.stderr}")
+            stderr = (e.stderr or "").strip()
+            if re.search(r"\bHTTP 404\b", stderr) or "Could not resolve" in stderr:
+                first_line = stderr.splitlines()[0] if stderr else ""
+                log(f"[info] gh list skipped — {repo}: no GitHub remote ({first_line})")
+            else:
+                log(f"[warn] gh issue list failed for {repo}: {stderr}")
             continue
 
         for raw in json.loads(out):
@@ -391,9 +404,33 @@ def gh_list_ready_issues() -> list[GhIssue]:
 
 # --- Sync logic ---
 
-def build_prompt(issue: GhIssue, parsed: ParsedBody) -> str:
+def build_prompt(
+    issue: GhIssue,
+    parsed: ParsedBody,
+    deps: list[tuple[str | None, int]] | None = None,
+) -> str:
+    preamble = ""
+    if deps:
+        dep_refs = ", ".join(
+            f"{r}#{n}" if r else f"#{n}" for r, n in deps
+        )
+        preamble = (
+            f"BEFORE YOU BEGIN: This Issue declares dependencies: {dep_refs}.\n"
+            f"Verify each is CLOSED via "
+            f"`gh issue view <n> --repo <owner/repo> --json state`.\n"
+            f"If any is OPEN:\n"
+            f"  - STOP. Do not start work.\n"
+            f"  - Do not duplicate the upstream work.\n"
+            f"  - Do not start 'parts that don't depend on it'.\n"
+            f"  - Exit with message: 'Blocked on <open_blocker>, not starting.'\n"
+            f"The bridge should have deferred this workspace if a blocker were "
+            f"open — if you see this and blockers are open, report it to the "
+            f"operator.\n\n"
+            f"---\n\n"
+        )
     return (
-        f"You are a VK-spawned agent working on GitHub Issue gh#{issue.number}:\n"
+        preamble
+        + f"You are a VK-spawned agent working on GitHub Issue gh#{issue.number}:\n"
         f"{issue.title}\n\n"
         f"The Issue is at: {issue.html_url}\n"
         f"Repo: {parsed.repos[0]}\n\n"
@@ -404,7 +441,12 @@ def build_prompt(issue: GhIssue, parsed: ParsedBody) -> str:
     )
 
 
-def sync_issue(issue: GhIssue, parsed: ParsedBody, client: VkMcpClient) -> bool:
+def sync_issue(
+    issue: GhIssue,
+    parsed: ParsedBody,
+    deps: list[tuple[str | None, int]],
+    client: VkMcpClient,
+) -> bool:
     """Create VK card + workspace for one GitHub Issue. Returns True on success."""
     repo_name = parsed.repos[0]
 
@@ -468,7 +510,7 @@ def sync_issue(issue: GhIssue, parsed: ParsedBody, client: VkMcpClient) -> bool:
             name=f"{simple_id} -> gh#{issue.number}",
             executor="CLAUDE_CODE",
             repositories=[{"repo_id": repo_uuid, "branch": "main"}],
-            prompt=build_prompt(issue, parsed),
+            prompt=build_prompt(issue, parsed, deps=deps),
             issue_id=card_id,
         )
     except VkMcpError as e:
@@ -575,7 +617,13 @@ def main() -> int:
 
             # Dependency gating: skip if blockers are still open
             if deps:
-                open_blockers = check_blockers(i.repo, deps)
+                try:
+                    open_blockers = check_blockers(i.repo, deps)
+                except RuntimeError as exc:
+                    log(f"  x {i.repo}#{i.number}: BLOCKER CHECK FAILED — {exc}")
+                    push_failure_metric(str(i.number), "blocker_check_failed")
+                    failed += 1
+                    continue
                 if open_blockers:
                     blocker_str = ", ".join(open_blockers)
                     log(f"  p {i.repo}#{i.number}: blocked by {blocker_str}")
@@ -609,7 +657,7 @@ def main() -> int:
                 deferred += 1
                 continue
 
-            if sync_issue(i, parsed, client):
+            if sync_issue(i, parsed, deps, client):
                 synced += 1
                 slots -= 1
             else:

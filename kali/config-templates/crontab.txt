@@ -25,5 +25,8 @@ PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
 # VK Issue Bridge — sync vk-ready GitHub Issues to VK workspaces (every 2 min)
 */2 * * * * /opt/scripts/vk-issue-bridge.py >> /home/claude/.willikins-agent/vk-bridge.log 2>&1
 
+# Log rotation (hourly)
+7 * * * * /opt/scripts/rotate-logs.sh >> /home/claude/.willikins-agent/logrotate.log 2>&1
+
 # Audit digest — daily summary of all agent activity (21:00 UTC / 23:00 Berlin)
 0 21 * * * /opt/scripts/audit-digest.sh

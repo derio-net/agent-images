@@ -10,7 +10,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /opt/scripts/guardrails-hook.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/scripts/guardrails-hook.py"
           }
         ]
       }
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /opt/scripts/guardrails-hook.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/scripts/guardrails-hook.py"
           }
         ]
       }
