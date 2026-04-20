@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Not Started; K8s preStop deployment change tracked in `derio-net/frank#108`
+**Status:** Not Started
 
 **Goal:** Fix the reliability and observability issues in the Willikins persistent agent surfaced by the 2026-04-18 triage: phantom sessions accumulating in claude.ai, silently-broken audit pipeline, unrotated 332 MB session log, and vk-bridge warning spam.
 
@@ -23,7 +23,7 @@
 **Files:**
 - Create: `docs/findings/2026-04-18-remote-control-shutdown.md`
 
-- [ ] **Step 1: Survey `claude` CLI surface**
+- [x] **Step 1: Survey `claude` CLI surface**
 
 ```bash
 claude --version 2>&1
@@ -33,7 +33,7 @@ claude remote-control --help 2>&1
 
 Capture output verbatim. Look specifically for subcommands named `list`, `close`, `disconnect`, `stop`, `rm`, `logout`, or flags like `--session-id`, `--env-id`.
 
-- [ ] **Step 2: Inspect Claude state dir for env/session bookkeeping**
+- [x] **Step 2: Inspect Claude state dir for env/session bookkeeping**
 
 ```bash
 ls -la ~/.claude/ 2>&1
@@ -42,7 +42,7 @@ find ~/.claude -type f \( -name '*.json' -o -name '*.jsonl' \) 2>&1 | head -30
 
 If state files mention `env_`, `session_`, or `remote_control`, `jq` the relevant ones to understand the schema. Do not modify anything — read-only inspection.
 
-- [ ] **Step 3: Probe for a server-side disconnect endpoint**
+- [x] **Step 3: Probe for a server-side disconnect endpoint**
 
 Check whether Claude Code's HTTP client (node bundle) exposes a disconnect RPC. Grep the installed bundle:
 
@@ -57,7 +57,7 @@ grep -l "remote[-_]control" "$(dirname "$CLAUDE_BIN")/../lib/node_modules" -r 2>
 
 Grep any hits for URL patterns like `/api/remote_control`, `disconnect`, `close_environment`. Do not call any endpoint — this is reconnaissance only.
 
-- [ ] **Step 4: Test SIGTERM/SIGINT behavior in a sandbox**
+- [x] **Step 4: Test SIGTERM/SIGINT behavior in a sandbox**
 
 On the pod (not in production), start a short-lived remote-control session and observe what signals do:
 
@@ -80,7 +80,7 @@ Capture: does SIGTERM reach the child? Does it write any "disconnecting" log lin
 
 Repeat with SIGINT.
 
-- [ ] **Step 5: Write findings doc and commit**
+- [x] **Step 5: Write findings doc and commit**
 
 Create `docs/findings/2026-04-18-remote-control-shutdown.md` with four sections:
 
@@ -130,14 +130,14 @@ Phase 1 implementer reads this file before starting.
 **Files:**
 - Modify: `tests/test_guardrails_hook.py` (create if missing)
 
-- [ ] **Step 1: Confirm test layout**
+- [x] **Step 1: Confirm test layout**
 
 ```bash
 ls tests/test_guardrails_hook.py 2>&1 || echo "missing — will create"
 python -m pytest --version 2>&1
 ```
 
-- [ ] **Step 2: Write failing test for PostToolUse Bash audit write**
+- [x] **Step 2: Write failing test for PostToolUse Bash audit write**
 
 Create or extend `tests/test_guardrails_hook.py`:
 
@@ -225,7 +225,7 @@ Expected: `test_posttooluse_bash_writes_audit_line` FAILS because the hook reads
 **Files:**
 - Modify: `scripts/guardrails-hook.py`
 
-- [ ] **Step 1: Inspect current payload key usage**
+- [x] **Step 1: Inspect current payload key usage**
 
 ```bash
 grep -n 'hook_type\|hook_event_name' scripts/guardrails-hook.py
@@ -233,7 +233,7 @@ grep -n 'hook_type\|hook_event_name' scripts/guardrails-hook.py
 
 Expected: `hook_type` used in `main()` and nowhere does the hook accept `hook_event_name`.
 
-- [ ] **Step 2: Accept both keys, preferring the current one**
+- [x] **Step 2: Accept both keys, preferring the current one**
 
 In `scripts/guardrails-hook.py` `main()`, replace:
 
@@ -260,7 +260,7 @@ to:
     exit_code = tool_result.get("exit_code", None)
 ```
 
-- [ ] **Step 3: Re-run tests**
+- [x] **Step 3: Re-run tests**
 
 ```bash
 python -m pytest tests/test_guardrails_hook.py -x 2>&1 | tail -10
@@ -268,7 +268,7 @@ python -m pytest tests/test_guardrails_hook.py -x 2>&1 | tail -10
 
 Expected: both tests pass.
 
-- [ ] **Step 4: Smoke check against a real payload example**
+- [x] **Step 4: Smoke check against a real payload example**
 
 Capture (or reference) a real Claude Code hook payload from `session-willikins.log` if available; otherwise synthesize one matching the current documented schema. Confirm `test_posttooluse_bash_writes_audit_line` covers the current wire format.
 
@@ -279,7 +279,7 @@ Capture (or reference) a real Claude Code hook payload from `session-willikins.l
 - Create: `scripts/rotate-logs.sh`
 - Modify: `crontab.txt`
 
-- [ ] **Step 1: Write logrotate config**
+- [x] **Step 1: Write logrotate config**
 
 Create `scripts/logrotate.conf`:
 
@@ -312,7 +312,7 @@ Create `scripts/logrotate.conf`:
 
 `copytruncate` avoids corrupting a log file actively being written by `claude remote-control` (the process keeps its fd open).
 
-- [ ] **Step 2: Write wrapper script**
+- [x] **Step 2: Write wrapper script**
 
 Create `scripts/rotate-logs.sh`:
 
@@ -336,7 +336,7 @@ logrotate --state "$STATE" "$CONF"
 chmod +x scripts/rotate-logs.sh
 ```
 
-- [ ] **Step 3: Verify logrotate is present in the image**
+- [x] **Step 3: Verify logrotate is present in the image**
 
 ```bash
 grep -nE 'logrotate' Dockerfile 2>&1 || echo "not found — need to add apt install"
@@ -344,7 +344,7 @@ grep -nE 'logrotate' Dockerfile 2>&1 || echo "not found — need to add apt inst
 
 If missing, add `logrotate` to the package install line in `Dockerfile`.
 
-- [ ] **Step 4: Add hourly cron entry**
+- [x] **Step 4: Add hourly cron entry**
 
 In `crontab.txt`, append before the "Audit digest" line:
 
@@ -353,7 +353,7 @@ In `crontab.txt`, append before the "Audit digest" line:
 7 * * * * /opt/scripts/rotate-logs.sh >> /home/claude/.willikins-agent/logrotate.log 2>&1
 ```
 
-- [ ] **Step 5: Dry-run test**
+- [x] **Step 5: Dry-run test**
 
 ```bash
 # Requires logrotate installed locally; otherwise skip and test in pod post-deploy
@@ -371,7 +371,7 @@ Expected: output shows `log needs rotating (log size is ... size threshold is ..
 - Modify: `scripts/vk-issue-bridge.py`
 - Modify: `tests/test_vk_issue_bridge.py`
 
-- [ ] **Step 1: Read current behavior**
+- [x] **Step 1: Read current behavior**
 
 ```bash
 sed -n '350,390p' scripts/vk-issue-bridge.py
@@ -379,7 +379,7 @@ sed -n '350,390p' scripts/vk-issue-bridge.py
 
 Confirm the flow: `discover_repos()` scans `~/repos/`, loop runs `gh issue list --repo derio-net/<name>` for each, logs `[warn] gh issue list failed for {repo}` on any error.
 
-- [ ] **Step 2: Failing test — 404 on a repo should be demoted from warn to debug-or-silent**
+- [x] **Step 2: Failing test — 404 on a repo should be demoted from warn to debug-or-silent**
 
 Add to `tests/test_vk_issue_bridge.py`:
 
@@ -411,7 +411,7 @@ python -m pytest tests/test_vk_issue_bridge.py::TestDiscoveryWarningFiltering -x
 
 Expected: FAIL (bridge currently emits `[warn]`).
 
-- [ ] **Step 3: Downgrade 404 to info, keep other errors as warn**
+- [x] **Step 3: Downgrade 404 to info, keep other errors as warn**
 
 In `gh_list_ready_issues` (around line 374), change the `except` branch to inspect stderr:
 
@@ -426,7 +426,7 @@ In `gh_list_ready_issues` (around line 374), change the `except` branch to inspe
             continue
 ```
 
-- [ ] **Step 4: Re-run full bridge suite**
+- [x] **Step 4: Re-run full bridge suite**
 
 ```bash
 python -m pytest tests/ 2>&1 | tail -15
@@ -436,7 +436,7 @@ Expected: pass.
 
 ### Task 5: Phase 1 PR
 
-- [ ] **Step 1: Open PR**
+- [x] **Step 1: Open PR**
 
 ```bash
 git checkout -b phase1/housekeeping
@@ -462,7 +462,7 @@ Push and open a PR. No production deploy yet — Phase 3 soaks the whole bundle 
 - Create: `scripts/shutdown.sh`
 - Create: `tests/test_shutdown.sh` (or extend an existing bash test harness)
 
-- [ ] **Step 1: Read Phase 0 decision**
+- [x] **Step 1: Read Phase 0 decision**
 
 ```bash
 cat docs/findings/2026-04-18-remote-control-shutdown.md
@@ -470,7 +470,7 @@ cat docs/findings/2026-04-18-remote-control-shutdown.md
 
 Identify chosen path (A / B / C). This determines whether `shutdown.sh` calls a close API, sends a specific signal sequence, or is a no-op wrapper that only cleans PID files.
 
-- [ ] **Step 2: Write shutdown.sh skeleton (signal-based baseline)**
+- [x] **Step 2: Write shutdown.sh skeleton (signal-based baseline)**
 
 Create `scripts/shutdown.sh`:
 
@@ -549,7 +549,7 @@ chmod +x scripts/shutdown.sh
 
 If Phase 0 chose Path A, uncomment the `claude remote-control close` block and remove/adjust the comment marker. If Path C, replace the signal block with a `log "no clean shutdown available"` line.
 
-- [ ] **Step 3: Tests for shutdown.sh**
+- [x] **Step 3: Tests for shutdown.sh**
 
 Create `tests/test_shutdown.sh`:
 
@@ -604,7 +604,7 @@ Expected: `OK`.
 - Modify: `scripts/session-manager.sh`
 - Modify: `entrypoint.sh` (if it supervises supercronic)
 
-- [ ] **Step 1: Review entrypoint**
+- [x] **Step 1: Review entrypoint**
 
 ```bash
 cat entrypoint.sh
@@ -612,7 +612,7 @@ cat entrypoint.sh
 
 Confirm whether it invokes `supercronic` in foreground or backgrounds it with `wait -n`. The goal: on container SIGTERM, entrypoint must run `shutdown.sh` before exiting.
 
-- [ ] **Step 2: Add trap in entrypoint.sh**
+- [x] **Step 2: Add trap in entrypoint.sh**
 
 If entrypoint.sh ends with `exec supercronic ...`, replace with:
 
@@ -632,7 +632,7 @@ wait "$SUPERCRONIC_PID"
 
 If entrypoint already has a trap / supervisor loop, add the shutdown.sh call inside it.
 
-- [ ] **Step 3: Verify trap locally**
+- [x] **Step 3: Verify trap locally**
 
 Using a Docker smoke test (optional if not available locally):
 
@@ -655,7 +655,7 @@ docker rm -f sak-test 2>/dev/null || true
 **Files:**
 - None in this repo. Change lives in `derio-net/frank`.
 
-- [ ] **Step 1: Open a tracking Issue against derio-net/frank**
+- [x] **Step 1: Open a tracking Issue against derio-net/frank**
 
 ```bash
 gh issue create --repo derio-net/frank \
@@ -682,13 +682,13 @@ EOF
 )"
 ```
 
-- [ ] **Step 2: Link in the plan**
+- [x] **Step 2: Link in the plan**
 
 Record the Issue number in this plan's header (manually edit the Status line to include `; frank#<N>`) so future readers can follow the cross-repo dependency.
 
 ### Task 4: Phase 2 PR
 
-- [ ] **Step 1: Open PR**
+- [x] **Step 1: Open PR**
 
 ```bash
 git checkout -b phase2/graceful-shutdown
@@ -700,16 +700,16 @@ PR body should reference the frank Issue created in Task 3. No deploy yet — Ph
 
 ---
 
-## Phase 3: 24h soak [manual]
-<!-- Tracking: https://github.com/derio-net/secure-agent-kali/issues/18 -->
+## Phase 3: 24h soak [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/2 -->
 
 ### Task 1: Deploy
 
-- [ ] **Step 1: Merge Phase 1 and Phase 2 PRs**
+- [x] **Step 1: Merge Phase 1 and Phase 2 PRs**
 
 In any order; they touch different files.
 
-- [ ] **Step 2: Rebuild image and roll pod**
+- [x] **Step 2: Rebuild image and roll pod**
 
 ```bash
 # Whatever the standard build path is for secure-agent-kali

@@ -54,4 +54,4 @@ None. No new capabilities, no loosened guardrails. The audit-hook fix restores a
 
 | Plan | Repo | File | Status | Depends on |
 |------|------|------|--------|------------|
-| Persistent Agent Reliability | derio-net/secure-agent-kali | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | Not Started | — |
+| Persistent Agent Reliability | derio-net/agent-images | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | Not Started | — |
