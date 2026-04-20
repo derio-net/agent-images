@@ -700,7 +700,7 @@ PR body should reference the frank Issue created in Task 3. No deploy yet — Ph
 
 ---
 
-## Phase 3: 24h soak [agentic]
+## Phase 3: 24h soak [manual]
 <!-- Tracking: https://github.com/derio-net/agent-images/issues/2 -->
 
 ### Task 1: Deploy
