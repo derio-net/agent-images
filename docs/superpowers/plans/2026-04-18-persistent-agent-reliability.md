@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Phase 3 soak reset (2026-04-20) — four deployment gaps found during monitoring; remediation PRs in flight. See "Deployment Deviations" below.
+**Status:** Phase 3 soak running (2026-04-20 09:31 UTC). D1 + D3 landed in `derio-net/frank#114` and `derio-net/agent-images#4`; D2 resolved via kubectl reseed per runbook; D5 discovered during the first rotation and fixed here. 24h observation window active.
 
 **Goal:** Fix the reliability and observability issues in the Willikins persistent agent surfaced by the 2026-04-18 triage: phantom sessions accumulating in claude.ai, silently-broken audit pipeline, unrotated 332 MB session log, and vk-bridge warning spam.
 
@@ -807,6 +807,16 @@ Monitoring the pod from the Frank host (rather than from inside the agent) durin
 **Symptom:** `docs/findings/2026-04-18-remote-control-shutdown.md` — the Phase 0 deliverable — was not copied into `agent-images/` when `secure-agent-kali` was absorbed on 2026-04-19. `kali/scripts/shutdown.sh:4` still references it.
 
 **Remediation:** restored from archived `derio-net/secure-agent-kali` repo to `kali/docs/findings/2026-04-18-remote-control-shutdown.md` in this PR.
+
+### D5 — `logrotate.conf` duplicate-entry error (found during Phase 3 reseed)
+
+**Symptom:** First manual invocation of `rotate-logs.sh` after the reseed emitted `/opt/scripts/logrotate.conf:18 duplicate log entry for /home/claude/.willikins-agent/session-manager.log` — surfaced only because rotation had never actually run before. The heavy target (`session-willikins.log`) still rotated correctly (359M → 0 via `copytruncate`), but the duplicate error would block the cleaner execution expected under a real soak.
+
+**Root cause:** First block's `session-*.log` glob matches `session-manager.log`, and the second block also lists it explicitly. Logrotate correctly refuses to process the same file against two different policies. The original intent was for the first block to cover the heavy transcript log only (50 MB threshold, 5 rotations) and for the operational logs to use the second block (20 MB, 3 rotations).
+
+**Remediation:** one-line fix to `kali/scripts/logrotate.conf` in this PR — narrow the first block from `session-*.log` to `session-willikins.log`. Added a comment explaining why the glob must not be widened back.
+
+**Operational impact before fix:** near-zero today — `session-manager.log` was 512 KB, `vk-bridge.log` 4.8 MB, `audit.jsonl` 75 KB, all well under the 20 MB threshold. But future growth would hit the duplicate-entry error on every hourly cron run.
 
 ### D4 — Pod OOMKilled 4× in last 170 minutes
 
