@@ -894,6 +894,211 @@ class TestDiscoveryWarningFiltering:
         assert "willikins" in combined
 
 
+# --- Multi-blocker check_blockers tests (parallel-dispatch-dag regression) ---
+#
+# Pins the bridge's AND-of-all-CLOSED contract for multi-blocker issues. The
+# fan-in scenario in the spec ``2026-04-20-parallel-dispatch-dag-design.md``
+# §5 depends on this behaviour: a downstream phase Issue with multiple
+# ``- Blocked by #N`` lines must remain deferred until EVERY referenced
+# Issue is CLOSED. The existing implementation at
+# ``kali/scripts/vk-issue-bridge.py:210-242`` already iterates the list and
+# fails loud on gh errors — these tests are regression coverage, not new
+# behaviour, and are expected to pass as-is.
+
+class TestCheckBlockersMultiDep:
+    """Pin the fan-in contract: AND-of-all-CLOSED across multiple blockers."""
+
+    @staticmethod
+    def _fake_run_factory(states_by_number):
+        """Build a subprocess.run replacement that returns per-issue state."""
+        def fake_run(argv, *args, **kwargs):
+            assert argv[:3] == ["gh", "issue", "view"], argv[:3]
+            num = int(argv[3])
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = _json.dumps({"state": states_by_number[num]})
+            return result
+        return fake_run
+
+    def test_all_closed_returns_empty_list(self):
+        deps = [(None, 1), (None, 2)]
+        with patch.object(
+            mod.subprocess,
+            "run",
+            side_effect=self._fake_run_factory({1: "CLOSED", 2: "CLOSED"}),
+        ):
+            assert mod.check_blockers("owner/repo", deps) == []
+
+    def test_one_open_is_reported(self):
+        deps = [(None, 1), (None, 2)]
+        with patch.object(
+            mod.subprocess,
+            "run",
+            side_effect=self._fake_run_factory({1: "OPEN", 2: "CLOSED"}),
+        ):
+            result = mod.check_blockers("owner/repo", deps)
+        assert result == ["#1"]
+
+    def test_both_open_reports_both(self):
+        deps = [(None, 1), (None, 2)]
+        with patch.object(
+            mod.subprocess,
+            "run",
+            side_effect=self._fake_run_factory({1: "OPEN", 2: "OPEN"}),
+        ):
+            result = mod.check_blockers("owner/repo", deps)
+        assert set(result) == {"#1", "#2"}
+
+    def test_cross_repo_dep_uses_dep_repo_not_caller_repo(self):
+        """A ``- Blocked by owner/other-repo#N`` line must gate against that
+        other repo, not the current Issue's repo."""
+        deps = [("other-owner/other-repo", 7)]
+        calls = []
+
+        def fake_run(argv, *args, **kwargs):
+            calls.append(list(argv))
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = _json.dumps({"state": "CLOSED"})
+            return result
+
+        with patch.object(mod.subprocess, "run", side_effect=fake_run):
+            mod.check_blockers("default-owner/default-repo", deps)
+
+        assert "--repo" in calls[0]
+        repo_idx = calls[0].index("--repo") + 1
+        assert calls[0][repo_idx] == "other-owner/other-repo"
+
+    def test_gh_failure_raises_runtimeerror(self):
+        """gh failure on any blocker must fail loud — the pre-hextra
+        silent-bypass behaviour caused the very incident this DAG work is
+        built on."""
+        deps = [(None, 1)]
+
+        def boom(argv, *args, **kwargs):
+            raise _subprocess.CalledProcessError(1, argv, stderr="auth failed")
+
+        with patch.object(mod.subprocess, "run", side_effect=boom):
+            with pytest.raises(RuntimeError, match="unreachable"):
+                mod.check_blockers("owner/repo", deps)
+
+
+# --- Main-loop defer-before-slot-allocation tests ---
+#
+# Pins the ordering that prevents the Frank hextra workspace-slot inversion:
+# blocked Issues must be deferred BEFORE the loop reaches the slot check or
+# ``sync_issue`` call. Existing code already does this at
+# ``kali/scripts/vk-issue-bridge.py:618-662``; these tests lock it down
+# against future regressions.
+
+_MULTI_BLOCKER_BODY = """Part of: Fan-in phase
+Plan file: `docs/superpowers/plans/fan-in.md`
+
+---
+
+## Instruction
+
+Use superpowers-for-vk:vk-execute to implement Phase 5 of this plan.
+
+## Workspace
+
+Repos: content-factory
+
+## Dependencies
+
+- Blocked by #101
+- Blocked by #102
+"""
+
+
+def _make_multi_blocker_issue(number=300, title="Task 5: Fan-in phase"):
+    return GhIssue(
+        number=number,
+        title=title,
+        body=_MULTI_BLOCKER_BODY,
+        html_url=f"https://github.com/derio-net/content-factory/issues/{number}",
+        repo="derio-net/content-factory",
+    )
+
+
+class TestMainLoopDefersBlockedIssuesWithoutConsumingSlots:
+    """The main loop must defer blocked Issues before consuming a slot.
+
+    Frank hextra regression: under the old silent-bypass behaviour, blocked
+    downstream phases consumed workspace slots while their upstream blockers
+    remained queued — a priority inversion. With fail-loud blocker gating and
+    the current ordering (parse → check_blockers → defer → slot check →
+    sync_issue), a blocked Issue never reaches ``sync_issue`` and no slot is
+    decremented.
+    """
+
+    @patch.object(mod, "push_heartbeat")
+    @patch.object(mod, "gh_list_ready_issues")
+    @patch.object(mod, "check_blockers")
+    @patch.object(mod, "sync_issue")
+    def test_blocked_issue_does_not_reach_sync_issue(
+        self, mock_sync, mock_blockers, mock_issues, mock_hb
+    ):
+        mock_client = _make_mock_client()
+        mock_client.list_workspaces.return_value = {"workspaces": []}
+        mock_client.list_issues.return_value = {"issues": []}
+
+        mock_issues.return_value = [_make_multi_blocker_issue()]
+        mock_blockers.return_value = ["#101", "#102"]  # both still open
+
+        with patch.object(mod, "VkMcpClient", return_value=mock_client):
+            mod.main()
+
+        # The Issue must NOT have been synced — no workspace slot consumed.
+        mock_sync.assert_not_called()
+
+    @patch.object(mod, "push_heartbeat")
+    @patch.object(mod, "gh_list_ready_issues")
+    @patch.object(mod, "check_blockers")
+    @patch.object(mod, "sync_issue")
+    def test_unblocked_issue_reaches_sync_issue(
+        self, mock_sync, mock_blockers, mock_issues, mock_hb
+    ):
+        mock_client = _make_mock_client()
+        mock_client.list_workspaces.return_value = {"workspaces": []}
+        mock_client.list_issues.return_value = {"issues": []}
+
+        mock_issues.return_value = [_make_multi_blocker_issue()]
+        mock_blockers.return_value = []  # all blockers now CLOSED
+        mock_sync.return_value = True
+
+        with patch.object(mod, "VkMcpClient", return_value=mock_client):
+            mod.main()
+
+        mock_sync.assert_called_once()
+
+    @patch.object(mod, "push_heartbeat")
+    @patch.object(mod, "gh_list_ready_issues")
+    @patch.object(mod, "check_blockers")
+    @patch.object(mod, "sync_issue")
+    def test_blocker_check_failure_defers_issue(
+        self, mock_sync, mock_blockers, mock_issues, mock_hb
+    ):
+        """If check_blockers raises (gh auth failure, network error, etc.),
+        the Issue must be failed/deferred — NOT silently treated as unblocked.
+        """
+        mock_client = _make_mock_client()
+        mock_client.list_workspaces.return_value = {"workspaces": []}
+        mock_client.list_issues.return_value = {"issues": []}
+
+        mock_issues.return_value = [_make_multi_blocker_issue()]
+        mock_blockers.side_effect = RuntimeError(
+            "Blocker #101 in derio-net/content-factory unreachable — "
+            "cannot gate safely."
+        )
+
+        with patch.object(mod, "VkMcpClient", return_value=mock_client):
+            mod.main()
+
+        # Issue must NOT have been synced even though check_blockers errored.
+        mock_sync.assert_not_called()
+
+
 if __name__ == "__main__":
     import sys as _sys
     failures = 0
