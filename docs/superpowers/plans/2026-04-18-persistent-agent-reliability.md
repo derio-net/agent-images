@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Not Started
+**Status:** Phase 3 soak reset (2026-04-20) — four deployment gaps found during monitoring; remediation PRs in flight. See "Deployment Deviations" below.
 
 **Goal:** Fix the reliability and observability issues in the Willikins persistent agent surfaced by the 2026-04-18 triage: phantom sessions accumulating in claude.ai, silently-broken audit pipeline, unrotated 332 MB session log, and vk-bridge warning spam.
 
@@ -777,3 +777,102 @@ Append a short entry to `../willikins/decisions/log.md` (via a separate commit i
 - [ ] **Step 3: Mark Status complete**
 
 Edit the `Status:` header of this plan to `Complete` and of the spec to `Complete`.
+
+---
+
+## Deployment Deviations (2026-04-20)
+
+Monitoring the pod from the Frank host (rather than from inside the agent) during what was meant to be the Phase 3 baseline revealed four gaps that meant the 24h soak could not validate what it was designed to validate. Documenting here; fixes tracked below.
+
+### D1 — Frank `preStop` hook never deployed
+
+**Symptom:** `apps/secure-agent-pod/manifests/deployment.yaml` has no `lifecycle:` block on the `kali` container; `terminationGracePeriodSeconds: 30` (plan called for ≥45). `derio-net/frank#108` was closed on 2026-04-19T20:03:37Z with zero comments and no linked PR.
+
+**Impact:** `shutdown.sh` never fires on pod drain. Phase 2's whole point — graceful SIGTERM → `bridge:shutdown` → `DELETE /v1/environments/bridge/<env_id>` → no phantom in claude.ai — is only reachable in theory. OOMKilled events (4× observed) bypass `preStop` entirely by design, so they produce phantoms regardless.
+
+**Remediation:** New PR against `derio-net/frank` (`fix/secure-agent-pod-prestop`) adds the `lifecycle.preStop.exec.command: ["/opt/scripts/shutdown.sh"]` and raises grace to `45`.
+
+### D2 — Live `~/.crontab` is stale (PVC-first-boot-only seeding)
+
+**Symptom:** The image at `ghcr.io/derio-net/secure-agent-kali:b3b0899...` ships `/opt/crontab` with the log-rotation entry, but the running pod's `~/.crontab` (on the PVC) lacks it. The `session-willikins.log` has grown to 359 MB without a single rotation.
+
+**Root cause:** `entrypoint.sh:9` seeds `~/.crontab` only when it doesn't exist (`[ -f … ] || cp …`). Once a PVC has a crontab, image updates to `config-templates/crontab.txt` never reach the pod. Same class of gotcha as the PVC-hides-image-files one documented in frank's `CLAUDE.md`.
+
+**Why not auto-reconcile in entrypoint:** the operator has legitimate customizations in `~/.crontab` (exercise reminders disabled on 2026-04-06 with documented rationale). Unconditional overwrite would clobber operator intent. A proper additive/marker-aware reseed deserves its own plan.
+
+**Remediation (this plan):** manual kubectl-exec op (recorded as a runbook entry below). Future plan: design reseed semantics for PVC-backed config templates.
+
+### D3 — Findings doc lost in monorepo absorption
+
+**Symptom:** `docs/findings/2026-04-18-remote-control-shutdown.md` — the Phase 0 deliverable — was not copied into `agent-images/` when `secure-agent-kali` was absorbed on 2026-04-19. `kali/scripts/shutdown.sh:4` still references it.
+
+**Remediation:** restored from archived `derio-net/secure-agent-kali` repo to `kali/docs/findings/2026-04-18-remote-control-shutdown.md` in this PR.
+
+### D4 — Pod OOMKilled 4× in last 170 minutes
+
+**Symptom:** Per `kubectl describe`, `kali` container OOMKilled once (Apr 19 22:26, 32Gi limit), `vk-local` OOMKilled 3× (Apr 20 ~08:12, 2Gi limit). OOMKills use SIGKILL → `preStop` cannot fire → any future `preStop` wiring won't help these paths.
+
+**Impact on soak:** the "phantoms ≈ restarts" vs "phantoms ≪ restarts" heuristic in Phase 3 Task 2 Step 2 implicitly assumes restarts flow through SIGTERM. OOMKill restarts are a separate population that graceful shutdown can't address — any observed phantom delta must be stratified by restart cause.
+
+**Remediation:** out of scope for this plan. If OOMKill frequency persists after the soak restarts cleanly, open a follow-up plan to profile memory use in both containers.
+
+### Remediation PRs
+
+- `derio-net/agent-images#?` — this PR: findings doc restored, deviations documented, Status line updated.
+- `derio-net/frank#?` — preStop hook + grace period on `secure-agent-pod` deployment.
+
+### Post-merge manual operation
+
+```yaml
+# manual-operation
+id: secure-agent-pod-crontab-reseed-2026-04-20
+layer: agent
+app: secure-agent-pod
+plan: 2026-04-18-persistent-agent-reliability
+when: once, after agent-images reliability PRs merge and new image is deployed
+why_manual: |
+  ~/.crontab lives on a PVC and is only seeded on first-boot. The running pod's
+  ~/.crontab is from the pre-Phase-1 image (no log rotation entry). Operator has
+  legitimate customizations (exercise reminders disabled 2026-04-06) that must
+  not be clobbered — so we surgically add the missing entry via kubectl exec
+  rather than overwriting.
+commands:
+  - |
+    source .env && kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- bash -c '
+      if ! grep -qF "/opt/scripts/rotate-logs.sh" ~/.crontab; then
+        cat >> ~/.crontab <<'\''EOF'\''
+
+    # Log rotation (hourly) — added manually 2026-04-20 (D2)
+    7 * * * * /opt/scripts/rotate-logs.sh >> /home/claude/.willikins-agent/logrotate.log 2>&1
+    EOF
+        echo "added rotate-logs entry"
+      else
+        echo "rotate-logs entry already present"
+      fi
+    '
+  - |
+    # supercronic watches ~/.crontab and auto-reloads on change — no restart needed.
+    # But to exercise the preStop path at least once, roll the pod:
+    source .env && kubectl rollout restart deploy/secure-agent-pod -n secure-agent-pod
+verify:
+  - |
+    # Cron picks up the entry
+    source .env && kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- grep rotate-logs ~/.crontab
+  - |
+    # Within an hour, logrotate.log shows activity and session-willikins.log size drops
+    source .env && kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- bash -c '
+      ls -lh ~/.willikins-agent/logrotate.log ~/.willikins-agent/session-willikins.log ~/.willikins-agent/logrotate.state 2>&1
+    '
+  - |
+    # Pod respects preStop — watch for shutdown.log entries on next drain
+    source .env && kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- ls -la ~/.willikins-agent/shutdown.log
+status: pending
+```
+
+### Phase 3 restart plan
+
+After both PRs merge and the kubectl reseed runs:
+
+1. Capture fresh baseline (`session-willikins.log` size post-rotation, `audit.jsonl` line count, `shutdown.log` existence, PID dir).
+2. Roll the pod once to exercise `preStop` → `shutdown.sh` → `bridge:shutdown` path. Verify `shutdown.log` shows entries and no orphaned `claude remote-control` on the new pod.
+3. Start 24h observation window per original Task 2; stratify restart-cause (SIGTERM-drained vs OOMKilled) when interpreting phantom delta.
