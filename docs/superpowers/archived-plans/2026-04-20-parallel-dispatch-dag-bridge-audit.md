@@ -1,7 +1,7 @@
 # Parallel Dispatch DAG — Bridge Audit Implementation Plan
 
 **Spec:** https://github.com/derio-net/superpowers-for-vk/blob/main/docs/superpowers/specs/2026-04-20-parallel-dispatch-dag-design.md
-**Status:** Not Started
+**Status:** Complete
 
 **Goal:** Pin the VK Issue Bridge's multi-blocker contract with regression tests: `check_blockers` gates on ALL-CLOSED (AND semantics) and the main loop defers a blocked Issue **before** consuming a workspace slot. The initial read-through confirms the existing code already upholds the contract, so this plan is primarily additive test coverage — no behavioural change expected.
 
@@ -24,7 +24,7 @@
 
 These two functions together implement the bridge-side DAG gate. `parse_dependencies` iterates every `- Blocked by #N` line in the `## Dependencies` section. `check_blockers` iterates that list, calls `gh issue view --json state` per blocker, and returns the list of non-CLOSED display strings. Callers defer the Issue if the return list is non-empty (main loop at `kali/scripts/vk-issue-bridge.py:619-631`).
 
-- [ ] **Step 1: Read the two functions and note the contract**
+- [x] **Step 1: Read the two functions and note the contract**
 
 Open `kali/scripts/vk-issue-bridge.py` at line 170 and line 210. Confirm:
 
@@ -34,7 +34,7 @@ Open `kali/scripts/vk-issue-bridge.py` at line 170 and line 210. Confirm:
 
 No code change. This step exists to ensure the executing agent understands the invariants before writing tests against them.
 
-- [ ] **Step 2: Write failing regression tests for multi-blocker `check_blockers`**
+- [x] **Step 2: Write failing regression tests for multi-blocker `check_blockers`**
 
 Append to `kali/tests/test_vk_issue_bridge.py` in the "Dependency parser tests" section (around line 408, where `parse_deps` tests live):
 
@@ -110,7 +110,7 @@ class TestCheckBlockersMultiDep:
                 check_blockers("owner/repo", deps)
 ```
 
-- [ ] **Step 3: Run the tests to observe the result**
+- [x] **Step 3: Run the tests to observe the result**
 
 ```
 cd ~/Docs/projects/DERIO_NET/agent-images
@@ -119,13 +119,13 @@ uv run --with pytest pytest kali/tests/test_vk_issue_bridge.py::TestCheckBlocker
 
 Expected: **PASS** — the existing `check_blockers` implementation already iterates and gates correctly. If any test fails, treat the failure as a bug in the bridge and jump to Step 4.
 
-- [ ] **Step 4 (conditional): Fix any gap surfaced by the tests**
+- [x] **Step 4 (conditional): Fix any gap surfaced by the tests**
 
 Only execute this step if a test failed in Step 3. Read the failing assertion and the corresponding production code, then make the minimum change to `kali/scripts/vk-issue-bridge.py::check_blockers` that satisfies the contract. Re-run the tests until green.
 
 If all tests pass in Step 3 as expected, **skip this step** — the contract is already upheld.
 
-- [ ] **Step 5: Run the full bridge test suite to confirm no regressions**
+- [x] **Step 5: Run the full bridge test suite to confirm no regressions**
 
 ```
 cd ~/Docs/projects/DERIO_NET/agent-images
@@ -134,7 +134,7 @@ uv run --with pytest pytest kali/tests/test_vk_issue_bridge.py -q
 
 Expected: PASS — existing tests continue to pass alongside the new ones.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```
 git add kali/tests/test_vk_issue_bridge.py
@@ -153,7 +153,7 @@ Reference lines in production code:
 
 The correctness property: if `check_blockers` returns a non-empty list, the loop `continue`s without reaching `sync_issue`, so no workspace is created and no slot is decremented. This test pins that invariant.
 
-- [ ] **Step 1: Write a failing integration test for the defer-before-slot ordering**
+- [x] **Step 1: Write a failing integration test for the defer-before-slot ordering**
 
 Append to `kali/tests/test_vk_issue_bridge.py` in the "Concurrency limit tests" section (around line 292, near `test_main_defers_when_no_slots`):
 
@@ -221,7 +221,7 @@ class TestMainLoopDefersBlockedIssuesWithoutConsumingSlots:
         mock_sync.assert_called_once()
 ```
 
-- [ ] **Step 2: Run the test to observe the result**
+- [x] **Step 2: Run the test to observe the result**
 
 ```
 cd ~/Docs/projects/DERIO_NET/agent-images
@@ -234,19 +234,19 @@ Three possible outcomes:
 - **FAIL with `AttributeError` on `main_once` or `main(once=...)`:** The existing bridge `main()` doesn't expose a single-tick entry point. Fall back to Step 3 to adapt the test to the existing shape of `main()`.
 - **FAIL with `AssertionError: called_once()`:** The bridge is reaching `sync_issue` even with blockers open — this is the bug the user worried about and must be fixed in Step 4 (conditional).
 
-- [ ] **Step 3 (conditional): Adapt the test to `main()`'s existing entry point**
+- [x] **Step 3 (conditional): Adapt the test to `main()`'s existing entry point**
 
 Open `kali/scripts/vk-issue-bridge.py` and find the `main()` definition. Inspect how the existing tests at `kali/tests/test_vk_issue_bridge.py:297-349` invoke it (see `test_main_defers_when_no_slots`, `test_main_processes_up_to_max_concurrent`). Adapt the two new tests to use the same invocation pattern (e.g., directly calling `main()` with the mocked `client`, catching `SystemExit`, or whichever form the existing tests use).
 
 Re-run Step 2 until the tests execute correctly.
 
-- [ ] **Step 4 (conditional): Fix any ordering gap**
+- [x] **Step 4 (conditional): Fix any ordering gap**
 
 Only execute this step if Step 2 or 3 showed a genuine ordering bug (`sync_issue` called for a blocked Issue). Reorder the main loop in `kali/scripts/vk-issue-bridge.py` so that `check_blockers` and the deferral `continue` happen strictly before the slot check and the `sync_issue` call. Re-run until green.
 
 If both tests passed as expected, **skip this step**.
 
-- [ ] **Step 5: Run the full bridge test suite**
+- [x] **Step 5: Run the full bridge test suite**
 
 ```
 cd ~/Docs/projects/DERIO_NET/agent-images
@@ -255,7 +255,7 @@ uv run --with pytest pytest kali/tests/test_vk_issue_bridge.py -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```
 git add kali/tests/test_vk_issue_bridge.py
