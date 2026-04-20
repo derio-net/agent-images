@@ -3,6 +3,12 @@ name: Build agent images
 on:
   push:
     branches: [main]
+    # Skip rebuilds for docs-only changes (plans, specs, findings).
+    # Mixed commits still trigger: paths-ignore matches only when ALL
+    # changed files are ignored. workflow_dispatch and repository_dispatch
+    # bypass these filters, so manual/external triggers still rebuild.
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch:
   repository_dispatch:
     types: [vibe-kanban-build-updated]
