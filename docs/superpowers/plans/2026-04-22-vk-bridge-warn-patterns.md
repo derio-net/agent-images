@@ -27,6 +27,7 @@
 ---
 
 ## Phase 1: Broaden warn-demotion patterns [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/6 -->
 
 **Depends on:** —
 
