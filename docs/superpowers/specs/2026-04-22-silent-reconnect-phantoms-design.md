@@ -211,3 +211,9 @@ Triggered only if Phase 0 records Decision **B**.
 | Phase 0 finds neither Branch A nor Branch B feasible (no env_id recoverable anywhere). | Abort plan at end of Phase 0, findings doc documents the upstream feature request path. Only the OOMKill-frequency fix from Plan 3 applies; phantoms continue at reduced rate. |
 | Branch B wrapper swallows claude's exit status or breaks supercronic's visibility into claude liveness. | Wrapper forwards child's exit code verbatim via `sys.exit(child.returncode)` and `wait()`s on the child. Tests verify exit-code passthrough and that SIGTERM received by the wrapper is forwarded to claude. |
 | Reaper invocation adds latency to session-manager's 5-minute tick. | Reaper finishes in <1s in the steady state (empty glob) or <5s with a few DELETE calls; well within the 5-minute window. |
+
+## Implementation Plans
+
+| Plan | Repo | File | Status | Depends on |
+|------|------|------|--------|------------|
+| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms.md` | Not Started | — |
