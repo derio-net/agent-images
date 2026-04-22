@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Phase 3 soak running (2026-04-20 09:31 UTC). D1 + D3 landed in `derio-net/frank#114` and `derio-net/agent-images#4`; D2 resolved via kubectl reseed per runbook; D5 discovered during the first rotation and fixed here. 24h observation window active.
+**Status:** In Progress
 
 **Goal:** Fix the reliability and observability issues in the Willikins persistent agent surfaced by the 2026-04-18 triage: phantom sessions accumulating in claude.ai, silently-broken audit pipeline, unrotated 332 MB session log, and vk-bridge warning spam.
 
