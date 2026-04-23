@@ -29,6 +29,7 @@
 ---
 
 ## Phase 1: Workload survey & tooling check [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/7 -->
 
 **Depends on:** —
 
@@ -156,6 +157,7 @@ Expected: RSS in bytes for the current process. If missing, use the `container_m
 ---
 
 ## Phase 2: Observation window [manual]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/8 -->
 
 **Depends on:** Phase 1
 
@@ -280,6 +282,7 @@ If hour-level correlation is strong (r > 0.5): memory scales with workload → b
 ---
 
 ## Phase 3: Analysis & recommendation [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/9 -->
 
 **Depends on:** Phase 2
 
