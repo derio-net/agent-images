@@ -511,6 +511,39 @@ def push_heartbeat() -> None:
     _push_metric(text)
 
 
+# --- Error classification ---
+
+# Stderr patterns that indicate "the repo isn't on GitHub" — expected for
+# local-only mirrors and phantom directories in ~/repos/. Not worth a warn.
+_ABSENT_REPO_PATTERNS = (
+    re.compile(r"\bHTTP 404\b"),
+    re.compile(r"Could not resolve(?: to a Repository)?", re.IGNORECASE),
+)
+
+# Stderr patterns that indicate GitHub or the network flaked. The bridge
+# runs every 2 min and retries naturally; single-shot failures are noise.
+_TRANSIENT_NETWORK_PATTERNS = (
+    re.compile(r"unexpected EOF"),
+    re.compile(r"connection reset by peer"),
+    re.compile(r"i/o timeout"),
+    re.compile(r"no such host"),
+)
+
+
+def _classify_gh_error(stderr: str) -> str:
+    """Classify a `gh` CLI stderr into a log level.
+
+    Returns 'info' for expected/transient conditions, 'warn' for anything
+    that could indicate a real problem (auth, 5xx, malformed response)."""
+    for pat in _ABSENT_REPO_PATTERNS:
+        if pat.search(stderr):
+            return "info"
+    for pat in _TRANSIENT_NETWORK_PATTERNS:
+        if pat.search(stderr):
+            return "info"
+    return "warn"
+
+
 # --- GitHub client ---
 
 def gh_list_ready_issues() -> list[GhIssue]:
@@ -534,9 +567,10 @@ def gh_list_ready_issues() -> list[GhIssue]:
             ).stdout
         except subprocess.CalledProcessError as e:
             stderr = (e.stderr or "").strip()
-            if re.search(r"\bHTTP 404\b", stderr) or "Could not resolve" in stderr:
-                first_line = stderr.splitlines()[0] if stderr else ""
-                log(f"[info] gh list skipped — {repo}: no GitHub remote ({first_line})")
+            level = _classify_gh_error(stderr)
+            first_line = stderr.splitlines()[0] if stderr else ""
+            if level == "info":
+                log(f"[info] gh list skipped — {repo}: {first_line}")
             else:
                 log(f"[warn] gh issue list failed for {repo}: {stderr}")
             continue
