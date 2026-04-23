@@ -643,6 +643,320 @@ def test_poll_handles_mcp_error_gracefully():
     client.update_issue.assert_not_called()
 
 
+# --- Archive-on-merge + GH-issue-close-on-merge tests ---
+
+
+def _done_card(
+    *,
+    card_id="card-X",
+    simple_id="YIA-60",
+    title="gh#42: Task 42",
+    pr_url="https://github.com/derio-net/willikins/pull/99",
+):
+    """Fixture: a card currently 'In review' with a merged PR (→ will go Done)."""
+    return {
+        "id": card_id,
+        "simple_id": simple_id,
+        "status": "In review",
+        "title": title,
+        "latest_pr_url": pr_url,
+        "latest_pr_status": "merged",
+    }
+
+
+def _make_poll_client(done_cards=None, workspaces=None):
+    """Build a mock client where 'In review' returns the given cards."""
+    client = MagicMock()
+
+    def _list_issues(project_id, status=None, **kw):
+        if status == "In review":
+            return {"issues": done_cards or []}
+        return {"issues": []}
+
+    client.list_issues.side_effect = _list_issues
+    client.list_workspaces.return_value = {"workspaces": workspaces or []}
+    client.update_issue.return_value = {}
+    client.update_workspace.return_value = {}
+    return client
+
+
+class TestPollArchivesWorkspaceOnMerge:
+    def test_merged_pr_archives_matching_workspace(self, monkeypatch):
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        client = _make_poll_client(
+            done_cards=[_done_card(simple_id="YIA-60")],
+            workspaces=[
+                {"id": "ws-match", "name": "YIA-60 -> gh#42", "archived": False},
+                {"id": "ws-other", "name": "YIA-61 -> gh#43", "archived": False},
+            ],
+        )
+        poll_pr_status(client)
+        # Card moved to Done
+        client.update_issue.assert_called_with("card-X", status="Done")
+        # Exactly one workspace archived — the matching one
+        client.update_workspace.assert_called_once_with("ws-match", archived=True)
+
+    def test_in_review_transition_does_not_archive(self, monkeypatch):
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        client = MagicMock()
+
+        def _list_issues(project_id, status=None, **kw):
+            if status == "In progress":
+                return {"issues": [{
+                    "id": "c1", "simple_id": "YIA-70",
+                    "status": "In progress",
+                    "title": "gh#50: x",
+                    "latest_pr_url": "https://github.com/derio-net/willikins/pull/77",
+                    "latest_pr_status": "open",
+                }]}
+            return {"issues": []}
+
+        client.list_issues.side_effect = _list_issues
+        client.list_workspaces.return_value = {"workspaces": [
+            {"id": "ws-x", "name": "YIA-70 -> gh#50", "archived": False},
+        ]}
+        client.update_issue.return_value = {}
+        poll_pr_status(client)
+        client.update_issue.assert_called_with("c1", status="In review")
+        client.update_workspace.assert_not_called()
+
+    def test_archive_failure_is_non_fatal(self, monkeypatch):
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        client = _make_poll_client(
+            done_cards=[_done_card(simple_id="YIA-62")],
+            workspaces=[{"id": "ws-match", "name": "YIA-62 -> gh#44"}],
+        )
+        client.update_workspace.side_effect = VkMcpError("server down")
+        poll_pr_status(client)  # must not raise
+        client.update_issue.assert_called_with("card-X", status="Done")
+
+    def test_list_workspaces_failure_is_non_fatal(self, monkeypatch):
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        client = _make_poll_client(done_cards=[_done_card()])
+        client.list_workspaces.side_effect = VkMcpError("timeout")
+        poll_pr_status(client)
+        client.update_issue.assert_called_with("card-X", status="Done")
+        client.update_workspace.assert_not_called()
+
+    def test_no_archive_when_status_transition_fails(self, monkeypatch):
+        """If the card's Done transition fails, don't archive the workspace —
+        the work may still be in flight and the operator needs to see the card."""
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        client = _make_poll_client(
+            done_cards=[_done_card()],
+            workspaces=[{"id": "ws-match", "name": "YIA-60 -> gh#42"}],
+        )
+        client.update_issue.side_effect = VkMcpError("status transition failed")
+        poll_pr_status(client)
+        client.update_workspace.assert_not_called()
+
+    def test_archive_skipped_when_simple_id_missing(self, monkeypatch):
+        """Card without a simple_id can't be matched to a workspace; don't guess."""
+        monkeypatch.setattr(_subprocess, "run", lambda *a, **kw: MagicMock(returncode=0, stdout="", stderr=""))
+        card = _done_card()
+        card["simple_id"] = "?"
+        client = _make_poll_client(
+            done_cards=[card],
+            workspaces=[{"id": "ws-any", "name": "? -> gh#42"}],
+        )
+        poll_pr_status(client)
+        client.update_workspace.assert_not_called()
+
+
+class TestPollClosesGhIssueOnMerge:
+    def test_merged_pr_closes_gh_issue(self, monkeypatch):
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(list(args))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+        client = _make_poll_client(done_cards=[_done_card()])
+        poll_pr_status(client)
+        # Exactly one `gh issue close 42 --repo derio-net/willikins`
+        gh_close = [c for c in calls if c[:3] == ["gh", "issue", "close"]]
+        assert len(gh_close) == 1, f"expected 1 gh close call, got: {calls}"
+        args = gh_close[0]
+        assert "42" in args
+        assert "--repo" in args
+        assert "derio-net/willikins" in args
+
+    def test_no_close_without_pr_url(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(_subprocess, "run", lambda args, **kw: calls.append(list(args)) or MagicMock(returncode=0))
+        card = _done_card()
+        card["latest_pr_url"] = None
+        card["latest_pr_status"] = "merged"
+        # Without a pr_url we can't derive the repo; skip the close.
+        client = _make_poll_client(done_cards=[card])
+        poll_pr_status(client)
+        gh_close = [c for c in calls if c[:3] == ["gh", "issue", "close"]]
+        assert gh_close == []
+
+    def test_no_close_without_title(self, monkeypatch):
+        """Card with no title → no gh#N → no repo/issue-number to close."""
+        calls = []
+        monkeypatch.setattr(_subprocess, "run", lambda args, **kw: calls.append(list(args)) or MagicMock(returncode=0))
+        card = _done_card()
+        card["title"] = ""
+        client = _make_poll_client(done_cards=[card])
+        poll_pr_status(client)
+        gh_close = [c for c in calls if c[:3] == ["gh", "issue", "close"]]
+        assert gh_close == []
+
+    def test_already_closed_is_silent(self, monkeypatch):
+        """'already closed' stderr from gh must not raise or log as failure."""
+        def fake_run(args, **kw):
+            raise _subprocess.CalledProcessError(
+                1, args, stderr="HTTP 422: Issue is already closed"
+            )
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+        client = _make_poll_client(done_cards=[_done_card()])
+        poll_pr_status(client)  # no raise
+        client.update_issue.assert_called_with("card-X", status="Done")
+
+    def test_gh_close_non_fatal_on_other_errors(self, monkeypatch):
+        def fake_run(args, **kw):
+            raise _subprocess.CalledProcessError(
+                1, args, stderr="some other failure"
+            )
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+        client = _make_poll_client(done_cards=[_done_card()])
+        poll_pr_status(client)  # no raise — card transition already happened
+        client.update_issue.assert_called_with("card-X", status="Done")
+
+
+# --- Orphan workspace sweep (card missing or card Done) ---
+
+reap_orphan_workspaces = mod.reap_orphan_workspaces
+
+
+class TestReapOrphanWorkspaces:
+    """Bridge-named workspaces (`<simple_id> -> gh#<n>`) whose VK card
+    no longer exists, or whose card is already Done, must be archived —
+    poll_pr_status can't do it because it fires on card transitions.
+    This is the failure mode that left 7 hum workspaces stuck after
+    someone deleted their cards out-of-band."""
+
+    def _client(self, *, workspaces, cards):
+        client = MagicMock()
+        client.list_workspaces.return_value = {"workspaces": workspaces}
+        client.list_issues.return_value = {"issues": cards}
+        client.update_workspace.return_value = {}
+        return client
+
+    def test_card_missing_workspace_archived(self):
+        """Name matches bridge pattern and no card with that simple_id
+        exists → archive."""
+        client = self._client(
+            workspaces=[{
+                "id": "ws-orphan", "name": "FFE-50 -> gh#92",
+                "archived": False, "pinned": False,
+            }],
+            cards=[],
+        )
+        reap_orphan_workspaces(client)
+        client.update_workspace.assert_called_once_with(
+            "ws-orphan", archived=True
+        )
+
+    def test_card_done_workspace_archived(self):
+        """Card exists but is in Done status → archive the stuck workspace."""
+        client = self._client(
+            workspaces=[{
+                "id": "ws-done", "name": "FFE-51 -> gh#93",
+                "archived": False, "pinned": False,
+            }],
+            cards=[{"simple_id": "FFE-51", "status": "Done"}],
+        )
+        reap_orphan_workspaces(client)
+        client.update_workspace.assert_called_once_with(
+            "ws-done", archived=True
+        )
+
+    def test_card_in_progress_not_archived(self):
+        """Card still active → leave workspace alone."""
+        client = self._client(
+            workspaces=[{
+                "id": "ws-live", "name": "FFE-52 -> gh#94",
+                "archived": False, "pinned": False,
+            }],
+            cards=[{"simple_id": "FFE-52", "status": "In progress"}],
+        )
+        reap_orphan_workspaces(client)
+        client.update_workspace.assert_not_called()
+
+    def test_non_bridge_workspace_not_archived(self):
+        """Workspace name doesn't match `<simple_id> -> gh#<n>` → user-created,
+        don't touch."""
+        client = self._client(
+            workspaces=[{
+                "id": "ws-user", "name": "Pull from origin, then use vk-plan",
+                "archived": False, "pinned": False,
+            }],
+            cards=[],
+        )
+        reap_orphan_workspaces(client)
+        client.update_workspace.assert_not_called()
+
+    def test_pinned_workspace_not_archived(self):
+        """Pinned workspaces are user-protected — never archive."""
+        client = self._client(
+            workspaces=[{
+                "id": "ws-pinned", "name": "FFE-53 -> gh#95",
+                "archived": False, "pinned": True,
+            }],
+            cards=[],
+        )
+        reap_orphan_workspaces(client)
+        client.update_workspace.assert_not_called()
+
+    def test_list_workspaces_failure_non_fatal(self):
+        client = MagicMock()
+        client.list_workspaces.side_effect = VkMcpError("timeout")
+        reap_orphan_workspaces(client)  # no raise
+        client.update_workspace.assert_not_called()
+
+    def test_list_issues_failure_non_fatal(self):
+        client = MagicMock()
+        client.list_workspaces.return_value = {"workspaces": [{
+            "id": "ws-x", "name": "FFE-54 -> gh#96",
+            "archived": False, "pinned": False,
+        }]}
+        client.list_issues.side_effect = VkMcpError("timeout")
+        reap_orphan_workspaces(client)  # no raise
+        client.update_workspace.assert_not_called()
+
+    def test_update_workspace_failure_non_fatal(self):
+        client = self._client(
+            workspaces=[
+                {"id": "ws-a", "name": "FFE-55 -> gh#97", "archived": False, "pinned": False},
+                {"id": "ws-b", "name": "FFE-56 -> gh#98", "archived": False, "pinned": False},
+            ],
+            cards=[],
+        )
+        client.update_workspace.side_effect = VkMcpError("nope")
+        reap_orphan_workspaces(client)  # no raise
+        # Both attempts made; first failure doesn't abort second
+        assert client.update_workspace.call_count == 2
+
+    def test_multiple_orphans_all_archived(self):
+        """The 7-hum case: multiple bridge workspaces, no cards — all swept."""
+        workspaces = [
+            {"id": f"ws-{i}", "name": f"FFE-{50 + i} -> gh#{92 + i}",
+             "archived": False, "pinned": False}
+            for i in range(7)
+        ]
+        client = self._client(workspaces=workspaces, cards=[])
+        reap_orphan_workspaces(client)
+        assert client.update_workspace.call_count == 7
+        archived_ids = {c.args[0] for c in client.update_workspace.call_args_list}
+        assert archived_ids == {f"ws-{i}" for i in range(7)}
+
+
 # --- Phase-based body tests (superpowers-for-vk: prefix) ---
 
 PHASE_BODY = """## Instruction
@@ -741,6 +1055,36 @@ class TestParseDependenciesFailLoud:
             "## Dependencies\n\n- Blocked by #42\n",
             phase_number=1,
         ) == [(None, 42)]
+
+    def test_none_marker_accepted_for_phase_1(self):
+        """First-phase plans can be numbered phase:1 (not phase:0). The
+        'None — no blocking phases' marker emitted by vk-dispatch must be
+        accepted as an explicit 'no deps' declaration regardless of phase
+        number — otherwise agent-images#6, #7 get stuck with PARSE ERROR.
+        """
+        assert parse_deps(
+            "## Dependencies\n\nNone — no blocking phases.\n",
+            phase_number=1,
+        ) == []
+
+    def test_none_marker_accepted_for_high_phase_number(self):
+        assert parse_deps(
+            "## Dependencies\n\nNone — no blocking phases.\n",
+            phase_number=7,
+        ) == []
+
+    def test_none_marker_case_insensitive(self):
+        assert parse_deps(
+            "## Dependencies\n\nnone — no blocking phases.\n",
+            phase_number=3,
+        ) == []
+
+    def test_unrecognized_prose_still_raises_for_phase_n(self):
+        """Prose that is neither a recognized 'none' marker nor a
+        '- Blocked by #N' bullet still fails loud — catches typos."""
+        body = "## Dependencies\n\nSee sibling plan for constraints.\n"
+        with pytest.raises(ValueError, match="no parseable"):
+            parse_deps(body, phase_number=2)
 
     def test_ghissue_has_labels_default(self):
         i = GhIssue(number=1, title="t", body="b",

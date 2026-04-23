@@ -182,7 +182,13 @@ def parse_dependencies(
     deps: list[tuple[str | None, int]] = []
     in_deps = False
     saw_deps_section = False
+    saw_no_deps_marker = False
     dep_re = re.compile(r"-\s+Blocked by (?:(?P<repo>[\w.-]+/[\w.-]+))?#(?P<num>\d+)")
+    # vk-dispatch writes the literal string "None — no blocking phases."
+    # when a phase has no predecessors. Accept that (and minor variants)
+    # as an explicit "empty deps" declaration, so Phase-1-with-no-deps
+    # plans don't get stuck with PARSE ERROR.
+    none_re = re.compile(r"^\s*none\b.*no blocking phases", re.IGNORECASE)
     for line in body.splitlines():
         stripped = line.strip()
         if stripped == "## Dependencies":
@@ -195,8 +201,15 @@ def parse_dependencies(
             m = dep_re.match(stripped)
             if m:
                 deps.append((m.group("repo"), int(m.group("num"))))
+            elif none_re.search(stripped):
+                saw_no_deps_marker = True
 
-    if phase_number is not None and phase_number > 0 and not deps:
+    if (
+        phase_number is not None
+        and phase_number > 0
+        and not deps
+        and not saw_no_deps_marker
+    ):
         missing_section = "" if saw_deps_section else " No ## Dependencies section found."
         raise ValueError(
             f"Issue body for phase {phase_number} has no parseable "
@@ -244,12 +257,144 @@ def check_blockers(repo: str, deps: list[tuple[str | None, int]]) -> list[str]:
 
 # --- VK MCP helpers ---
 
+_GH_REPO_FROM_URL_RE = re.compile(
+    r"https?://github\.com/([\w.-]+/[\w.-]+)/(?:pull|issues)/\d+"
+)
+_GH_ISSUE_NUM_FROM_TITLE_RE = re.compile(r"gh#(\d+)")
+
+
+def archive_workspace_for_card(client: VkMcpClient, simple_id: str) -> None:
+    """Archive the workspace(s) whose name prefix matches this card's simple_id.
+
+    The bridge creates workspaces named ``<simple_id> -> gh#<n>`` (see
+    ``sync_issue`` / ``start_workspace``); that prefix is the reliable join key
+    from card to workspace. Without this step, workspaces remain active after
+    their PR merges and eventually saturate the ``VK_MAX_CONCURRENT`` cap.
+    All failures are non-fatal — the card has already transitioned to Done.
+    """
+    if not simple_id or simple_id == "?":
+        return
+    try:
+        resp = client.list_workspaces(archived=False, limit=200)
+    except VkMcpError as e:
+        log(f"  ! {simple_id}: workspace lookup failed (non-fatal): {e}")
+        return
+    workspaces = resp.get("workspaces", []) if isinstance(resp, dict) else []
+    prefix = f"{simple_id} ->"
+    for w in workspaces:
+        if not isinstance(w, dict):
+            continue
+        name = w.get("name") or ""
+        if not name.startswith(prefix):
+            continue
+        ws_id = w.get("id")
+        if not ws_id:
+            continue
+        try:
+            client.update_workspace(ws_id, archived=True)
+            short = ws_id[:8] if len(ws_id) > 8 else ws_id
+            log(f"  ↙ {simple_id}: archived workspace {short}")
+        except VkMcpError as e:
+            log(f"  ! {simple_id}: archive workspace failed (non-fatal): {e}")
+
+
+def close_gh_issue_for_card(title: str, pr_url: str | None) -> None:
+    """Close the GitHub Issue referenced by a VK card.
+
+    The card title is ``gh#<N>: <rest>`` (set in ``sync_issue``), and the
+    linked PR URL gives us the owner/repo. Belt-and-braces for the case where
+    the agent's PR body omits ``Fixes #N`` so GitHub's native auto-close
+    doesn't fire. All failures are non-fatal.
+    """
+    if not pr_url or not title:
+        return
+    m_repo = _GH_REPO_FROM_URL_RE.match(pr_url)
+    m_num = _GH_ISSUE_NUM_FROM_TITLE_RE.search(title)
+    if not m_repo or not m_num:
+        return
+    repo, num = m_repo.group(1), m_num.group(1)
+    try:
+        subprocess.run(
+            ["gh", "issue", "close", num, "--repo", repo],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        log(f"  ⏹ closed {repo}#{num}")
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        if "already closed" in stderr.lower():
+            return
+        log(f"  ! close {repo}#{num} failed (non-fatal): {stderr[:160]}")
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        log(f"  ! close {repo}#{num} failed (non-fatal): {e}")
+
+
+_BRIDGE_WS_NAME_RE = re.compile(r"^(?P<sid>\S+)\s*->\s*gh#\d+\s*$")
+
+
+def reap_orphan_workspaces(client: VkMcpClient) -> None:
+    """Archive bridge-created workspaces whose card is missing or Done.
+
+    ``poll_pr_status`` can only archive on *card* transitions. If a card
+    was deleted out-of-band or reached Done before this sweeper existed,
+    its workspace leaks forever and eats a concurrency slot (this is
+    exactly how the 7 FFE-50..56 hum workspaces got stuck).
+
+    Only workspaces matching the bridge naming pattern
+    ``<simple_id> -> gh#<n>`` are candidates. Pinned workspaces are never
+    touched. All failures are non-fatal.
+    """
+    try:
+        ws_resp = client.list_workspaces(archived=False, limit=200)
+    except VkMcpError as e:
+        log(f"[warn] orphan sweep: list_workspaces failed: {e}")
+        return
+    workspaces = ws_resp.get("workspaces", []) if isinstance(ws_resp, dict) else []
+    if not workspaces:
+        return
+
+    try:
+        cards_resp = client.list_issues(VK_DERIO_OPS_PROJECT, limit=500)
+    except VkMcpError as e:
+        log(f"[warn] orphan sweep: list_issues failed: {e}")
+        return
+    cards = cards_resp.get("issues", []) if isinstance(cards_resp, dict) else []
+    card_status: dict[str, str] = {}
+    for c in cards:
+        if not isinstance(c, dict):
+            continue
+        sid = c.get("simple_id")
+        if sid:
+            card_status[str(sid)] = str(c.get("status", ""))
+
+    for w in workspaces:
+        if not isinstance(w, dict) or w.get("pinned"):
+            continue
+        name = w.get("name") or ""
+        m = _BRIDGE_WS_NAME_RE.match(name)
+        if not m:
+            continue
+        sid = m.group("sid")
+        status = card_status.get(sid)
+        if status is not None and status != "Done":
+            continue  # card still active
+        ws_id = w.get("id")
+        if not ws_id:
+            continue
+        try:
+            client.update_workspace(ws_id, archived=True)
+            short = ws_id[:8] if len(ws_id) > 8 else ws_id
+            reason = "no card" if status is None else "card Done"
+            log(f"  ↙ {sid}: reaped workspace {short} ({reason})")
+        except VkMcpError as e:
+            log(f"  ! {sid}: reap failed (non-fatal): {e}")
+
+
 def poll_pr_status(client: VkMcpClient) -> None:
     """Check in-progress/in-review VK cards for PR status changes.
 
     Transitions:
       - In progress + open PR → In review
-      - In review + merged PR → Done
+      - In review + merged PR → Done (+ archive workspace + close GH Issue)
     """
     for status in ("In progress", "In review"):
         try:
@@ -261,6 +406,8 @@ def poll_pr_status(client: VkMcpClient) -> None:
         for card in resp.get("issues", []):
             card_id = card.get("id")
             simple_id = card.get("simple_id", "?")
+            title = card.get("title", "") or ""
+            pr_url = card.get("latest_pr_url")
             pr_status = card.get("latest_pr_status")
             current_status = card.get("status", "")
 
@@ -273,12 +420,19 @@ def poll_pr_status(client: VkMcpClient) -> None:
             elif current_status == "In review" and pr_status == "merged":
                 new_status = "Done"
 
-            if new_status:
-                try:
-                    client.update_issue(card_id, status=new_status)
-                    log(f"  ↗ {simple_id}: {current_status} → {new_status} (PR {pr_status})")
-                except VkMcpError as e:
-                    log(f"  ! {simple_id}: status transition failed (non-fatal): {e}")
+            if not new_status:
+                continue
+
+            try:
+                client.update_issue(card_id, status=new_status)
+                log(f"  ↗ {simple_id}: {current_status} → {new_status} (PR {pr_status})")
+            except VkMcpError as e:
+                log(f"  ! {simple_id}: status transition failed (non-fatal): {e}")
+                continue
+
+            if new_status == "Done":
+                archive_workspace_for_card(client, simple_id)
+                close_gh_issue_for_card(title, pr_url)
 
 
 def fetch_existing_titles(client: VkMcpClient) -> set[str]:
@@ -668,6 +822,10 @@ def main() -> int:
         # PR-status polling
         log("[bridge] polling PR status for active cards...")
         poll_pr_status(client)
+
+        # Sweep workspaces whose card is gone or already Done
+        log("[bridge] reaping orphan workspaces...")
+        reap_orphan_workspaces(client)
 
         push_heartbeat()
         return 1 if failed > 0 else 0

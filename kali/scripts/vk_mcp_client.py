@@ -172,6 +172,11 @@ class VkMcpClient:
     def list_workspaces(self, **kwargs) -> Any:
         return self.call_tool("list_workspaces", {**kwargs})
 
+    def update_workspace(self, workspace_id: str, **kwargs) -> Any:
+        return self.call_tool("update_workspace", {
+            "workspace_id": workspace_id, **kwargs
+        })
+
     def list_repos(self) -> Any:
         return self.call_tool("list_repos", {})
 
