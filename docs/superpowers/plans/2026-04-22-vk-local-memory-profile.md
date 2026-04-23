@@ -38,7 +38,7 @@
 **Files:**
 - Create: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md` (scratch doc, filled incrementally)
 
-- [ ] **Step 1: Identify the vibe-kanban binary's vintage**
+- [x] **Step 1: Identify the vibe-kanban binary's vintage**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -50,7 +50,7 @@ Expected: a `ELF 64-bit LSB pie executable x86-64` with a stable size (~20-80 MB
 
 Note the image tag shown in `apps/secure-agent-pod/manifests/deployment.yaml:107` and correlate with the agent-images `vk-local/Dockerfile` `VK_FORK_SHA` build-arg to trace the upstream commit.
 
-- [ ] **Step 2: List the binary's linked libraries**
+- [x] **Step 2: List the binary's linked libraries**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -60,7 +60,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 If `ldd` shows `libjemalloc.so.*` → the binary uses jemalloc and we can snapshot via `MALLOC_CONF=prof_dump_path:...` + `USR2` signal. If glibc malloc only → we're limited to RSS + `/proc/PID/status`.
 
-- [ ] **Step 3: Enumerate HTTP surface under load**
+- [x] **Step 3: Enumerate HTTP surface under load**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -70,7 +70,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Goal: confirm the server is responsive and list any endpoints exposed. The server shouldn't be under heavy load in idle state — any steady growth in RSS from idle is a leak.
 
-- [ ] **Step 4: Draft the findings doc skeleton**
+- [x] **Step 4: Draft the findings doc skeleton**
 
 Create `kali/docs/findings/2026-04-22-vk-local-memory-profile.md` with:
 
@@ -122,7 +122,7 @@ Do NOT commit this file yet — it's filled across Phases 1–3.
 **Files:**
 - None (read-only verification).
 
-- [ ] **Step 1: Confirm kube-state-metrics tracks the vk-local container**
+- [x] **Step 1: Confirm kube-state-metrics tracks the vk-local container**
 
 From the Frank control host:
 
@@ -134,7 +134,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Expected: JSON with `result` array containing one entry and a recent `value` (MB range).
 
-- [ ] **Step 2: Confirm OOMKill events are tracked**
+- [x] **Step 2: Confirm OOMKill events are tracked**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -144,7 +144,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Expected: at least one entry with a timestamp matching a known OOMKill. If the metric doesn't exist, fall back to `kubectl get events -n secure-agent-pod` correlation.
 
-- [ ] **Step 3: Check if node-exporter tracks cgroup-level memory for this container**
+- [x] **Step 3: Check if node-exporter tracks cgroup-level memory for this container**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
