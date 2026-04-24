@@ -1237,6 +1237,118 @@ class TestDiscoveryWarningFiltering:
         assert "[warn]" in combined
         assert "willikins" in combined
 
+    def test_gh_graphql_could_not_resolve_is_info_not_warn(self, monkeypatch, capsys):
+        """GraphQL-layer 'Could not resolve to a Repository' is the same condition
+        as REST HTTP 404 — local-only mirror, not a real failure. The Phase 1
+        fix only caught the REST form; this extends it."""
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["derio-profile"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh",
+                stderr=(
+                    "GraphQL: Could not resolve to a Repository with the name "
+                    "'derio-net/derio-profile'. (repository)"
+                ),
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" not in combined
+        assert "[info]" in combined
+
+    def test_gh_transient_eof_is_info_not_warn(self, monkeypatch, capsys):
+        """GitHub API flakes (EOF, reset) should not alert — the bridge runs
+        every 2 min and will retry naturally. Warn noise drowns real issues."""
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["willikins"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh",
+                stderr='Post "https://api.github.com/graphql": unexpected EOF',
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" not in combined
+        assert "[info]" in combined
+
+    def test_gh_transient_reset_is_info_not_warn(self, monkeypatch, capsys):
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["willikins"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh",
+                stderr=(
+                    'Post "https://api.github.com/graphql": read tcp '
+                    "10.244.10.125:40904->140.82.121.5:443: read: connection "
+                    "reset by peer"
+                ),
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" not in combined
+        assert "[info]" in combined
+
+    def test_gh_http_5xx_still_warns(self, monkeypatch, capsys):
+        """HTTP 5xx from GitHub is a real upstream problem — do not demote
+        it. If this fires frequently, operators need to know."""
+        monkeypatch.setattr(mod, "discover_repos", lambda *a, **kw: ["frank"])
+
+        def fake_run(*args, **kwargs):
+            raise _subprocess.CalledProcessError(
+                1, "gh",
+                stderr="HTTP 503: Service Unavailable",
+            )
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        issues = mod.gh_list_ready_issues()
+        assert issues == []
+
+        captured = capsys.readouterr()
+        combined = captured.err + captured.out
+        assert "[warn]" in combined
+
+
+class TestClassifyGhError:
+    """Direct unit tests for _classify_gh_error."""
+
+    @pytest.mark.parametrize("stderr", [
+        "HTTP 404: Not Found (https://api.github.com/repos/derio-net/foo/issues)",
+        "Could not resolve to a Repository with the name 'derio-net/foo'",
+        "GraphQL: Could not resolve to a Repository with the name 'derio-net/foo'. (repository)",
+        'Post "https://api.github.com/graphql": unexpected EOF',
+        "read: connection reset by peer",
+        "dial tcp: i/o timeout",
+        "dial tcp: lookup api.github.com: no such host",
+    ])
+    def test_absent_or_transient_is_info(self, stderr):
+        assert mod._classify_gh_error(stderr) == "info"
+
+    @pytest.mark.parametrize("stderr", [
+        "HTTP 401: Unauthorized",
+        "HTTP 403: Forbidden",
+        "HTTP 503: Service Unavailable",
+        "HTTP 502: Bad Gateway",
+        "unexpected JSON response",
+        "",
+    ])
+    def test_real_errors_still_warn(self, stderr):
+        assert mod._classify_gh_error(stderr) == "warn"
+
 
 # --- Multi-blocker check_blockers tests (parallel-dispatch-dag regression) ---
 #

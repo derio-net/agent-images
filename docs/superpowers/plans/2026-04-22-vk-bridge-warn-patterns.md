@@ -36,7 +36,7 @@
 **Files:**
 - Modify: `kali/tests/test_vk_issue_bridge.py`
 
-- [ ] **Step 1: Locate the existing warn-filtering class**
+- [x] **Step 1: Locate the existing warn-filtering class**
 
 ```bash
 grep -n "class TestDiscoveryWarningFiltering" kali/tests/test_vk_issue_bridge.py
@@ -44,7 +44,7 @@ grep -n "class TestDiscoveryWarningFiltering" kali/tests/test_vk_issue_bridge.py
 
 Expected: one match near line 857. Confirm the class uses `monkeypatch.setattr(_subprocess, "run", fake_run)` to stub `gh` failure stderr.
 
-- [ ] **Step 2: Add failing test — GraphQL "Could not resolve to a Repository" is demoted**
+- [x] **Step 2: Add failing test — GraphQL "Could not resolve to a Repository" is demoted**
 
 Extend `TestDiscoveryWarningFiltering` with:
 
@@ -74,7 +74,7 @@ Extend `TestDiscoveryWarningFiltering` with:
         assert "[info]" in combined
 ```
 
-- [ ] **Step 3: Add failing test — transient network errors are demoted to info**
+- [x] **Step 3: Add failing test — transient network errors are demoted to info**
 
 Add two test cases covering `unexpected EOF` and `connection reset by peer`:
 
@@ -122,7 +122,7 @@ Add two test cases covering `unexpected EOF` and `connection reset by peer`:
         assert "[info]" in combined
 ```
 
-- [ ] **Step 4: Add regression guard — real HTTP 5xx still warns**
+- [x] **Step 4: Add regression guard — real HTTP 5xx still warns**
 
 This is the "do not over-demote" test. A 502/503 is a real upstream problem worth surfacing. Add:
 
@@ -147,7 +147,7 @@ This is the "do not over-demote" test. A 502/503 is a real upstream problem wort
         assert "[warn]" in combined
 ```
 
-- [ ] **Step 5: Run the new tests — all should fail (except the regression guard, which passes on current code)**
+- [x] **Step 5: Run the new tests — all should fail (except the regression guard, which passes on current code)**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images/kali
@@ -161,7 +161,7 @@ Expected: the existing `test_gh_404_is_info_not_warn` passes (Phase 1 fix is liv
 **Files:**
 - Modify: `kali/scripts/vk-issue-bridge.py`
 
-- [ ] **Step 1: Read the existing classifier**
+- [x] **Step 1: Read the existing classifier**
 
 ```bash
 sed -n '380,395p' kali/scripts/vk-issue-bridge.py
@@ -169,7 +169,7 @@ sed -n '380,395p' kali/scripts/vk-issue-bridge.py
 
 Expected: the `except subprocess.CalledProcessError` block at line 381–388 with the current regex `re.search(r"\bHTTP 404\b", stderr) or "Could not resolve" in stderr`.
 
-- [ ] **Step 2: Extract the pattern match into a module-level helper**
+- [x] **Step 2: Extract the pattern match into a module-level helper**
 
 Keeping the classification logic inline makes it hard to test in isolation and hard to extend. Move it to a helper. Add near the top of the file's internal helpers section (after the existing constants, before `push_success_metric`):
 
@@ -207,7 +207,7 @@ def _classify_gh_error(stderr: str) -> str:
     return "warn"
 ```
 
-- [ ] **Step 3: Wire the helper into `gh_list_ready_issues`**
+- [x] **Step 3: Wire the helper into `gh_list_ready_issues`**
 
 Replace lines 381–388 (`except subprocess.CalledProcessError as e:` block) with:
 
@@ -223,7 +223,7 @@ Replace lines 381–388 (`except subprocess.CalledProcessError as e:` block) wit
             continue
 ```
 
-- [ ] **Step 4: Re-run the warn-filtering tests — all should pass**
+- [x] **Step 4: Re-run the warn-filtering tests — all should pass**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images/kali
@@ -232,7 +232,7 @@ python -m pytest tests/test_vk_issue_bridge.py::TestDiscoveryWarningFiltering -x
 
 Expected: all five tests pass (the existing 404 test, three new demotion tests, one regression guard).
 
-- [ ] **Step 5: Run the full bridge suite — catch regressions**
+- [x] **Step 5: Run the full bridge suite — catch regressions**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images/kali
@@ -246,7 +246,7 @@ Expected: pass. If any unrelated test fails, STOP — the helper extraction chan
 **Files:**
 - Modify: `kali/tests/test_vk_issue_bridge.py`
 
-- [ ] **Step 1: Add a class that exercises the classifier directly**
+- [x] **Step 1: Add a class that exercises the classifier directly**
 
 The `TestDiscoveryWarningFiltering` tests above exercise the full `gh_list_ready_issues` path (integration-style). Add a narrower class that hits only the classifier — this catches regex mistakes without the subprocess dance:
 
@@ -278,7 +278,7 @@ class TestClassifyGhError:
         assert mod._classify_gh_error(stderr) == "warn"
 ```
 
-- [ ] **Step 2: Run the direct unit tests**
+- [x] **Step 2: Run the direct unit tests**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images/kali
@@ -308,7 +308,7 @@ Expected: 20 lines. Classify each mentally:
 - `HTTP 5xx` → should stay warn
 - Anything else → STOP and add to the classifier before merging
 
-- [ ] **Step 2: Cross-check each sampled stderr against the classifier**
+- [x] **Step 2: Cross-check each sampled stderr against the classifier**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images/kali
