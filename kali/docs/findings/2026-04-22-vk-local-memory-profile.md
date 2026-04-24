@@ -24,7 +24,7 @@ Data collected 2026-04-23 by the Phase 1 agent. Environment: `frank` cluster, po
 - **ELF:** dynamically linked, `linux-x86-64` (ELF magic `\x7FELF` confirmed; `file`/`readelf` not installed in the image).
 - **Reported server version (`/api/info`):** `0.1.42`, config version `v8`.
 - **Allocator:** **glibc malloc.** `ldd` shows only `libc.so.6`, `libgcc_s.so.1`, `libm.so.6`, `linux-vdso.so.1`, `ld-linux-x86-64.so.2` — no `libjemalloc`. This rules out the jemalloc `USR2` profiling path sketched in Phase 2. Heap analysis must fall back to RSS + `/proc/PID/status` + cgroup stats.
-- **Stripped:** not confirmed (no `readelf`); size ≈ 133 MiB suggests debug symbols retained or panic-backtrace infra is present.
+- **Stripped:** not confirmed (no `readelf` / `file` in the image). Size ≈ 133 MiB is *suggestive* of debug symbols retained or large panic-backtrace / tracing-instrumentation footprint, but this is a hypothesis, not a finding — Phase 2 or a follow-up can confirm via `readelf -S` from a debugger sidecar.
 - **CLI flags:** `--version` is not wired up — it falls through to server startup and then crashes with `AddrInUse` because the main instance is already bound. Treat the binary as having no out-of-band version flag.
 
 ### Process shape (unexpected — critical for Phase 2 interpretation)
@@ -86,9 +86,30 @@ Probes configured in the Deployment:
 
 **Phase 2 impact:** the plan's Phase 2 Task 1 Steps 4–5 rely on `container_memory_working_set_bytes` from VictoriaMetrics for a continuous 1-minute RSS scrape. **That path is unavailable.** Phase 2 must be adjusted to:
 
-1. **Primary sampler:** a 60-second poll of `/proc/7/status` (VmRSS, VmHWM, Threads) + `/sys/fs/cgroup/memory.current` + `memory.peak` via `kubectl exec -c vk-local`, driven from a long-running loop on an external host (Frank control host or another cluster workload). Record per-process RSS for `vibe-kanban` and each spawned child separately — the process tree is the signal, not the single PID.
-2. **OOM correlation:** poll `kube_pod_container_status_last_terminated_timestamp` + `_reason` from VictoriaMetrics every minute — this *is* scraped for this container.
-3. **Out-of-scope escalation:** fixing the cadvisor scrape coverage for `gpu-1` is a separate deploy-plan item against `derio-net/frank`; do not do it from this plan, but note it in the final decision.
+1. **Primary sampler** — a 60-second loop that runs the following three commands via `kubectl exec` (driver can be the Frank control host or a long-running kali-container background job):
+
+    ```bash
+    # (1) Per-process snapshot of the vk-local cgroup — find the vibe-kanban PID
+    #     dynamically because it is not always PID 7 after restarts.
+    kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+      ps -eo pid,ppid,rss,vsz,comm --sort=-rss
+
+    # (2) vibe-kanban process detail (substitute the PID discovered in (1))
+    kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+      bash -c 'grep -E "^(VmPeak|VmSize|VmHWM|VmRSS|RssAnon|RssFile|VmData|Threads)" /proc/$PID/status'
+
+    # (3) cgroup-level current / peak / limit — the ground truth for the 2 GiB cap
+    kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+      bash -c 'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max'
+    ```
+
+    Store one row per sample with per-child RSS — the process tree is the signal, not any single PID.
+
+2. **OOM correlation** — poll `kube_pod_container_status_last_terminated_timestamp` and `_reason` from VictoriaMetrics every minute (this *is* scraped for this container). The driver needs in-cluster reachability of `http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428` *or* a `kubectl exec` hop through a pod that does.
+
+3. **Gap-filler for OOMKill events** — `kubectl exec`-based polling drops samples during restarts, so when an OOMKill lands mid-window capture the pre-kill number from `kubectl describe pod -n secure-agent-pod deploy/secure-agent-pod -c vk-local` (Last State → Finished block) to avoid a blind spot.
+
+4. **Out-of-scope escalation** — fixing the cadvisor scrape coverage for `gpu-1` is a separate deploy-plan item against `derio-net/frank`; do not do it from this plan, but file a follow-up Issue so the gap doesn't get lost.
 
 ---
 
@@ -119,6 +140,8 @@ Probes configured in the Deployment:
 
 ## Phase 3 — Decision (pending)
 
+> **Note on option definitions:** Option B below is a refinement of the original plan's "upstream cap: working-set is unbounded under workload X" to reflect the Phase 1 discovery that `vibe-kanban` itself is only ~147 MiB RSS — an "upstream cap in the Rust binary" no longer matches the observed behavior. The cgroup fills with *child processes*, so the Phase 3 agent chooses between raising the limit, capping/relocating the child workload, or finding a leak. If the Phase 3 agent prefers the original framing, keep it — but the numbers from Phase 1 have to be reconciled either way.
+
 One of:
 - **A (raise limit):** recommended limit = _N_ Gi, justification = peak + margin. Follow-up deploy plan against `derio-net/frank`.
 - **B (cap concurrency / re-parent children):** the cgroup fills because `vibe-kanban` spawns `claude`/`npm`/`node` as children of the vk-local cgroup. Options: run them in the `kali` sibling container, enforce a max concurrent-sessions config, or move to a per-task pod. File upstream issue/PR against the vibe-kanban fork.
@@ -130,43 +153,173 @@ One of:
 
 ## Appendix — commands and raw data
 
-Captured 2026-04-23 20:37–20:45 UTC from the `frank` kube context.
+Captured 2026-04-23 20:37–20:45 UTC from the `frank` kube context (`kubectl config current-context == frank`).
 
-```text
-# Binary
-/usr/local/bin/vibe-kanban: 139643680 B, mtime=2026-04-18T06:40:55Z
-sha256: d3bbcd70b187e757f41426db6915886e8e967640ab958efa3b88b5147679b9bf
+### A.1 Binary metadata
 
-# ldd
-linux-vdso.so.1
-libc.so.6
-libgcc_s.so.1
-libm.so.6
-ld-linux-x86-64.so.2
-
-# /api/info
-{"success":true,"data":{"version":"0.1.42","config":{"config_version":"v8", ...}}}
-
-# cgroup snapshot
-memory.current = 791,285,760 B  (755 MiB)
-memory.peak    = 1,367,040,000 B (1304 MiB)
-memory.max     = 2,147,483,648 B (2 Gi)
-
-# memory.stat (excerpt)
-anon  429,047,808
-file  308,011,008
-kernel 45,711,360
-kernel_stack 3,178,496
-sock   4,804,608
-
-# process tree RSS (sum 760 MiB with 1 active claude)
-tini         1300
-vibe-kanban  150188
-claude       389632
-npm           81664
-node          85912
-kubectl       54492
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+  bash -c 'ls -lh /usr/local/bin/vibe-kanban; stat /usr/local/bin/vibe-kanban;
+           sha256sum /usr/local/bin/vibe-kanban; head -c 4 /usr/local/bin/vibe-kanban | od -c | head -1'
 ```
 
-VictoriaMetrics query base used: `http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428/api/v1`.
+Output:
+```
+-rwxr-xr-x 1 claude claude 134M Apr 18 06:40 /usr/local/bin/vibe-kanban
+Size: 139643680   Modify: 2026-04-18 06:40:55 +0000
+d3bbcd70b187e757f41426db6915886e8e967640ab958efa3b88b5147679b9bf  /usr/local/bin/vibe-kanban
+0000000 177   E   L   F        # ELF magic confirmed; `file` / `readelf` not installed in the image
+```
+
+### A.2 ldd (allocator determination)
+
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+  ldd /usr/local/bin/vibe-kanban
+```
+
+Output (no `libjemalloc*` → glibc malloc):
+```
+linux-vdso.so.1
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1
+libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6
+/lib64/ld-linux-x86-64.so.2
+```
+
+### A.3 HTTP surface enumeration
+
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- bash -c '
+  for p in /api/health /api/info /api/version /api/projects /api/tasks \
+           /api/executions /api/config /api/metrics /api/events /metrics; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:8081${p})
+    ct=$(curl -sI --max-time 3 http://localhost:8081${p} 2>/dev/null \
+         | grep -i "^content-type" | head -1 | tr -d "\r\n")
+    echo "${p} | ${code} | ${ct}"
+  done'
+```
+
+Output (only `application/json` and `text/event-stream` entries are real routes; the rest fall through to the SPA `index.html`):
+```
+/api/health     | 200 | content-type: application/json
+/api/info       | 200 | content-type: application/json
+/api/version    | 200 | content-type: text/html             ← SPA fallback
+/api/projects   | 200 | content-type: text/html             ← SPA fallback
+/api/tasks      | 200 | content-type: text/html             ← SPA fallback
+/api/executions | 200 | content-type: text/html             ← SPA fallback
+/api/config     | 405 |                                     ← real route, method not allowed
+/api/metrics    | 200 | content-type: text/html             ← SPA fallback (no Prom endpoint)
+/api/events     | 200 | content-type: text/event-stream     ← SSE, real
+/metrics        | 200 | content-type: text/html             ← SPA fallback (no Prom endpoint)
+```
+
+`/api/info` body (excerpt):
+```json
+{"success":true,"data":{"version":"0.1.42","config":{"config_version":"v8", ...}}}
+```
+
+### A.4 Process tree snapshot (sampled 2026-04-23 20:40 UTC; single sample)
+
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+  ps -eo pid,ppid,rss,vsz,comm --sort=pid
+```
+
+Output (RSS in KiB):
+```
+  PID  PPID    RSS     VSZ COMMAND
+    1     0   1300    2488 tini
+    7     1 150188 8948900 vibe-kanban
+ 1513     7 389632 74789388 claude
+ 1535  1513  81664 1331408 npm exec @upsta
+ 1586  1535   1712    2592 sh
+ 1587  1586  85912 22080084 node
+24145  1513   3028    4072 bash
+24245 24145  53536 1288896 kubectl
+```
+
+Sum of per-process RSS ≈ 760 MiB, matching cgroup `memory.current` (below) to within a few MiB — so the cgroup fill is fully accounted for by this tree. Caveat: a single sample; Phase 2 will produce the time series.
+
+### A.5 vibe-kanban-only memory detail (PID 7 at same sample)
+
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+  bash -c 'grep -E "^(VmPeak|VmSize|VmHWM|VmRSS|RssAnon|RssFile|VmData|Threads)" /proc/7/status;
+           echo "---"; cat /proc/7/smaps_rollup | grep -E "^(Rss|Pss|Anonymous|Private_Dirty)"'
+```
+
+Output excerpt: `VmRSS ≈ 150,188 kB`; `Pss 148,221 kB`; `Pss_Anon 106,472 kB` (≈71 % private-dirty anon heap). Rust server process memory is modest — the cgroup stress comes from children.
+
+### A.6 cgroup snapshot (same sample, cgroup v2)
+
+```bash
+kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+  bash -c 'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory.max; \
+           echo "---"; head -15 /sys/fs/cgroup/memory.stat'
+```
+
+Output:
+```
+memory.current = 791,285,760  B  (755 MiB)
+memory.peak    = 1,367,040,000 B (1304 MiB)        # since container start (~14h window)
+memory.max     = 2,147,483,648 B (2 Gi)            # cgroup limit
+anon    429,047,808
+file    308,011,008
+kernel   45,711,360
+kernel_stack 3,178,496
+sock      4,804,608
+```
+
+### A.7 VictoriaMetrics availability (the big tooling finding)
+
+Base endpoint used for all VM queries (reachable from any pod in the cluster):
+```
+http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428/api/v1
+```
+
+Confirming that cadvisor scrape covers *only* `raspi-1` / `raspi-2`, not `gpu-1`:
+
+```bash
+kubectl run -n monitoring vk-probe --rm -i --restart=Never --image=curlimages/curl:latest --command -- \
+  curl -sG "http://vmsingle-victoria-metrics-victoria-metrics-k8s-stack.monitoring.svc:8428/api/v1/query" \
+       --data-urlencode 'query=count by (node) (container_memory_working_set_bytes)'
+```
+
+Output (abridged):
+```json
+{"status":"success","data":{"resultType":"vector","result":[
+  {"metric":{"node":"raspi-1"},"value":[...,"47"]},
+  {"metric":{"node":"raspi-2"},"value":[...,"43"]}
+]}}
+```
+
+No `node=gpu-1` entry → no cadvisor series for the node where `secure-agent-pod` runs. This is the claim that drives the entire Phase 2 redirect; re-running the query above is the verification path.
+
+Confirming that `container_memory_working_set_bytes{container="vk-local"}` is empty:
+
+```bash
+# same probe-pod pattern — query = container_memory_working_set_bytes{container="vk-local"}
+# result: {"data":{"resultType":"vector","result":[]}}
+```
+
+Confirming that `kubectl top` has no backend:
+
+```
+$ kubectl top pod -n secure-agent-pod --containers
+error: Metrics API not available
+```
+
+Confirming that kube-state-metrics *does* track this container (so OOM correlation still works):
+
+```bash
+# query = kube_pod_container_status_last_terminated_reason{namespace="secure-agent-pod",container="vk-local",reason="OOMKilled"}
+# result: 1 series, value=1  (most-recent termination was an OOMKill)
+
+# query = kube_pod_container_status_restarts_total{namespace="secure-agent-pod",container="vk-local"}
+# result: 8
+
+# query = increase(kube_pod_container_status_restarts_total{...vk-local}[24h])
+# result: 2
+```
 

@@ -161,6 +161,8 @@ Expected: RSS in bytes for the current process. If missing, use the `container_m
 
 **Depends on:** Phase 1
 
+> **⚠️ Read this before dispatching Phase 2.** Phase 1 discovered the `frank` cluster has **no cadvisor scrape coverage for `gpu-1`** (the node vk-local runs on) and **no metrics-server for `kubectl top`**. The original Task 1 Steps 4–5 below (querying `container_memory_working_set_bytes` from VictoriaMetrics) **will return empty results** and must not be followed verbatim. The redirected sampler design — 60-second `kubectl exec` polls of `/proc/$PID/status` + `/sys/fs/cgroup/memory.{current,peak}` with per-child RSS from `ps` — is documented in the "Phase 2 impact" section of `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`. Use that as the authoritative sampler spec for Phase 2.
+
 ### Task 1: Run the 24h data collection
 
 **Files:**
