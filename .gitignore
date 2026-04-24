@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
 .env
+uv.lock
 package-lock.json
 node_modules/
