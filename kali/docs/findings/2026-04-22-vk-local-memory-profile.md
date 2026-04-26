@@ -160,6 +160,7 @@ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$PID" "$VK_RSS" "$VK_HWM" "$VK_TH" 
 |-----------------------|--------------------:|----------:|--------:|---------------:|---------------:|----------------:|-------------------------------------------------------------|
 | 2026-04-26T09:27:28Z  | 190,000 kB          | 190,000 kB| 76      | 813 MiB        | 2 GiB + 4 KiB  | 0               | T+0 baseline; no active claude session; peak = pre-window OOM (24h ago) |
 | 2026-04-26T09:49:35Z  | 190,000 kB          | 190,000 kB| 76      | 813.6 MiB      | 2 GiB + 4 KiB  | 0               | T+0:22m sanity check (sampler-script verification); ~0.6 MiB drift over 22m = ~1.6 MiB/h idle |
+| 2026-04-26T21:00:17Z  | 80,556 kB           | 80,556 kB | 93      | 118.3 MiB      | 773 MiB        | 0               | T+11.5h. **OOMKill mid-window**: cgroup.peak dropped from 2 GiB+4 KiB to 773 MiB → vk-local restarted between T+0:22m and now. Fresh vibe-kanban process (PID 7, RSS 80 MiB vs prior 190 MiB; Threads 93 vs prior 76 — process is younger but with more threads, suggesting a different workload phase). Exact OOMKill timestamp not captured here; recover via `kubectl describe pod` Last State block before kubelet rolls it. |
 |                       |                     |           |         |                |                |                 |                                                             |
 
 ### Activity correlation
