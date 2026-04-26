@@ -18,11 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get dist-upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
-# ── sshd + Kali tooling + logrotate (for rotate-logs.sh) ──
+# ── sshd + Kali tooling + logrotate (for rotate-logs.sh) + tmux/mosh (persistent shells) ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssh-server kali-tools-top10 nmap netcat-traditional logrotate \
+      tmux mosh locales-all \
     && mkdir -p /run/sshd /var/run/sshd \
     && rm -rf /var/lib/apt/lists/*
+
+# mosh requires a UTF-8 locale on both client and server
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # ── kubectl, talosctl, omnictl (duplicated with vk-local — promote on third consumer) ──
 RUN curl -fsSL -o /usr/local/bin/kubectl \
