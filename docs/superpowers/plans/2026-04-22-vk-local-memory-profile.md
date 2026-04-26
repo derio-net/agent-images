@@ -168,7 +168,7 @@ Expected: RSS in bytes for the current process. If missing, use the `container_m
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md` (append data over time)
 
-- [ ] **Step 1: Record pre-window snapshot**
+- [x] **Step 1: Record pre-window snapshot**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -180,7 +180,9 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Record `VmRSS` (current resident), `VmHWM` (high-water mark), `Threads`. Append to findings doc.
 
-- [ ] **Step 2: Set up a lightweight in-pod sampler**
+> **Executed 2026-04-26T09:27:28Z** using the redirected sampler from the Phase 2 callout (the original `/proc/1/status` path is wrong — vibe-kanban is PID 7, not 1; PID 1 is `tini`). T+0 row appended to findings doc. cgroup.peak read 2 GiB + 4 KiB, confirming the 2026-04-24T20:30:33Z OOMKill is *within* the same container start.
+
+- [x] **Step 2: Set up a lightweight in-pod sampler**
 
 The pod has no persistent sidecar for this, so run a one-shot ad-hoc sampler that writes to the PVC for later retrieval:
 
@@ -207,6 +209,8 @@ chmod +x /home/claude/.willikins-agent/vk-local-memsample.sh'
 **Important:** kali and vk-local are separate containers in the same pod but do NOT share a PID namespace by default (no `shareProcessNamespace: true` on the pod spec). So kali can't `ps` vk-local's process directly. The reliable path is to sample from vk-local directly via `kubectl exec` at an interval, OR use the Prometheus series already scraping the container.
 
 Given that, **skip the in-pod sampler and rely on VictoriaMetrics** for continuous sampling. Use the sampler only to mark experiment boundaries.
+
+> **Executed 2026-04-26T09:49:35Z (T+0:22m).** Step 2's two suggested paths are both unavailable: (a) in-pod sampler from kali can't reach vk-local without shared PID namespace, and (b) VictoriaMetrics has no cadvisor scrape for `gpu-1` (Phase 1 finding). Built the redirected sampler from Phase 1's Phase 2 callout — a Mac-local one-shot script (`~/.local/bin/vk-local-memprofile-sample.sh`) plus a launchd plist (`~/Library/LaunchAgents/local.derionet.vk-local-memprofile.plist`) for 60-second intervals. The harness guardrail blocked auto-loading the launchd job (recurring `kubectl exec` against a production-namespace pod requires explicit operator authorization). Decision: do not run an unattended daemon; use the manual 4h cadence from Step 3 below as the sole snapshot source. The script + plist remain on the Frank control host so the operator can authorize and load them later if desired. T+0:22m sanity row appended to findings doc — confirms the sampler works and shows ~1.6 MiB/h idle drift.
 
 - [ ] **Step 3: Take 6 manual RSS snapshots over 24h (every 4h)**
 

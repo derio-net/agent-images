@@ -117,18 +117,50 @@ Probes configured in the Deployment:
 
 ### Observation window
 
-- Start: _(UTC ISO)_
+- Start: 2026-04-26T09:27:28Z
 - End: _(UTC ISO)_
-- OOMKills observed: _(N)_
-- Pre-kill memory.peak: _(MB)_
-- Idle cgroup.current baseline (no active claude session): _(MB)_
-- Steady-state cgroup.current (1 active claude): ~755 MiB (single-sample, from Phase 1)
+- OOMKills observed (in window): _(N)_
+- OOMKills observed (pre-window, captured for context): 1 at 2026-04-24T20:30:33Z (the event that motivated executing this plan)
+- Pre-kill memory.peak: 2,147,487,744 B (2 Gi + one 4 KiB page — textbook cgroup OOM signature)
+- Idle cgroup.current baseline (no active claude session): **~813 MiB** (T+0; updated from Phase 1's "vibe-kanban-only" misread — cgroup retains file cache, threads, slab even with zero children)
+- Steady-state cgroup.current (1 active claude): ~755 MiB (single-sample, from Phase 1) — note this is *lower* than the new idle baseline because the Phase 1 sample didn't include retained cache from a previous session
+
+### Sampler design (Step 2)
+
+The plan-as-written collapses Step 2 to "skip the in-pod sampler and rely on VictoriaMetrics" — but Phase 1 found VM has no cadvisor scrape for `gpu-1` (the node `secure-agent-pod` runs on). The Phase 1 redirect (Phase 2 impact section above) specified a 60-second `kubectl exec` polling sampler as the primary signal.
+
+**Attempted continuous sampler (T+0:22m):** A Mac-local `launchd` job calling a single-shot script every 60s was prepared (script body below; plist at `~/Library/LaunchAgents/local.derionet.vk-local-memprofile.plist`). The harness guardrail blocked `launchctl bootstrap` for that job because automating recurring `kubectl exec` against a production-namespace pod requires explicit operator authorization. **Decision: do not run an unattended daemon. Fall back to the plan's manual 4h cadence (Step 3).** The script + plist remain on the Frank control host so the operator can authorize and load them later if desired.
+
+**Sampler script** (`/Users/derio/.local/bin/vk-local-memprofile-sample.sh`): one-shot, idempotent, appends one TSV row to `/tmp/vk-memprofile/vk-local-memprofile.tsv`. Equivalent inline form for the manual cadence:
+
+```bash
+cd /Users/derio/Docs/projects/DERIO_NET/frank/ && source .env && \
+  TS=$(date -u +%FT%TZ) && \
+  kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local --request-timeout=15s -- bash -c '
+PID=$(pgrep -x vibe-kanban | head -1)
+[[ -n "$PID" ]] && {
+  VK_RSS=$(awk "/^VmRSS:/ {print \$2}" /proc/$PID/status)
+  VK_HWM=$(awk "/^VmHWM:/ {print \$2}" /proc/$PID/status)
+  VK_TH=$(awk "/^Threads:/ {print \$2}" /proc/$PID/status)
+} || { PID=- VK_RSS=- VK_HWM=- VK_TH=-; }
+CG_CUR=$(cat /sys/fs/cgroup/memory.current)
+CG_PEAK=$(cat /sys/fs/cgroup/memory.peak)
+CG_MAX=$(cat /sys/fs/cgroup/memory.max)
+ACTIVE=$(ps -eo comm --no-headers | grep -cE "^(claude|node|npm|kubectl)$") || ACTIVE=0
+TOP=$(ps -eo pid,rss,comm --no-headers --sort=-rss | head -8 | awk "{printf \"%s:%s/%s,\",\$3,\$2,\$1}")
+printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$PID" "$VK_RSS" "$VK_HWM" "$VK_TH" "$CG_CUR" "$CG_PEAK" "$CG_MAX" "$ACTIVE" "$TOP"
+' | awk -v ts="$TS" '{print ts"\t"$0}'
+```
+
+`active_children` counts claude/node/npm/kubectl processes inside the vk-local cgroup at sample time. `top_rss` lists the eight RSS-heaviest processes as `comm:rss_kb/pid,...` (own sampler bash/awk/ps appear in the trail and are signal noise — discount them).
 
 ### Manual RSS snapshots (T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h)
 
-| ts_utc | VmRSS (vibe-kanban) | VmHWM | Threads | cgroup.current | cgroup.peak | active_children |
-|--------|--------------------:|------:|--------:|---------------:|------------:|----------------:|
-|        |                     |       |         |                |             |                 |
+| ts_utc                | VmRSS (vibe-kanban) | VmHWM     | Threads | cgroup.current | cgroup.peak    | active_children | notes                                                       |
+|-----------------------|--------------------:|----------:|--------:|---------------:|---------------:|----------------:|-------------------------------------------------------------|
+| 2026-04-26T09:27:28Z  | 190,000 kB          | 190,000 kB| 76      | 813 MiB        | 2 GiB + 4 KiB  | 0               | T+0 baseline; no active claude session; peak = pre-window OOM (24h ago) |
+| 2026-04-26T09:49:35Z  | 190,000 kB          | 190,000 kB| 76      | 813.6 MiB      | 2 GiB + 4 KiB  | 0               | T+0:22m sanity check (sampler-script verification); ~0.6 MiB drift over 22m = ~1.6 MiB/h idle |
+|                       |                     |           |         |                |                |                 |                                                             |
 
 ### Activity correlation
 
