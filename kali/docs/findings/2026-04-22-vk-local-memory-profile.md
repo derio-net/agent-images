@@ -179,6 +179,37 @@ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$PID" "$VK_RSS" "$VK_HWM" "$VK_TH" 
 
 ---
 
+## Phase 2 retake (post-rollout window)
+
+The original Phase 2 window (anchor 2026-04-26T09:27:28Z) was disrupted at T+4h 38m by the `agent-images@eb6ae08` (`feat(kali): add tmux + mosh`) Deployment rollout, which rolled both pod containers and reset `cgroup.peak`. PR #12 captured the disrupted observations; PR #13 documented the correction. This retake re-runs Phase 2 cleanly against the post-rollout `vk-local` container instance.
+
+- **Anchor (T+0_retake):** 2026-04-27T04:48:34Z (`vk-local` container `startedAt`)
+- **Pod / image:** `secure-agent-pod-b6b9bcd5d-jmc7n` running `ghcr.io/derio-net/vk-local:a90c6c16f332d6c9c22dea7bfa05a27e6272fa0f` (kali/vk-local rollout from agent-images main)
+- **Baseline restartCount:** 1 (single OOMKill at 2026-04-27T04:48:33Z that prompted the current container start; the new container is still at restartCount=1 — any *increase* during the retake window is an in-window restart)
+- **Window end:** T+24h_retake = 2026-04-28T04:48:34Z
+- **Sampling cadence:** manual T+0 row + supercronic-driven `vk-snap.sh` fires at T+4h, T+8h, T+12h, T+16h, T+20h, T+24h (cron `48 */4 * * *` — minute aligned to anchor). Snapshot script writes from kali, commits to this PR's branch via the credential helper. Plain bash, no Claude wrapper, so its own activity is bounded to known cron-fire timestamps.
+
+### Manual RSS snapshots (T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h)
+
+| ts_utc                | VmRSS (vibe-kanban) | VmHWM     | Threads | cgroup.current | cgroup.peak    | active_children | notes                                                       |
+|-----------------------|--------------------:|----------:|--------:|---------------:|---------------:|----------------:|-------------------------------------------------------------|
+| 2026-04-27T04:55:15Z  | 131,284 kB          | 131,284 kB| 135     | 733 MiB        | 1.82 GiB       | 3               | T+0 manual baseline (container 6m41s old). PID 7. **Note:** cgroup.peak already 1.82 GiB despite young container — driven by the active claude session (this very routine + workload spike from the OOMKill@04:48:33Z that birthed this container). top-by-RSS: claude=288 MiB, vibe-kanban=128 MiB, npm=89 MiB, node=87 MiB, kubectl=55 MiB. |
+<!-- snapshots-retake-end -->
+
+### OOMKills observed (retake window)
+
+_(populate at T+24h analysis from `kubectl describe pod` Last State block — capture for each restartCount increment over baseline=1)_
+
+### Audit activity per hour (retake window)
+
+_(populate at T+24h analysis: hour-bucket `~/.willikins-agent/audit-archive/audit-YYYYMMDD.jsonl` over the window; subtract this routine's own cron-fire entries and the analysis session's entries)_
+
+### Correlation (retake window)
+
+_(populate at T+24h analysis: per-hour table `hour | max_cgroup_current_mib | audit_lines | restart_in_hour`, interpolating cgroup.current linearly between snapshots. Pearson r between audit_lines and max_cgroup_current_mib over the window. Interpretation rubric: r > 0.5 → workload-driven (favors A or B); r ≤ 0.5 + idle drift > 10 MiB/h → leak-shaped (favors C); r ≤ 0.5 + idle drift < 10 MiB/h → bounded (favors A or B).)_
+
+---
+
 ## Phase 3 — Decision (pending)
 
 > **Note on option definitions:** Option B below is a refinement of the original plan's "upstream cap: working-set is unbounded under workload X" to reflect the Phase 1 discovery that `vibe-kanban` itself is only ~147 MiB RSS — an "upstream cap in the Rust binary" no longer matches the observed behavior. The cgroup fills with *child processes*, so the Phase 3 agent chooses between raising the limit, capping/relocating the child workload, or finding a leak. If the Phase 3 agent prefers the original framing, keep it — but the numbers from Phase 1 have to be reconciled either way.
