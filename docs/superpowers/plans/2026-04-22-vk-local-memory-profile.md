@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Not Started
+**Status:** In Progress
 
 **Goal:** Diagnose why the `vk-local` container in `secure-agent-pod` is consistently OOMKilled at its 2Gi limit (6× in ~48h observed during Phase 3 soak of the 2026-04-18 plan — Deviation D4), and produce a data-driven recommendation for one of: (a) raise the limit, (b) cap working-set in the binary, (c) identify and fix a leak.
 
