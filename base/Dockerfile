@@ -50,6 +50,10 @@ RUN ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "arm64" || echo "amd64") \
       "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}" \
     && chmod +x /usr/local/bin/supercronic
 
+# ── Shared first-boot scripts (called by children's entrypoint or s6 cont-init.d) ──
+COPY opt/agent-init.d/ /opt/agent-init.d/
+RUN chmod +x /opt/agent-init.d/*
+
 # ── Non-root user (UID/GID 1000 — matches PVC ownership) ──
 RUN /usr/sbin/addgroup --gid 1000 claude \
     && /usr/sbin/adduser --uid 1000 --gid 1000 --disabled-password --gecos "" --shell /bin/bash claude

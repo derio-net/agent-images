@@ -1,0 +1,7 @@
+#!/bin/bash
+# 01-pvc-dirs — Create PVC-backed directories with correct permissions.
+# Idempotent: every-boot script. Uses $AGENT_HOME (set in agent-base ENV).
+set -e
+HOME="${AGENT_HOME:-$HOME}"
+mkdir -p "$HOME/.ssh-host-keys" "$HOME/.ssh" "$HOME/repos" "$HOME/.claude" "$HOME/.willikins-agent"
+chmod 700 "$HOME/.ssh-host-keys" "$HOME/.ssh"
