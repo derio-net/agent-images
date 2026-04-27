@@ -17,6 +17,7 @@
 ---
 
 ## Phase 1: `/opt/agent-init.d/` shared first-boot scripts in `agent-base` [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/16 -->
 **Depends on:** —
 
 <!-- Tracking: Add scripts to agent-base; both kali (via agent-shell-base) and vk-local (via direct entrypoint) consume them. -->
@@ -120,6 +121,7 @@ CI builds agent-base + secure-agent-kali + vk-local on every push. Confirm all t
 ---
 
 ## Phase 2: Build `agent-shell-base` image [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/17 -->
 **Depends on:** Phase 1
 
 <!-- Tracking: New base image with s6-overlay v3 + supervised sshd/supercronic + tmux-resurrect/continuum + parameterization. -->
@@ -454,6 +456,7 @@ Bumper fires for kali + vk-local with the new agent-base SHA — **still hold th
 ---
 
 ## Phase 3: Migrate `secure-agent-kali` to `FROM agent-shell-base` [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/18 -->
 **Depends on:** Phase 2
 
 <!-- Tracking: Cut kali over to s6-based shell-base; preserve claude/home/claude state via build args; delete bespoke entrypoint.sh. -->
@@ -577,6 +580,7 @@ Bumper fires; **STILL hold the bump** in frank until Phase 4 lands. Bundling kal
 ---
 
 ## Phase 4: `vk-local` entrypoint wrapper [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/19 -->
 **Depends on:** Phase 1
 
 <!-- Tracking: Add wrapper that runs /opt/agent-init.d/* before exec'ing vibe-kanban. No s6, no supervisor — vibe-kanban stays the driver process under tini's PID 1. Parallel with Phases 2-3 (only blocks on Phase 1's init.d scripts). -->
