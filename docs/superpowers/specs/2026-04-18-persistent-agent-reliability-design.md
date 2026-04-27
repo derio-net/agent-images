@@ -55,5 +55,5 @@ None. No new capabilities, no loosened guardrails. The audit-hook fix restores a
 | Plan | Repo | File | Status | Depends on |
 |------|------|------|--------|------------|
 | Persistent Agent Reliability Implementation Plan |  | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | In Progress | — |
-| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns.md` | Not Started | — |
-| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md` | Not Started | — |
+| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns.md` | In Progress | — |
+| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md` | In Progress | — |

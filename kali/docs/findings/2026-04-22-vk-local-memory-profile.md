@@ -118,12 +118,19 @@ Probes configured in the Deployment:
 ### Observation window
 
 - Start: 2026-04-26T09:27:28Z
-- End: _(UTC ISO)_
-- OOMKills observed (in window): _(N)_
+- End: 2026-04-27T04:34:01Z (effectively, see "Window disruption" below; T+19h is the last clean snapshot in this attempt)
+- OOMKills observed (in window): **0** (no in-window OOM signature on the cgroup, no pod-level OOMKilled state confirmed for this window — though `kubectl describe` was not captured at the rollout boundary, so this is "no positive evidence" rather than "verified absence")
 - OOMKills observed (pre-window, captured for context): 1 at 2026-04-24T20:30:33Z (the event that motivated executing this plan)
 - Pre-kill memory.peak: 2,147,487,744 B (2 Gi + one 4 KiB page — textbook cgroup OOM signature)
 - Idle cgroup.current baseline (no active claude session): **~813 MiB** (T+0; updated from Phase 1's "vibe-kanban-only" misread — cgroup retains file cache, threads, slab even with zero children)
 - Steady-state cgroup.current (1 active claude): ~755 MiB (single-sample, from Phase 1) — note this is *lower* than the new idle baseline because the Phase 1 sample didn't include retained cache from a previous session
+- Post-rollout idle baseline: **~118 MiB** (T+11.5h and T+19h; new container instance, ~7.5h stable). Order-of-magnitude lower than the pre-rollout idle baseline of 813 MiB — strongly suggests retained file cache / slab / heap state from prior workload was the bulk of the pre-rollout idle, not steady-state requirement.
+
+### Window disruption
+
+`derio-net/agent-images@eb6ae08` (`feat(kali): add tmux + mosh for persistent shell sessions`, authored 2026-04-26T14:05:47Z = T+4h 38m) bumped `kali/Dockerfile`. The image rebuild + Deployment rollout rolled both containers in `secure-agent-pod` together (single-Deployment multi-container pods restart all containers on rollout). **This invalidates the original 24h continuity assumption** — the container we sampled at T+11.5h and T+19h is *not* the same instance as at T+0/T+0:22m. The pre-rollout window provided 22 minutes of usable observation; the post-rollout window provided ~7.5h ending at T+19h.
+
+The right move for a clean Phase 2 retake is to start a new 24h window from the post-rollout container's start time. Phase 3's decision should not rely on this window's correlation analysis; instead it can use the structural findings (Phase 1 process tree + the post-rollout idle baseline of ~118 MiB) to make a conservative recommendation.
 
 ### Sampler design (Step 2)
 
@@ -160,7 +167,8 @@ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$PID" "$VK_RSS" "$VK_HWM" "$VK_TH" 
 |-----------------------|--------------------:|----------:|--------:|---------------:|---------------:|----------------:|-------------------------------------------------------------|
 | 2026-04-26T09:27:28Z  | 190,000 kB          | 190,000 kB| 76      | 813 MiB        | 2 GiB + 4 KiB  | 0               | T+0 baseline; no active claude session; peak = pre-window OOM (24h ago) |
 | 2026-04-26T09:49:35Z  | 190,000 kB          | 190,000 kB| 76      | 813.6 MiB      | 2 GiB + 4 KiB  | 0               | T+0:22m sanity check (sampler-script verification); ~0.6 MiB drift over 22m = ~1.6 MiB/h idle |
-| 2026-04-26T21:00:17Z  | 80,556 kB           | 80,556 kB | 93      | 118.3 MiB      | 773 MiB        | 0               | T+11.5h. **OOMKill mid-window**: cgroup.peak dropped from 2 GiB+4 KiB to 773 MiB → vk-local restarted between T+0:22m and now. Fresh vibe-kanban process (PID 7, RSS 80 MiB vs prior 190 MiB; Threads 93 vs prior 76 — process is younger but with more threads, suggesting a different workload phase). Exact OOMKill timestamp not captured here; recover via `kubectl describe pod` Last State block before kubelet rolls it. |
+| 2026-04-26T21:00:17Z  | 80,556 kB           | 80,556 kB | 93      | 118.3 MiB      | 773 MiB        | 0               | T+11.5h. cgroup.peak dropped from 2 GiB+4 KiB to 773 MiB → vk-local restarted between T+0:22m and now. **Initial reading was "OOMKill mid-window" — corrected after seeing main: commit `eb6ae08 feat(kali): add tmux + mosh` (authored 2026-04-26T14:05:47Z = T+4h 38m) bumped the kali Dockerfile, forcing a Deployment rollout that rolled both pod containers. The peak reset is from that rollout, not an in-window OOMKill.** Without `kubectl describe pod` Last State data captured at the time, the kill-vs-rollout distinction is now retroactively probabilistic — but the timing alignment plus the absence of stress signals in the post-rollout cgroup (current 118 MiB at peak 773 MiB, no thrash) makes the rollout interpretation strongly more likely. |
+| 2026-04-27T04:34:01Z  | 74,724 kB           | 74,724 kB | 112     | 118.9 MiB      | 784 MiB        | 0               | T+19h. Same container instance as T+11.5h (peak only +11 MiB over 7.5h). cgroup.current essentially flat (118.3 → 118.9 MiB). Threads still creeping (93 → 112 over 7.5h ≈ +2.5 threads/h). cgroup.max unchanged at 2 GiB — confirming the bump was the kali tmux/mosh Dockerfile change, **not** a memory-limit raise. Post-rollout container has been stable ~7.5h with zero observed OOMKills in this window. |
 |                       |                     |           |         |                |                |                 |                                                             |
 
 ### Activity correlation

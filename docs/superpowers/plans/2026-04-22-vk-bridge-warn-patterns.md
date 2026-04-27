@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Not Started
+**Status:** In Progress
 
 **Goal:** Broaden `kali/scripts/vk-issue-bridge.py`'s warn-demotion error classification to cover GraphQL-layer "Could not resolve to a Repository" errors and transient network flakes, so the pod stops emitting ~65 spurious `[warn]` lines per hour into `vk-bridge.log`.
 
