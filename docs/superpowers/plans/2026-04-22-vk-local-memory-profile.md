@@ -212,7 +212,7 @@ Given that, **skip the in-pod sampler and rely on VictoriaMetrics** for continuo
 
 > **Executed 2026-04-26T09:49:35Z (T+0:22m).** Step 2's two suggested paths are both unavailable: (a) in-pod sampler from kali can't reach vk-local without shared PID namespace, and (b) VictoriaMetrics has no cadvisor scrape for `gpu-1` (Phase 1 finding). Built the redirected sampler from Phase 1's Phase 2 callout — a Mac-local one-shot script (`~/.local/bin/vk-local-memprofile-sample.sh`) plus a launchd plist (`~/Library/LaunchAgents/local.derionet.vk-local-memprofile.plist`) for 60-second intervals. The harness guardrail blocked auto-loading the launchd job (recurring `kubectl exec` against a production-namespace pod requires explicit operator authorization). Decision: do not run an unattended daemon; use the manual 4h cadence from Step 3 below as the sole snapshot source. The script + plist remain on the Frank control host so the operator can authorize and load them later if desired. T+0:22m sanity row appended to findings doc — confirms the sampler works and shows ~1.6 MiB/h idle drift.
 
-- [ ] **Step 3: Take 6 manual RSS snapshots over 24h (every 4h)**
+- [x] **Step 3: Take 6 manual RSS snapshots over 24h (every 4h)**
 
 From the Frank control host, at T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h:
 
@@ -225,7 +225,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Append each snapshot to the findings doc under a "Manual RSS snapshots" table. If an OOMKill happens mid-window, note the timestamp and the pre-kill RSS (visible in kubectl describe → Last State → Finished).
 
-- [ ] **Step 4: At T+24h, export the VictoriaMetrics time-series**
+- [x] **Step 4: At T+24h, export the VictoriaMetrics time-series**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -240,7 +240,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Expected: one series with 1440 data points (24h × 60 min). If the series has gaps (< 1200 pts), note this — OOMKills cause scrape gaps.
 
-- [ ] **Step 5: Correlate with OOMKills**
+- [x] **Step 5: Correlate with OOMKills**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -255,7 +255,7 @@ Append OOMKill timestamps to the findings doc. Cross-reference with pre-kill RSS
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Count kali audit log entries in the window**
+- [x] **Step 1: Count kali audit log entries in the window**
 
 The kali audit log (`~/.willikins-agent/audit.jsonl` + daily archives under `audit-archive/`) tracks tool-use bursts which may correlate with VK HTTP load.
 
@@ -267,7 +267,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Append line count + size to the findings doc for the observation day.
 
-- [ ] **Step 2: Hour-bucket audit activity and RSS**
+- [x] **Step 2: Hour-bucket audit activity and RSS**
 
 Write a short Python snippet (on the Frank host, not in the pod) that:
 1. Reads the 24h VictoriaMetrics export from Phase 2 Task 1 Step 4.
