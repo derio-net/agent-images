@@ -7,6 +7,7 @@ ARG SUPERCRONIC_VERSION=0.2.33
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     HOME=/home/claude \
+    AGENT_HOME=/home/claude \
     PATH=/home/claude/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 # ── System packages ──
