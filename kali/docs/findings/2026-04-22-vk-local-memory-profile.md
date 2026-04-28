@@ -4,7 +4,7 @@
 
 Deviation D4 of `docs/superpowers/plans/2026-04-18-persistent-agent-reliability-design.md` flagged 6 OOMKills in ~48h at the 2Gi limit. This doc is the cross-phase scratchpad for the follow-up plan `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md`.
 
-**Status:** Phase 1 complete (Workload survey & tooling check). Phase 2 (Observation window) and Phase 3 (Analysis & recommendation) pending.
+**Status:** Phase 1, Phase 2, and Phase 3 complete. **Decision: A (raise limit to 8 Gi, immediate) + B housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap).** Implementation in separate deploy plan against `derio-net/frank`.
 
 ---
 
@@ -292,14 +292,114 @@ One of:
 - **B (cap concurrency / re-parent children):** the cgroup fills because `vibe-kanban` spawns `claude`/`npm`/`node` as children of the vk-local cgroup. Options: run them in the `kali` sibling container, enforce a max concurrent-sessions config, or move to a per-task pod. File upstream issue/PR against the vibe-kanban fork.
 - **C (leak):** a single `vibe-kanban` or `claude` process grows monotonically at idle by _rate/h_. File code-level fix against the offending repo.
 
-**Chosen:** **A + B (dual recommendation).** Phase 2 data rules out C (no monotonic per-process leak; idle drift = 1.5 MiB/h, bounded). The cgroup fills from three compounding sources — (1) child-process RSS per active session (~480 MiB each), (2) retained npm file-cache after sessions close (~900 MiB at idle), and (3) vibe-kanban heap growth from un-pruned worktrees (~17 MiB each). Option A (raise limit) is the immediate intervention needed to stop the current crash-loop (20 kills in 17.4h, rate 1/52min). Option B (re-parent or cap child sessions) is the durable fix.
+## Phase 3 — Analysis & recommendation
 
-**Phase 3 formal call (preliminary from Phase 2 data):**
-- **A — immediate:** raise `vk-local` memory limit from 2 Gi to **4 Gi** in `derio-net/frank` `apps/secure-agent-pod/manifests/deployment.yaml:143`. Justification: peak fill sequence (vibe-kanban ~200 MiB + 2 concurrent sessions × 480 MiB + 900 MiB file-cache = ~2.06 GiB observed at OOMKill). 4 GiB provides a 90% headroom margin for 3–4 concurrent sessions without over-provisioning further.
-- **B — architectural (medium-term):** task-runner sessions spawned by vibe-kanban should execute in the kali sibling container's cgroup (32 GiB limit, already stable). This keeps vk-local's cgroup bounded to vibe-kanban itself (~200–250 MiB). File an issue/PR against the vibe-kanban fork.
-- **Housekeeping (concurrent):** (i) Add `npm cache clean --force` or `npm cache verify` to a periodic kali cron to keep `~/.npm` below 2 GiB; (ii) add `git worktree prune` to the vibe-kanban post-task cleanup path, or enforce a worktree TTL, to cap per-worktree vibe-kanban heap growth.
+### Pattern classification (P3.T1.S1)
 
-**Rationale:** Phase 3 should verify the binary SHA on pod `69677554b6` against Phase 1's `d3bbcd70b1…` — if the binary changed (possible via a dependency rebuild triggered by the dc414b4 image build), the 9× escalation in kill rate (1/8h → 1/52min) may be partly attributable to the new binary, not just the workload increase. If the binary is identical, the escalation is entirely workload-driven (more concurrent sessions after the kali tmux/mosh additions enabled more persistent agent connections).
+**Pattern: Sawtooth, reset at OOMKill (workload-driven burst), with three compounding fill sources.**
+
+The Phase 2 retake provides a complete picture. The cgroup does not fill from a single cause:
+
+**Source 1 — Active session child RSS (~480 MiB per session):**
+Per the Phase 1 process tree and retake T+0 sample: claude ~300 MiB + npm ~90 MiB + node ~90 MiB = ~480 MiB of child RSS per active session. These are released when the session exits.
+
+**Source 2 — Retained npm file-cache (~900 MiB, post-session):**
+After a session exits and child processes are reaped, the npm `_cacache`/`_npx` package files remain in the cgroup's page cache (file-backed, reclaimable under pressure, but not eagerly freed). At T+16h and T+20h (0 active sessions), cgroup.current was ~1.13 GiB — vibe-kanban accounts for ~220 MiB, leaving ~910 MiB of retained file cache. The npm cache on PVC has grown to 12 GiB without pruning, ensuring a large hot set.
+
+**Source 3 — vibe-kanban heap per live worktree (~17 MiB each):**
+vibe-kanban RSS grew from ~128 MiB (fresh start, 0 worktrees) to ~198 MiB with 4 active worktrees — approximately 17 MiB per worktree retained in heap. At T+16h/T+20h, vibe-kanban was 221–230 MiB with no active sessions, consistent with several un-pruned worktrees adding ~93–102 MiB above the fresh baseline. This is bounded (not a random walk), but accumulates without a cleanup policy.
+
+**Typical OOMKill sequence:**
+1. Container starts fresh: vibe-kanban ~128 MiB, cgroup ~128 MiB
+2. Worktrees accumulate: vibe-kanban grows to ~200–230 MiB
+3. Session runs: +480 MiB → cgroup ~680–710 MiB
+4. Session exits: child RSS freed, ~900 MiB npm file-cache retained → cgroup ~1.1 GiB
+5. Second session starts: +480 MiB → cgroup ~1.6 GiB
+6. Third session starts (or second peaks): → cgroup hits 2 GiB → **OOMKill**
+
+**OOMKill rate escalation:**
+- Historical (pre-retake): ~1 kill per 8 hours
+- Retake Span 2 (`dc414b4` image): 20 kills in 17.4h = **1 kill per 52 minutes** (9× faster)
+
+The escalation is unexplained by data alone. Two hypotheses: (a) the new image (`dc414b4`, built from PR #13 merge) pulled a newer vibe-kanban binary that uses more memory or spawns sessions differently; (b) the kali tmux/mosh additions (commit `eb6ae08`) enabled more persistent agent connections, increasing concurrent session count. **Phase 3 action item:** verify the binary SHA on pod `secure-agent-pod-69677554b6-2xg7j` against Phase 1's `d3bbcd70b1…` — if identical, the escalation is workload-driven; if different, the binary itself may have regressed.
+
+**Option C (leak) — RULED OUT:**
+Idle drift at T+1h→T+5h (same pod, 0 active children): +1.5 MiB/h — below the 10 MiB/h leak threshold. vibe-kanban's worktree heap growth is bounded by worktree count, not time. Pearson r (active_children vs cgroup_cur_mib) = 0.007 ≈ 0, which reflects lag (file-cache persists after exit) rather than independence. No evidence of unbounded monotonic growth in any process.
+
+### Session budget (P3.T1.S2)
+
+Using the retake's observed saturated-idle baseline (~1,157 MiB at T+16h/T+20h with 0 active sessions) and the per-session active child cost (~480 MiB):
+
+| Concurrent sessions | Estimated cgroup.current | Limit needed (×1.25, ↑256 MiB) | Notes |
+|---:|---:|---:|---|
+| 0 (idle, fresh) | ~128 MiB | — | fresh container, 0 worktrees |
+| 0 (idle, saturated) | ~1,157 MiB | — | accumulated file-cache + worktree heap |
+| 1 | ~1,637 MiB | 2,048 MiB (2 Gi) | tight |
+| 2 | ~2,117 MiB | 2,560 MiB (2.5 Gi) | **current 2 Gi kills here** |
+| 3 | ~2,597 MiB | 3,328 MiB (3.25 Gi) | |
+| 4 | ~3,077 MiB | 3,840 MiB (3.75 Gi → 4 Gi) | preliminary Phase 2 call |
+| 5 | ~3,557 MiB | 4,352 MiB (4.25 Gi) | |
+| 6 | ~4,037 MiB | 5,120 MiB (5 Gi) | |
+| 7 | ~4,517 MiB | 5,632 MiB (5.5 Gi) | |
+| **8 (current UI max)** | **~4,997 MiB** | **6,144 MiB → 6,400 MiB (6.25 Gi)** | formula minimum |
+
+> **Note on npm file-cache scaling:** The ~900 MiB file-cache is assumed roughly fixed regardless of session count (the kernel deduplicates file-backed pages from the same PVC files across sessions loading the same MCP packages). If sessions load distinct packages, this could scale upward; the model is conservatively fixed at one saturated-idle's worth.
+
+**Recommended limit for 8 concurrent sessions: 8 Gi (8,192 MiB).**
+Formula minimum is 6,400 MiB (6.25 Gi). 8 Gi provides ~1.6 Gi of margin above the formula minimum — warranted here because:
+- The formula uses saturated-idle baseline, which itself may grow as the npm cache expands
+- The 9× kill-rate escalation in Span 2 suggests the true peak load may exceed the model
+- 8 Gi is a clean K8s limit value (round power-of-two Gi)
+
+If the housekeeping actions (npm cache prune + worktree TTL) are deployed simultaneously, the saturated-idle baseline drops from ~1,157 MiB to closer to ~200 MiB, and the per-session model gives 8 sessions at 200 + 8×480 = 4,040 MiB → ×1.25 = 5,050 MiB → **5 Gi**, reducing the required limit substantially. The 8 Gi recommendation holds as a safe initial value; a re-review is appropriate after housekeeping is in place.
+
+### Option analysis
+
+#### Option C — Leak fix: RULED OUT
+
+Idle drift 1.5 MiB/h; worktree heap growth is bounded by worktree count; cgroup resets cleanly after OOMKill. No unbounded monotonic growth observed. **No code-level fix needed.**
+
+#### Option B — Architectural: VALID, NOT IMMEDIATE
+
+Three sub-options, in order of ascending implementation complexity:
+
+**B-housekeeping (lowest cost, highest ROI — do concurrently with A):**
+- `npm cache clean --force` or `npm cache verify` in a periodic kali cron (or triggered before session start) — eliminates the ~900 MiB file-cache contributor entirely, dropping saturated-idle from ~1,157 MiB to ~220 MiB. Single shell command; no vibe-kanban changes needed.
+- `git worktree prune` in vibe-kanban's post-task cleanup path, or a worktree TTL policy — eliminates the ~17 MiB/worktree heap accumulation in vibe-kanban's RSS. Small upstream change.
+- Together these would reduce the required limit for 8 concurrent sessions from 8 Gi to ~5 Gi.
+
+**B1 — Max-concurrent-sessions config (short-term, upstream vibe-kanban change):**
+- Add a configurable cap (e.g., `max_concurrent_executions: 4`) to the vibe-kanban config schema (already at `config_version: v8`). Excess sessions queue rather than spawn.
+- With cap=4 and housekeeping in place: 220 + 4×480 = 2,140 MiB → ×1.25 → 2,675 MiB → **3 Gi** sufficient.
+- Recommended as follow-up after housekeeping; allows the A-limit to be dialled back once B-housekeeping + B1 are deployed.
+
+**B2 — Delegate execution to kali sibling cgroup (long-term):**
+- Spawn claude/node/npm child processes in the kali cgroup (32 Gi limit). vk-local cgroup shrinks to vibe-kanban only (~200 MiB steady-state). Requires upstream IPC/relay changes to vibe-kanban. Worth tracking; not immediately actionable.
+
+**B3 — Per-task Kubernetes Jobs (future):**
+- Each execution gets its own pod with dedicated cgroup. Full isolation; highest complexity. Appropriate at 10+ concurrent sessions or if per-session security isolation becomes a requirement.
+
+#### Option A — Raise cgroup limit: RECOMMENDED (immediate)
+
+**Recommended limit: 8 Gi (8,192 MiB)** — covers the stated 8-session maximum at saturated-idle baseline with margin. Deploy-plan target: `apps/secure-agent-pod/manifests/deployment.yaml:143` in `derio-net/frank`.
+
+If housekeeping (npm cache prune + worktree TTL) ships concurrently, the effective headroom increases substantially; the 8 Gi limit can be reassessed and potentially lowered to 4–5 Gi at that point.
+
+### Decision
+
+**Chosen: A (immediate) + B-housekeeping (concurrent) + B1 (follow-up).**
+
+| Track | Action | Urgency | Target repo |
+|---|---|---|---|
+| **A** | Raise `vk-local` limit `2Gi` → `8Gi` | **Now** (20 kills/17.4h crash-loop) | `derio-net/frank` |
+| **B-housekeeping** | npm cache prune cron + worktree TTL | Concurrent with A | `derio-net/frank` (cron), vibe-kanban fork (worktree TTL) |
+| **B1** | `max_concurrent_executions` config cap | After B-housekeeping | vibe-kanban fork + frank config |
+| **B2** | Delegate execution to kali cgroup | Long-term | vibe-kanban fork |
+| **Action item** | Verify binary SHA on `dc414b4` pod vs Phase 1 | Before filing B2 | observation only |
+
+**Rationale:** C is excluded. The crash-loop (1 kill/52min) requires an immediate limit bump to restore stability — that is A. B-housekeeping removes the two biggest non-session contributors (~900 MiB file-cache, ~17 MiB/worktree heap) at minimal cost and substantially reduces the required limit. B1 enforces the workload bound in software once housekeeping is in place, enabling future limit reduction. B2/B3 are parked until B1 data shows whether they are needed.
+
+**Implementation:** See `derio-net/frank#140` (brainstorming issue filed for the implementation plan).
 
 ---
 

@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** In Progress
+**Status:** Phase 3 complete — Decision: A (raise limit to 8 Gi, immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap). Implementation via brainstorm issue `derio-net/frank#140`.
 
 **Goal:** Diagnose why the `vk-local` container in `secure-agent-pod` is consistently OOMKilled at its 2Gi limit (6× in ~48h observed during Phase 3 soak of the 2026-04-18 plan — Deviation D4), and produce a data-driven recommendation for one of: (a) raise the limit, (b) cap working-set in the binary, (c) identify and fix a leak.
 
@@ -297,7 +297,7 @@ If hour-level correlation is strong (r > 0.5): memory scales with workload → b
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Plot RSS over the window**
+- [x] **Step 1: Plot RSS over the window**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/frank
@@ -323,7 +323,7 @@ Inspect the CSV. Classify the pattern:
 - **Monotonic growth at idle:** leak → recommendation C (code-level fix).
 - **Stable baseline + large transient spikes:** workload-driven burst → bump limit with margin = max(spike) + 25%.
 
-- [ ] **Step 2: Compute the recommendation number**
+- [x] **Step 2: Compute the recommendation number**
 
 If Recommendation A:
 ```bash
@@ -346,11 +346,13 @@ Expected output: a concrete number like "Peak RSS: 1850 MiB, recommended limit: 
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Fill all empty sections of the findings doc**
+- [x] **Step 1: Fill all empty sections of the findings doc**
 
 By this point every template section (Binary, HTTP surface, Observation window, Activity correlation, Decision) should have data. Write the narrative: what was observed, what rules it out, what the recommendation is, and the confidence level.
 
-- [ ] **Step 2: Commit on a feature branch**
+> **Executed 2026-04-28 (Phase 3 agent).** Phase 3 analysis section written using Phase 2 retake data (three fill sources, 8-session budget table, full A/B/C option analysis). Decision: A (8 Gi immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap).
+
+- [x] **Step 2: Commit on a feature branch**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images
@@ -361,7 +363,7 @@ git status
 git commit -m "docs: vk-local memory profile findings (Phase 3 follow-up of 2026-04-18)"
 ```
 
-- [ ] **Step 3: Open PR with the recommendation summary in the body**
+- [x] **Step 3: Open PR with the recommendation summary in the body**
 
 ```bash
 gh pr create --title "docs: vk-local memory profile — <A|B|C> decision" \
