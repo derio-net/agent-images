@@ -179,6 +179,110 @@ printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$PID" "$VK_RSS" "$VK_HWM" "$VK_TH" 
 
 ---
 
+## Phase 2 retake (post-rollout window)
+
+The original Phase 2 window (anchor 2026-04-26T09:27:28Z) was disrupted at T+4h 38m by the `agent-images@eb6ae08` (`feat(kali): add tmux + mosh`) Deployment rollout, which rolled both pod containers and reset `cgroup.peak`. PR #12 captured the disrupted observations; PR #13 documented the correction. This retake re-runs Phase 2 cleanly against the post-rollout `vk-local` container instance.
+
+- **Anchor (T+0_retake):** 2026-04-27T04:48:34Z (`vk-local` container `startedAt`)
+- **Pod / image:** `secure-agent-pod-b6b9bcd5d-jmc7n` running `ghcr.io/derio-net/vk-local:a90c6c16f332d6c9c22dea7bfa05a27e6272fa0f` (kali/vk-local rollout from agent-images main)
+- **Baseline restartCount:** 1 (single OOMKill at 2026-04-27T04:48:33Z that prompted the current container start; the new container is still at restartCount=1 — any *increase* during the retake window is an in-window restart)
+- **Window end:** T+24h_retake = 2026-04-28T04:48:34Z
+- **Sampling cadence:** manual T+0 row + supercronic-driven `vk-snap.sh` fires at T+4h, T+8h, T+12h, T+16h, T+20h, T+24h (cron `48 */4 * * *` — minute aligned to anchor). Snapshot script writes from kali, commits to this PR's branch via the credential helper. Plain bash, no Claude wrapper, so its own activity is bounded to known cron-fire timestamps.
+
+### Manual RSS snapshots (T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h)
+
+| ts_utc                | VmRSS (vibe-kanban) | VmHWM     | Threads | cgroup.current | cgroup.peak    | active_children | notes                                                       |
+|-----------------------|--------------------:|----------:|--------:|---------------:|---------------:|----------------:|-------------------------------------------------------------|
+| 2026-04-27T04:55:15Z  | 131,284 kB          | 131,284 kB| 135     | 733 MiB        | 1.82 GiB       | 3               | T+0 manual baseline (container 6m41s old). PID 7. **Note:** cgroup.peak already 1.82 GiB despite young container — driven by the active claude session (this very routine + workload spike from the OOMKill@04:48:33Z that birthed this container). top-by-RSS: claude=288 MiB, vibe-kanban=128 MiB, npm=89 MiB, node=87 MiB, kubectl=55 MiB. |
+| 2026-04-27T05:27:00Z  | 156,524 kB          | 156,524 kB| 126     | 473 MiB        | 1.82 GiB       | 0               | T+1h cron snapshot (pod `secure-agent-pod-b6b9bcd5d-jmc7n`). active_children=0 — the T+0 setup-session exited; vibe-kanban itself + slab + kernel only. cgroup.peak unchanged (1.82 GiB high-watermark from T+0's setup workload still standing). VmRSS up 25 MiB (131k → 156k) over 32m suggests post-startup vibe-kanban warmup, not steady-state drift. *(Backfilled from `~/.willikins-agent/vk-snap.log` — the cron-fired script captured the sample but its `git checkout` failed against the worktree-blocked `/home/claude/repos/agent-images` clone; vk-snap.sh was subsequently re-pointed to a dedicated PVC clone at `~/.willikins-agent/vk-snap-clone`.)* |
+| 2026-04-27T09:27:00Z  | 163,724 kB          | 163,724 kB| 119     | 479 MiB        | 1.82 GiB       | 0               | T+5h cron snapshot (same pod). cgroup.current essentially flat (473 → 479 MiB over 4h ≈ +1.5 MiB/h drift). cgroup.peak unchanged. Threads slightly down (126 → 119). vibe-kanban RSS still creeping up (+7 MiB over 4h ≈ +1.75 MiB/h). *(Backfilled from log; same git-checkout failure as T+1h.)* |
+| 2026-04-27T13:40:36Z  | _(pod replaced — no sample)_ | — | — | — | — | — | **Disruption.** Pod `secure-agent-pod-b6b9bcd5d-jmc7n` deleted; new pod `secure-agent-pod-69677554b6-2xg7j` created at this timestamp. Driver: `agent-images@dc414b4` (PR #13 merge, "vk-local memprofile T+19h post-rollout sample + corrected mid-window narrative") triggered an image rebuild → rolling Deployment update. New `vk-local` image: `ghcr.io/derio-net/vk-local:dc414b4b6c3cd1b8f8ecb27fa515aed6e9f170cf`. **NOT an OOMKill** — the OLD pod's cgroup.peak was 1.82 GiB at the last sample (well below the 2 GiB cap) and the rollout cause is documented. Per the operator's invariant, the window is NOT re-anchored — sampling continues from T+0_retake = 2026-04-27T04:48:34Z, with the disruption logged. New pod's `vk-local` container `restartCount` = 0 (fresh container). |
+| 2026-04-27T16:48:00Z  | 131,788 kB          | 131,788 kB| 125     | 640 MiB        | 772 MiB        | 3               | T+12h cron snapshot (NEW pod, ~3h 7m old). cgroup.peak DROPPED to 772 MiB — that's the new container's high-watermark (peak only counts since the new cgroup was created); it is *not* a regression of the cumulative peak across pods. cgroup.current is 640 MiB, driven by the resumed claude session (active_children=3). top-by-RSS: claude=275 MiB, vibe-kanban=128 MiB, npm=123/106/93 MiB (three concurrent), node=87/67 MiB. vibe-kanban itself ~128 MiB — close to T+0's 128 MiB → Rust server's resident set is stable across the rollout. *(Cron-captured sample; commit was backfilled because the script's `git checkout` against `/home/claude/repos/agent-images` failed; vk-snap.sh now uses the dedicated PVC clone.)* |
+| 2026-04-27T16:53:10Z  | 132,260 kB          | 132,260 kB | 125     | 526 MiB        | 772 MiB        | 3               | T+12h auto-snapshot. PID 7, top by RSS: claude:302864/2067,vibe-kanban:132260/7,npm:95452/2090,node:88488/2142,kubectl:56788/2906,ps:4332/2949,bash:3088/2896,vk-snap.sh:3008/2903. |
+| 2026-04-27T20:48:00Z  | 221,168 kB          | 221,168 kB | 108     | 1.13 GiB       | 1.45 GiB       | 0               | T+16h auto-snapshot. PID 7, top by RSS: vibe-kanban:221168/7,ps:4268/11317,bash:3100/11298,awk:1848/11319,bash:1656/11316,head:1452/11318,tini:1276/1. |
+| 2026-04-28T00:48:00Z  | 230,008 kB          | 230,008 kB | 115     | 1.14 GiB       | 1.45 GiB       | 0               | T+20h auto-snapshot. PID 7, top by RSS: vibe-kanban:230008/7,ps:4272/11575,bash:3076/11556,awk:1912/11577,bash:1560/11574,head:1292/11576,tini:1276/1. |
+| 2026-04-28T04:48:00Z  | 105,332 kB          | 105,332 kB | 100     | 187 MiB        | 2.00 GiB       | 0               | T+24h auto-snapshot. PID 7, top by RSS: vibe-kanban:105332/7,ps:4280/1306,bash:3048/1287,awk:1816/1308,bash:1524/1305,head:1340/1307,tini:1300/1. |
+<!-- snapshots-retake-end -->
+
+### OOMKills observed (retake window)
+
+Two classes of kill observed across the retake window's two pod spans:
+
+**Span 1 — pod `secure-agent-pod-b6b9bcd5d-jmc7n` (T+0 → T+9h, baseline restartCount=1):**
+No in-window OOMKills. The pod was terminated by a Deployment rollout at T+9h (2026-04-27T13:40:36Z); cgroup.peak at last sample (T+5h, 2026-04-27T09:27Z) was 1.82 GiB — well below the 2 GiB cap. The prior OOMKill that created this container (at 2026-04-27T04:48:33Z, captured in the anchor) is considered the event that opened the retake window.
+
+**Span 2 — pod `secure-agent-pod-69677554b6-2xg7j` (T+9h → end, baseline restartCount=0):**
+20 OOMKills in 17.4h (2026-04-27T13:40Z → 2026-04-28T07:03Z) — rate ≈ **1 kill per 52 minutes**. Kubelet exposes only the most-recent Last State:
+
+| field                    | value                               |
+|--------------------------|-------------------------------------|
+| Last State reason        | OOMKilled                           |
+| Last State exit code     | 137                                 |
+| Last State container started | 2026-04-28T05:57:50Z           |
+| Last State container finished| 2026-04-28T06:00:48Z (2m 58s lifetime) |
+| Current container started | 2026-04-28T06:00:59Z              |
+| restartCount at analysis | 20 (as of 2026-04-28T07:03Z)       |
+
+Earlier kill timestamps are beyond the 1h kubelet-event retention and are not recoverable. The T+24h snapshot (`cgroup.peak = 2,148,085,760 B = 1.000280 × 2 GiB`) provides the pre-kill watermark for the kill that occurred between T+20h and T+24h.
+
+**Escalation note:** the pre-retake rate was 6 kills in 48h (1/8h). Span 2 shows 1/52min — 9× more frequent. The image on Span 2 is `dc414b4` (PR #13 merge). That PR is docs-only; however, the image build pipeline pulls the latest vibe-kanban fork binary. If the upstream `vibe-kanban` binary changed between the Phase 1 image (`ed62d429`) and `dc414b4`, that would explain the escalation. Phase 3 should cross-check the binary SHA on the current pod against Phase 1's `d3bbcd70b1…`.
+
+### Audit activity per hour (retake window)
+
+**Instrumentation gap:** VK-spawned agent sessions run as children of `vibe-kanban` inside the `vk-local` container's PID and cgroup namespace. Their tool-use events are not captured in kali's `~/.willikins-agent/audit.jsonl` (which only records commands run from kali's shell). The retake window contains 0 audit entries. The Pearson r vs audit_lines is therefore undefined.
+
+Agent sessions observed indirectly via `active_children` in the snapshot table: T+0 (active=3), T+12h (active=3); all other samples show active=0.
+
+### Correlation (retake window)
+
+| hour | max_cgroup_cur_mib | active_children (sample) | oomkill_in_hour |
+|------|-------------------:|:------------------------:|:---------------:|
+| T+0  |                733 | 3                        | 0               |
+| T+1  |                473 | 0                        | 0               |
+| T+2–T+4 | ~476 (interp.) | 0                       | 0               |
+| T+5  |                479 | 0                        | 0               |
+| T+6–T+8 | ~479 (interp.) | 0                       | 0               |
+| T+9  | — (disruption)     | —                        | 0 (rollout, not OOM) |
+| T+10–T+11 | — (new pod startup) | —                  | 0               |
+| T+12 |                640 | 3                        | 0               |
+| T+13–T+15 | ~808 (interp.) | unknown                 | unknown         |
+| T+16 |              1,130 | 0                        | unknown         |
+| T+17–T+19 | ~1,133 (interp.) | unknown               | unknown         |
+| T+20 |              1,140 | 0                        | 0 (no peak spike yet) |
+| T+21–T+23 | — (OOMKills; cgroup resets) | —            | **yes** (≥1)  |
+| T+24 |                187 | 0                        | **yes** (peak=2.00 GiB on prior container) |
+
+**Pearson r (active_children vs cgroup_cur_mib, n=7 sampled points):** r = 0.007 (≈ 0). This does NOT mean memory is uncorrelated with workload — it means the **lag** is too long for a point-in-time snapshot to capture. Active sessions exit but leave ~900 MiB of file cache in the cgroup that the kernel does not reclaim until pressure. By the time the next sample fires (4h later), active_children=0 but cgroup.current is still high, inverting the expected correlation.
+
+**Idle drift (T+1h → T+5h, same pod, no children):** +1.5 MiB/h — below the 10 MiB/h leak threshold.
+
+**Rubric classification:**
+- r ≤ 0.5 ✓
+- idle drift < 10 MiB/h ✓
+- → **bounded, favors A or B** (not a leak → not C)
+
+### Additional contributing factors (from parallel investigation thread)
+
+Two findings from a concurrent thread are relevant and incorporated here before Phase 3 makes the formal call:
+
+**1. npm cache balloon — 12 GiB at `/home/claude/.npm`**
+
+The npm `_cacache` and `_npx` directories on the PVC have grown to 12 GiB with no automatic pruning. When claude sessions load MCP servers (e.g., `@upstash/context7-mcp`, others) via `npm exec`, the kernel reads package files from this cache into the cgroup's page cache. After the session exits, these file-backed pages remain in the cgroup's `memory.current` (reclaimable under pressure, but not freed eagerly). This directly explains the T+16h/T+20h idle cgroup.current of ~1.13–1.14 GiB (vibe-kanban ~220 MiB + ~900 MiB retained file cache from packages loaded in the T+12h session). The 12 GiB disk footprint is also a PVC reliability risk independent of cgroup pressure.
+
+**2. VK worktrees not cleaned up — ~15–20 MiB each retained by vibe-kanban**
+
+vibe-kanban's own RSS grew from 128 MiB (T+0, container fresh, 0 active worktrees) to 198 MiB (07:00Z observation, 4 active worktrees: `15d8-ffe-67-gh-8`, `609e-ffe-75-gh-60`, `7bbf-ffe-69-gh-58`, `9cbc-ffe-72-gh-59`). The per-worktree memory load is approximately (198−128)/4 ≈ **17 MiB of vibe-kanban heap per live worktree**. At T+16h/T+20h (vibe-kanban 221–230 MiB, active=0), several worktrees from earlier sessions had not been pruned, accounting for 93–102 MiB above the post-restart baseline. This is not a random-walk leak — it is bounded by the number of live worktrees — but worktree accumulation with no cleanup policy is a steady-state memory growth vector. A `git worktree prune` on the repo after each task completes would reclaim this.
+
+**Revised cgroup fill sequence (typical kill event):**
+
+1. vibe-kanban idle baseline: ~128 MiB (fresh container, 0 worktrees) → grows to ~200–230 MiB as worktrees accumulate
+2. Session starts: claude (~300 MiB) + npm (~90 MiB) + node (~90 MiB) = +480 MiB → cgroup ~680–710 MiB
+3. Session ends: child RSS freed, but ~900 MiB of npm package file-cache retained → cgroup ~1.1 GiB
+4. Second session starts: another +480 MiB → cgroup ~1.6 GiB
+5. Third session starts (or second session peaks): cgroup reaches 2 GiB → OOMKill
+
+---
+
 ## Phase 3 — Decision (pending)
 
 > **Note on option definitions:** Option B below is a refinement of the original plan's "upstream cap: working-set is unbounded under workload X" to reflect the Phase 1 discovery that `vibe-kanban` itself is only ~147 MiB RSS — an "upstream cap in the Rust binary" no longer matches the observed behavior. The cgroup fills with *child processes*, so the Phase 3 agent chooses between raising the limit, capping/relocating the child workload, or finding a leak. If the Phase 3 agent prefers the original framing, keep it — but the numbers from Phase 1 have to be reconciled either way.
@@ -188,7 +292,14 @@ One of:
 - **B (cap concurrency / re-parent children):** the cgroup fills because `vibe-kanban` spawns `claude`/`npm`/`node` as children of the vk-local cgroup. Options: run them in the `kali` sibling container, enforce a max concurrent-sessions config, or move to a per-task pod. File upstream issue/PR against the vibe-kanban fork.
 - **C (leak):** a single `vibe-kanban` or `claude` process grows monotonically at idle by _rate/h_. File code-level fix against the offending repo.
 
-**Chosen:** _(A | B | C)_. **Rationale:** _(para)_.
+**Chosen:** **A + B (dual recommendation).** Phase 2 data rules out C (no monotonic per-process leak; idle drift = 1.5 MiB/h, bounded). The cgroup fills from three compounding sources — (1) child-process RSS per active session (~480 MiB each), (2) retained npm file-cache after sessions close (~900 MiB at idle), and (3) vibe-kanban heap growth from un-pruned worktrees (~17 MiB each). Option A (raise limit) is the immediate intervention needed to stop the current crash-loop (20 kills in 17.4h, rate 1/52min). Option B (re-parent or cap child sessions) is the durable fix.
+
+**Phase 3 formal call (preliminary from Phase 2 data):**
+- **A — immediate:** raise `vk-local` memory limit from 2 Gi to **4 Gi** in `derio-net/frank` `apps/secure-agent-pod/manifests/deployment.yaml:143`. Justification: peak fill sequence (vibe-kanban ~200 MiB + 2 concurrent sessions × 480 MiB + 900 MiB file-cache = ~2.06 GiB observed at OOMKill). 4 GiB provides a 90% headroom margin for 3–4 concurrent sessions without over-provisioning further.
+- **B — architectural (medium-term):** task-runner sessions spawned by vibe-kanban should execute in the kali sibling container's cgroup (32 GiB limit, already stable). This keeps vk-local's cgroup bounded to vibe-kanban itself (~200–250 MiB). File an issue/PR against the vibe-kanban fork.
+- **Housekeeping (concurrent):** (i) Add `npm cache clean --force` or `npm cache verify` to a periodic kali cron to keep `~/.npm` below 2 GiB; (ii) add `git worktree prune` to the vibe-kanban post-task cleanup path, or enforce a worktree TTL, to cap per-worktree vibe-kanban heap growth.
+
+**Rationale:** Phase 3 should verify the binary SHA on pod `69677554b6` against Phase 1's `d3bbcd70b1…` — if the binary changed (possible via a dependency rebuild triggered by the dc414b4 image build), the 9× escalation in kill rate (1/8h → 1/52min) may be partly attributable to the new binary, not just the workload increase. If the binary is identical, the escalation is entirely workload-driven (more concurrent sessions after the kali tmux/mosh additions enabled more persistent agent connections).
 
 ---
 
