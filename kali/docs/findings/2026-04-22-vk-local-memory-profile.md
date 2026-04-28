@@ -201,6 +201,7 @@ The original Phase 2 window (anchor 2026-04-26T09:27:28Z) was disrupted at T+4h 
 | 2026-04-27T16:53:10Z  | 132,260 kB          | 132,260 kB | 125     | 526 MiB        | 772 MiB        | 3               | T+12h auto-snapshot. PID 7, top by RSS: claude:302864/2067,vibe-kanban:132260/7,npm:95452/2090,node:88488/2142,kubectl:56788/2906,ps:4332/2949,bash:3088/2896,vk-snap.sh:3008/2903. |
 | 2026-04-27T20:48:00Z  | 221,168 kB          | 221,168 kB | 108     | 1.13 GiB       | 1.45 GiB       | 0               | T+16h auto-snapshot. PID 7, top by RSS: vibe-kanban:221168/7,ps:4268/11317,bash:3100/11298,awk:1848/11319,bash:1656/11316,head:1452/11318,tini:1276/1. |
 | 2026-04-28T00:48:00Z  | 230,008 kB          | 230,008 kB | 115     | 1.14 GiB       | 1.45 GiB       | 0               | T+20h auto-snapshot. PID 7, top by RSS: vibe-kanban:230008/7,ps:4272/11575,bash:3076/11556,awk:1912/11577,bash:1560/11574,head:1292/11576,tini:1276/1. |
+| 2026-04-28T04:48:00Z  | 105,332 kB          | 105,332 kB | 100     | 187 MiB        | 2.00 GiB       | 0               | T+24h auto-snapshot. PID 7, top by RSS: vibe-kanban:105332/7,ps:4280/1306,bash:3048/1287,awk:1816/1308,bash:1524/1305,head:1340/1307,tini:1300/1. |
 <!-- snapshots-retake-end -->
 
 ### OOMKills observed (retake window)
