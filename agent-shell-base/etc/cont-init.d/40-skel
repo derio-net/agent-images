@@ -1,0 +1,17 @@
+#!/usr/bin/with-contenv bash
+# 40-skel — Seed missing dotfiles from /etc/skel into $AGENT_HOME on first boot.
+# `useradd --create-home` only seeds skel into the image-layer home; once the
+# PVC is mounted at runtime it overlays $AGENT_HOME and hides any baked-in files.
+# This step lays down dotfiles (.tmux.conf, etc.) onto the PVC the first time
+# the container starts, leaving any operator customizations alone on later boots.
+set -e
+shopt -s nullglob dotglob
+for f in /etc/skel/.[!.]* /etc/skel/.??*; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    target="${AGENT_HOME}/${base}"
+    if [ ! -e "$target" ]; then
+        echo "[cont-init] seeding $target from /etc/skel"
+        cp -a "$f" "$target"
+    fi
+done

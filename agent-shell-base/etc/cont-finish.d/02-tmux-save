@@ -1,7 +1,10 @@
 #!/usr/bin/with-contenv bash
+# 02-tmux-save — Force tmux-resurrect save before s6 tears down services.
+# Container runs as ${AGENT_USER} already; no `su` needed (and `su` would
+# require a password when invoked from a non-root context).
 set +e
 if pgrep -u "${AGENT_USER}" tmux >/dev/null 2>&1; then
     echo "[cont-finish] forcing tmux-resurrect save before shutdown"
-    su - "${AGENT_USER}" -c 'tmux run-shell /usr/local/share/tmux-plugins/tmux-resurrect/scripts/save.sh' || true
+    tmux run-shell /usr/local/share/tmux-plugins/tmux-resurrect/scripts/save.sh || true
 fi
 exit 0

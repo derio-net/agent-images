@@ -17,6 +17,7 @@ Intermediate Docker image that adds s6-overlay v3 supervision, sshd, supercronic
    - `10-ssh-host-keys` — generates SSH host keys into `$AGENT_HOME/.ssh-host-keys/` (first boot only)
    - `20-venv` — creates `$AGENT_HOME/.willikins-agent/.venv` with croniter (first boot only)
    - `30-authorized-keys` — copies `/etc/ssh-keys/authorized_keys` → `$AGENT_HOME/.ssh/`
+   - `40-skel` — seeds missing dotfiles (`.tmux.conf`, etc.) from `/etc/skel` onto the PVC
 2. s6 supervises services (`services.d/`): `sshd` and `supercronic`
 3. On shutdown, `cont-finish.d/` runs: calls `shutdown.sh` (if present) + forces tmux-resurrect save
 

@@ -6,4 +6,7 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 UsePAM no
 StrictModes no
+# Non-root sshd cannot drop to a privilege-separation user. Required when
+# running as the non-root agent UID under s6-overlay.
+UsePrivilegeSeparation no
 PidFile __AGENT_HOME__/.ssh/sshd.pid
