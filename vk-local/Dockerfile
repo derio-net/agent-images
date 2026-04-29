@@ -19,9 +19,14 @@ COPY --from=vk-artifact /server /usr/local/bin/vibe-kanban
 RUN chmod +x /usr/local/bin/vibe-kanban \
     && chown claude:claude /usr/local/bin/vibe-kanban
 
+COPY entrypoint-vk-local.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER claude
 WORKDIR /home/claude
 
 EXPOSE 8081
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/local/bin/vibe-kanban"]
+# Wrapper runs as USER claude (non-root); /opt/agent-init.d/* scripts must be
+# non-root-safe. vibe-kanban exec-replaces the wrapper, so K8s supervises it
+# directly under tini PID 1 — no s6, no extra supervisor layer.
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
