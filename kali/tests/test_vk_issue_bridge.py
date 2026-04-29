@@ -405,6 +405,54 @@ def test_main_respects_slots_even_when_label_fails(mock_issues, mock_blockers, m
         assert mock_sync.call_count == 3
 
 
+# --- Silent-failure metric tests: main() must push failure_total
+#     on parse_error and unknown_repo paths so degradations are observable ---
+
+@patch.object(mod, "push_heartbeat")
+@patch.object(mod, "push_failure_metric")
+@patch.object(mod, "gh_list_ready_issues")
+def test_main_pushes_metric_on_parse_error(mock_issues, mock_failure, mock_hb):
+    """An issue with a free-form body (no Instruction/Workspace blocks) must
+    push willikins_vk_bridge_failure_total{reason='parse_error'}.
+
+    Regression: 2026-04-29 incident where superpowers-for-vk#55 caused the
+    bridge to exit 1 every 2 minutes without any metric ever incrementing,
+    leaving the existing failure-rate alert blind.
+    """
+    mock_client = _make_mock_client()
+    issue = _make_issue(number=55, title="Workflow gap notes")
+    issue.body = "Two related cross-repo workflow gaps surfaced..."
+    mock_issues.return_value = [issue]
+
+    with patch.object(mod, "VkMcpClient", return_value=mock_client):
+        mod.main()
+
+    mock_failure.assert_called_once_with("55", "parse_error")
+
+
+@patch.object(mod, "push_heartbeat")
+@patch.object(mod, "push_failure_metric")
+@patch.object(mod, "gh_list_ready_issues")
+def test_main_pushes_metric_on_unknown_repo(mock_issues, mock_failure, mock_hb):
+    """An issue whose ## Workspace points at a repo VK doesn't know about
+    must push willikins_vk_bridge_failure_total{reason='unknown_repo'}.
+    """
+    mock_client = _make_mock_client()
+    issue = _make_issue(number=77, title="Task in mystery repo")
+    issue.body = (
+        "## Instruction\n\n"
+        "Use superpowers:executing-plans to implement this task.\n\n"
+        "## Workspace\n\n"
+        "Repos: not-a-real-repo\n"
+    )
+    mock_issues.return_value = [issue]
+
+    with patch.object(mod, "VkMcpClient", return_value=mock_client):
+        mod.main()
+
+    mock_failure.assert_called_once_with("77", "unknown_repo")
+
+
 # --- Dependency parser tests ---
 
 BODY_WITH_DEPS = """Part of: Content Pipeline Foundation

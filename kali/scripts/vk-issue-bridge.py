@@ -778,10 +778,12 @@ def main() -> int:
             parsed = parse_issue_body(i.body)
             if parsed.parse_error:
                 log(f"  x {i.repo}#{i.number}: PARSE ERROR — {parsed.parse_error}")
+                push_failure_metric(str(i.number), "parse_error")
                 failed += 1
                 continue
             if parsed.repos[0] not in vk_repo_names:
                 log(f"  x {i.repo}#{i.number}: unknown repo '{parsed.repos[0]}'")
+                push_failure_metric(str(i.number), "unknown_repo")
                 failed += 1
                 continue
 
