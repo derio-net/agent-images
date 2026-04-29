@@ -49,6 +49,10 @@ jobs:
     strategy:
       matrix:
         image:
+          - name: agent-shell-base
+            context: agent-shell-base
+            build_args: |
+              BASE_SHA=${{ needs.build-base.outputs.sha }}
           - name: secure-agent-kali
             context: kali
             build_args: |

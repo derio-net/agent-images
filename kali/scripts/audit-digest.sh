@@ -4,8 +4,15 @@
 
 set -euo pipefail
 
-# Source bashrc for env vars (TELEGRAM_BOT_TOKEN, etc.)
+# Source bashrc for env vars (TELEGRAM_BOT_TOKEN, etc.). The PVC-side
+# bashrc routinely contains code only valid in an interactive/tmux
+# context (e.g. tmux helper functions invoking `[ -n "$TMUX" ]` which
+# returns 1 in cron). Disable BOTH errexit and nounset around the
+# source so a non-zero command or unbound-var reference in bashrc
+# doesn't propagate up and kill the cron run.
+set +eu
 [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AUDIT_LOG="/home/claude/.willikins-agent/audit.jsonl"

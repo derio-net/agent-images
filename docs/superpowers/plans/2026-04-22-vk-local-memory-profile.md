@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Not Started
+**Status:** Phase 3 complete — Decision: A (raise limit to 8 Gi, immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap). Implementation via brainstorm issue `derio-net/frank#140`.
 
 **Goal:** Diagnose why the `vk-local` container in `secure-agent-pod` is consistently OOMKilled at its 2Gi limit (6× in ~48h observed during Phase 3 soak of the 2026-04-18 plan — Deviation D4), and produce a data-driven recommendation for one of: (a) raise the limit, (b) cap working-set in the binary, (c) identify and fix a leak.
 
@@ -212,7 +212,7 @@ Given that, **skip the in-pod sampler and rely on VictoriaMetrics** for continuo
 
 > **Executed 2026-04-26T09:49:35Z (T+0:22m).** Step 2's two suggested paths are both unavailable: (a) in-pod sampler from kali can't reach vk-local without shared PID namespace, and (b) VictoriaMetrics has no cadvisor scrape for `gpu-1` (Phase 1 finding). Built the redirected sampler from Phase 1's Phase 2 callout — a Mac-local one-shot script (`~/.local/bin/vk-local-memprofile-sample.sh`) plus a launchd plist (`~/Library/LaunchAgents/local.derionet.vk-local-memprofile.plist`) for 60-second intervals. The harness guardrail blocked auto-loading the launchd job (recurring `kubectl exec` against a production-namespace pod requires explicit operator authorization). Decision: do not run an unattended daemon; use the manual 4h cadence from Step 3 below as the sole snapshot source. The script + plist remain on the Frank control host so the operator can authorize and load them later if desired. T+0:22m sanity row appended to findings doc — confirms the sampler works and shows ~1.6 MiB/h idle drift.
 
-- [ ] **Step 3: Take 6 manual RSS snapshots over 24h (every 4h)**
+- [x] **Step 3: Take 6 manual RSS snapshots over 24h (every 4h)**
 
 From the Frank control host, at T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h:
 
@@ -225,7 +225,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Append each snapshot to the findings doc under a "Manual RSS snapshots" table. If an OOMKill happens mid-window, note the timestamp and the pre-kill RSS (visible in kubectl describe → Last State → Finished).
 
-- [ ] **Step 4: At T+24h, export the VictoriaMetrics time-series**
+- [x] **Step 4: At T+24h, export the VictoriaMetrics time-series**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -240,7 +240,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Expected: one series with 1440 data points (24h × 60 min). If the series has gaps (< 1200 pts), note this — OOMKills cause scrape gaps.
 
-- [ ] **Step 5: Correlate with OOMKills**
+- [x] **Step 5: Correlate with OOMKills**
 
 ```bash
 source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
@@ -255,7 +255,7 @@ Append OOMKill timestamps to the findings doc. Cross-reference with pre-kill RSS
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Count kali audit log entries in the window**
+- [x] **Step 1: Count kali audit log entries in the window**
 
 The kali audit log (`~/.willikins-agent/audit.jsonl` + daily archives under `audit-archive/`) tracks tool-use bursts which may correlate with VK HTTP load.
 
@@ -267,7 +267,7 @@ source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
 
 Append line count + size to the findings doc for the observation day.
 
-- [ ] **Step 2: Hour-bucket audit activity and RSS**
+- [x] **Step 2: Hour-bucket audit activity and RSS**
 
 Write a short Python snippet (on the Frank host, not in the pod) that:
 1. Reads the 24h VictoriaMetrics export from Phase 2 Task 1 Step 4.
@@ -297,7 +297,7 @@ If hour-level correlation is strong (r > 0.5): memory scales with workload → b
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Plot RSS over the window**
+- [x] **Step 1: Plot RSS over the window**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/frank
@@ -323,7 +323,7 @@ Inspect the CSV. Classify the pattern:
 - **Monotonic growth at idle:** leak → recommendation C (code-level fix).
 - **Stable baseline + large transient spikes:** workload-driven burst → bump limit with margin = max(spike) + 25%.
 
-- [ ] **Step 2: Compute the recommendation number**
+- [x] **Step 2: Compute the recommendation number**
 
 If Recommendation A:
 ```bash
@@ -346,11 +346,13 @@ Expected output: a concrete number like "Peak RSS: 1850 MiB, recommended limit: 
 **Files:**
 - Modify: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`
 
-- [ ] **Step 1: Fill all empty sections of the findings doc**
+- [x] **Step 1: Fill all empty sections of the findings doc**
 
 By this point every template section (Binary, HTTP surface, Observation window, Activity correlation, Decision) should have data. Write the narrative: what was observed, what rules it out, what the recommendation is, and the confidence level.
 
-- [ ] **Step 2: Commit on a feature branch**
+> **Executed 2026-04-28 (Phase 3 agent).** Phase 3 analysis section written using Phase 2 retake data (three fill sources, 8-session budget table, full A/B/C option analysis). Decision: A (8 Gi immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap).
+
+- [x] **Step 2: Commit on a feature branch**
 
 ```bash
 cd /Users/derio/Docs/projects/DERIO_NET/agent-images
@@ -361,7 +363,7 @@ git status
 git commit -m "docs: vk-local memory profile findings (Phase 3 follow-up of 2026-04-18)"
 ```
 
-- [ ] **Step 3: Open PR with the recommendation summary in the body**
+- [x] **Step 3: Open PR with the recommendation summary in the body**
 
 ```bash
 gh pr create --title "docs: vk-local memory profile — <A|B|C> decision" \

@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bash
+set +e
+if [ -x /opt/scripts/shutdown.sh ]; then
+    echo "[cont-finish] running /opt/scripts/shutdown.sh"
+    /opt/scripts/shutdown.sh
+fi
+exit 0
