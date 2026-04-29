@@ -5,12 +5,14 @@
 set -euo pipefail
 
 # Source bashrc for env vars (TELEGRAM_BOT_TOKEN, etc.). The PVC-side
-# bashrc may reference shell-state vars bound only in interactive/tmux
-# sessions (e.g. `_TMUX_LAST_PWD`); disable nounset around the source
-# so its missing refs don't kill the cron run.
-set +u
+# bashrc routinely contains code only valid in an interactive/tmux
+# context (e.g. tmux helper functions invoking `[ -n "$TMUX" ]` which
+# returns 1 in cron). Disable BOTH errexit and nounset around the
+# source so a non-zero command or unbound-var reference in bashrc
+# doesn't propagate up and kill the cron run.
+set +eu
 [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
-set -u
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AUDIT_LOG="/home/claude/.willikins-agent/audit.jsonl"
