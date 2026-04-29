@@ -1,0 +1,11 @@
+#!/usr/bin/with-contenv bash
+# 20-venv — Python venv for cron heartbeat scripts (compute-next-run.py,
+# push-next-expected.sh use croniter).
+set -e
+VENV="${AGENT_HOME}/.willikins-agent/.venv"
+if [ ! -d "$VENV" ]; then
+    echo "[cont-init] creating Python venv for cron monitor scripts"
+    mkdir -p "${AGENT_HOME}/.willikins-agent"
+    uv venv "$VENV"
+    uv pip install --python "$VENV/bin/python" croniter
+fi

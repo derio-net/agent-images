@@ -1,7 +1,7 @@
 # Agent Pod Restart Resilience — Implementation Plan (agent-images side)
 
 **Spec:** `derio-net/frank:docs/superpowers/specs/2026-04-27--agents--restart-resilience-design.md`
-**Status:** Not Started
+**Status:** Phase 1 Done
 
 **Type:** Foundation extension of the agent-images repo. Companion to the spec in `derio-net/frank` (linked above) and the [frank-side plan](https://github.com/derio-net/frank/blob/main/docs/superpowers/plans/2026-04-27--agents--restart-resilience.md) which handles the cluster-side work (notifications + cutover + verification).
 
@@ -26,7 +26,7 @@ Move the first-boot setup that's currently inline in `kali/entrypoint.sh` into a
 
 ### Task 1: Add `/opt/agent-init.d/01-pvc-dirs` to `agent-base/`
 
-- [ ] **Step 1: Create `agent-base/opt/agent-init.d/01-pvc-dirs` script**
+- [x] **Step 1: Create `agent-base/opt/agent-init.d/01-pvc-dirs` script**
 
 ```bash
 #!/bin/bash
@@ -38,7 +38,7 @@ mkdir -p "$HOME/.ssh-host-keys" "$HOME/.ssh" "$HOME/repos" "$HOME/.claude" "$HOM
 chmod 700 "$HOME/.ssh-host-keys" "$HOME/.ssh"
 ```
 
-- [ ] **Step 2: Add to `agent-base/Dockerfile`**
+- [x] **Step 2: Add to `agent-base/Dockerfile`**
 
 ```dockerfile
 COPY opt/agent-init.d/ /opt/agent-init.d/
@@ -47,7 +47,7 @@ RUN chmod +x /opt/agent-init.d/*
 
 ### Task 2: Add `/opt/agent-init.d/02-credential-migrate`
 
-- [ ] **Step 1: Create `agent-base/opt/agent-init.d/02-credential-migrate` script**
+- [x] **Step 1: Create `agent-base/opt/agent-init.d/02-credential-migrate` script**
 
 Migrates the legacy gitconfig credential helper from env-var-based (which silently failed for VS Code subprocesses and cron) to `/proc/1/environ` reader. Lifted from current `kali/entrypoint.sh` lines covering this migration. Use `$AGENT_HOME`, not `/home/claude`.
 
@@ -66,7 +66,7 @@ fi
 
 ### Task 3: Add `/opt/agent-init.d/03-credential-scrub`
 
-- [ ] **Step 1: Create `agent-base/opt/agent-init.d/03-credential-scrub` script**
+- [x] **Step 1: Create `agent-base/opt/agent-init.d/03-credential-scrub` script**
 
 Removes leaked git credentials from PVC state (URL `.insteadof` rewrites, embedded-token origin URLs). Lifted from current `kali/entrypoint.sh`. Idempotent — runs every boot.
 
@@ -98,7 +98,7 @@ shopt -u nullglob
 
 ### Task 4: Validate scripts work standalone
 
-- [ ] **Step 1: Build agent-base locally and exercise the scripts**
+- [x] **Step 1: Build agent-base locally and exercise the scripts**
 
 ```bash
 docker build -t agent-base:test ./agent-base
@@ -110,11 +110,11 @@ Expected: each script runs to completion with exit 0. The `01-pvc-dirs` script c
 
 ### Task 5: Open PR + merge
 
-- [ ] **Step 1: Open PR `feat(base): /opt/agent-init.d shared first-boot scripts`**
+- [x] **Step 1: Open PR `feat(base): /opt/agent-init.d shared first-boot scripts`**
 
 Body explains the role: shared first-boot setup that both `agent-shell-base`-derived images (via `cont-init.d`) and `vk-local` (via entrypoint wrapper) call. No behavior change to existing children yet — kali still has its own entrypoint that doesn't call these. Phase 3 cuts kali over.
 
-- [ ] **Step 2: Wait for matrix CI green, then merge**
+- [x] **Step 2: Wait for matrix CI green, then merge**
 
 CI builds agent-base + secure-agent-kali + vk-local on every push. Confirm all three still build. The bumper workflow will fire a chore PR in frank — **do not merge it yet** until Phase 4 lands. Hold or close the bump PR.
 
@@ -130,7 +130,7 @@ Net-new Dockerfile + cont-init.d + services.d + cont-finish.d + tmux-plugin inst
 
 ### Task 1: Scaffold `agent-shell-base/` directory in `agent-images`
 
-- [ ] **Step 1: Create the directory layout**
+- [x] **Step 1: Create the directory layout**
 
 ```text
 agent-shell-base/
@@ -161,7 +161,7 @@ agent-shell-base/
 
 ### Task 2: Write `agent-shell-base/Dockerfile`
 
-- [ ] **Step 1: s6-overlay install + parameterization**
+- [x] **Step 1: s6-overlay install + parameterization**
 
 ```dockerfile
 ARG BASE_SHA=latest
@@ -221,7 +221,7 @@ ENTRYPOINT ["/init"]
 
 ### Task 3: Write `etc/cont-init.d/00-run-agent-init`
 
-- [ ] **Step 1: Wrapper that calls all scripts in `/opt/agent-init.d/` in order**
+- [x] **Step 1: Wrapper that calls all scripts in `/opt/agent-init.d/` in order**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -239,7 +239,7 @@ done
 
 ### Task 4: Write `etc/cont-init.d/10-ssh-host-keys`
 
-- [ ] **Step 1: Generate sshd host keys on first boot, idempotent**
+- [x] **Step 1: Generate sshd host keys on first boot, idempotent**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -255,7 +255,7 @@ chmod 600 "$KEYDIR"/ssh_host_*_key
 
 ### Task 5: Write `etc/cont-init.d/20-venv`
 
-- [ ] **Step 1: Create uv venv with croniter for cron-monitor scripts**
+- [x] **Step 1: Create uv venv with croniter for cron-monitor scripts**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -273,7 +273,7 @@ fi
 
 ### Task 6: Write `etc/cont-init.d/30-authorized-keys`
 
-- [ ] **Step 1: Copy authorized_keys from mounted Secret to $AGENT_HOME/.ssh/**
+- [x] **Step 1: Copy authorized_keys from mounted Secret to $AGENT_HOME/.ssh/**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -286,7 +286,7 @@ fi
 
 ### Task 7: Write `etc/services.d/sshd/{run,finish}`
 
-- [ ] **Step 1: sshd service definition**
+- [x] **Step 1: sshd service definition**
 
 `run`:
 ```bash
@@ -303,7 +303,7 @@ exit 0
 
 ### Task 8: Write `etc/services.d/supercronic/{run,finish}`
 
-- [ ] **Step 1: supercronic service definition**
+- [x] **Step 1: supercronic service definition**
 
 `run`:
 ```bash
@@ -320,7 +320,7 @@ exit 0
 
 ### Task 9: Write `etc/cont-finish.d/{01-shutdown, 02-tmux-save}`
 
-- [ ] **Step 1: 01-shutdown — calls per-pod shutdown.sh if present**
+- [x] **Step 1: 01-shutdown — calls per-pod shutdown.sh if present**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -332,7 +332,7 @@ fi
 exit 0
 ```
 
-- [ ] **Step 2: 02-tmux-save — force tmux-resurrect save before shutdown**
+- [x] **Step 2: 02-tmux-save — force tmux-resurrect save before shutdown**
 
 ```bash
 #!/usr/bin/with-contenv bash
@@ -346,7 +346,7 @@ exit 0
 
 ### Task 10: Write `etc/skel/.tmux.conf` baseline
 
-- [ ] **Step 1: Baseline seeded into $AGENT_HOME on first boot**
+- [x] **Step 1: Baseline seeded into $AGENT_HOME on first boot**
 
 ```text
 # Baseline tmux config — seeded from /etc/skel into $AGENT_HOME on first boot.
@@ -366,7 +366,7 @@ source-file /etc/agent/tmux-resurrect.conf
 
 ### Task 11: Write `etc/agent/tmux-resurrect.conf`
 
-- [ ] **Step 1: Plugin loader + settings — sourced by .tmux.conf**
+- [x] **Step 1: Plugin loader + settings — sourced by .tmux.conf**
 
 ```text
 set -g @resurrect-dir '~/.tmux/resurrect'
@@ -381,7 +381,7 @@ run-shell /usr/local/share/tmux-plugins/tmux-continuum/continuum.tmux
 
 ### Task 12: Write baseline `sshd_config`
 
-- [ ] **Step 1: Non-root sshd config with __AGENT_HOME__ placeholders**
+- [x] **Step 1: Non-root sshd config with __AGENT_HOME__ placeholders**
 
 ```text
 Port 2222
@@ -399,13 +399,13 @@ The Dockerfile's `RUN sed` substitutes `__AGENT_HOME__` with the actual `$AGENT_
 
 ### Task 13: Add agent-shell-base to CI matrix
 
-- [ ] **Step 1: Update `.github/workflows/build.yml` matrix**
+- [x] **Step 1: Update `.github/workflows/build.yml` matrix**
 
 Add `agent-shell-base` to the matrix list. Build order: agent-base → agent-shell-base (uses `BASE_SHA` arg from agent-base's just-built tag) → kali/vk-local.
 
 ### Task 14: Build smoke test
 
-- [ ] **Step 1: Local container exercises s6 + sshd + supercronic + crashloop bail**
+- [x] **Step 1: Local container exercises s6 + sshd + supercronic + crashloop bail**
 
 ```bash
 docker build -t agent-shell-base:test \
@@ -447,9 +447,9 @@ Expected: respawn works for single flap; bail-out triggers after 5 deaths in 60s
 
 ### Task 15: Open PR + merge
 
-- [ ] **Step 1: Open PR `feat(images): agent-shell-base — s6-overlay supervisor + tmux persistence`**
+- [x] **Step 1: Open PR `feat(images): agent-shell-base — s6-overlay supervisor + tmux persistence`**
 
-- [ ] **Step 2: Wait for matrix CI green, merge**
+- [x] **Step 2: Wait for matrix CI green, merge**
 
 Bumper fires for kali + vk-local with the new agent-base SHA — **still hold those bumps** until Phase 4 lands.
 
