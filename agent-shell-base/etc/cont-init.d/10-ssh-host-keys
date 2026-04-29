@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv bash
+set -e
+KEYDIR="${AGENT_HOME}/.ssh-host-keys"
+if [ ! -f "$KEYDIR/ssh_host_ed25519_key" ]; then
+    echo "[cont-init] generating SSH host keys (first boot)"
+    ssh-keygen -t ed25519 -f "$KEYDIR/ssh_host_ed25519_key" -N ""
+    ssh-keygen -t rsa -b 4096 -f "$KEYDIR/ssh_host_rsa_key" -N ""
+fi
+chmod 600 "$KEYDIR"/ssh_host_*_key

@@ -1,0 +1,9 @@
+Port 2222
+HostKey __AGENT_HOME__/.ssh-host-keys/ssh_host_ed25519_key
+HostKey __AGENT_HOME__/.ssh-host-keys/ssh_host_rsa_key
+AuthorizedKeysFile __AGENT_HOME__/.ssh/authorized_keys
+PubkeyAuthentication yes
+PasswordAuthentication no
+UsePAM no
+StrictModes no
+PidFile __AGENT_HOME__/.ssh/sshd.pid

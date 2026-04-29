@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv bash
+set +e
+if pgrep -u "${AGENT_USER}" tmux >/dev/null 2>&1; then
+    echo "[cont-finish] forcing tmux-resurrect save before shutdown"
+    su - "${AGENT_USER}" -c 'tmux run-shell /usr/local/share/tmux-plugins/tmux-resurrect/scripts/save.sh' || true
+fi
+exit 0
