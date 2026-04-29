@@ -1,5 +1,7 @@
 #!/usr/bin/with-contenv bash
 set +e
+# Signal session-manager.sh to bail out of any in-flight cron tick.
+touch /tmp/willikins-shutting-down
 if [ -x /opt/scripts/shutdown.sh ]; then
     echo "[cont-finish] running /opt/scripts/shutdown.sh"
     /opt/scripts/shutdown.sh

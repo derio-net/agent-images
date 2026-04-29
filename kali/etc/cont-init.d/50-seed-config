@@ -1,0 +1,10 @@
+#!/usr/bin/with-contenv bash
+# 50-seed-config — Seed kali config templates to PVC on first boot.
+# Idempotent: only copies when the target file is absent.
+set -e
+HOME="${AGENT_HOME:-$HOME}"
+[ -f "$HOME/.crontab" ]              || cp /opt/crontab "$HOME/.crontab"
+[ -f "$HOME/.load-env.sh" ]          || cp /opt/load-env.sh "$HOME/.load-env.sh"
+[ -f "$HOME/.bashrc" ]               || cp /opt/bashrc "$HOME/.bashrc"
+[ -f "$HOME/.claude/settings.json" ] || { mkdir -p "$HOME/.claude"; cp /opt/settings.json "$HOME/.claude/settings.json"; }
+[ -f "$HOME/.gitconfig" ]            || cp /opt/gitconfig "$HOME/.gitconfig"
