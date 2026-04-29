@@ -19,9 +19,11 @@ COPY --from=vk-artifact /server /usr/local/bin/vibe-kanban
 RUN chmod +x /usr/local/bin/vibe-kanban \
     && chown claude:claude /usr/local/bin/vibe-kanban
 
+COPY entrypoint-vk-local.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER claude
 WORKDIR /home/claude
 
 EXPOSE 8081
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/usr/local/bin/vibe-kanban"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
