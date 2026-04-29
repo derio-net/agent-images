@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** In Progress
+**Status:** Complete
 
 **Goal:** Fix the reliability and observability issues in the Willikins persistent agent surfaced by the 2026-04-18 triage: phantom sessions accumulating in claude.ai, silently-broken audit pipeline, unrotated 332 MB session log, and vk-bridge warning spam.
 
@@ -717,7 +717,7 @@ gh workflow run build.yml --repo derio-net/secure-agent-kali --ref main 2>&1
 # Once the new image tag lands, bump the frank deployment and merge the preStop PR
 ```
 
-- [ ] **Step 3: Capture baseline**
+- [x] **Step 3: Capture baseline**
 
 ```bash
 START_TS=$(date -u +%FT%T)
@@ -732,7 +732,7 @@ kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- \
 
 ### Task 2: Observe for 24h
 
-- [ ] **Step 1: Check at T+2h, T+8h, T+24h**
+- [x] **Step 1: Check at T+2h, T+8h, T+24h**
 
 At each checkpoint, record:
 
@@ -754,13 +754,13 @@ kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- \
   '
 ```
 
-- [ ] **Step 2: Manual phantom count in claude.ai**
+- [x] **Step 2: Manual phantom count in claude.ai**
 
 At T+24h, count remote-control environments in the claude.ai UI. Compare with the baseline and with the number of session-manager restarts during the window. If phantoms ≈ restarts: shutdown is not cleanly disconnecting (go back to Phase 0 with new signal/API evidence). If phantoms ≪ restarts: graceful shutdown is working.
 
 ### Task 3: Outcome note and follow-up decisions
 
-- [ ] **Step 1: Write outcome note**
+- [x] **Step 1: Write outcome note**
 
 Append a short entry to `../willikins/decisions/log.md` (via a separate commit in the willikins repo):
 
@@ -768,13 +768,13 @@ Append a short entry to `../willikins/decisions/log.md` (via a separate commit i
 [2026-04-XX] DECISION: <reliability plan outcome> | REASONING: <phantom delta, audit state, disconnect count> | CONTEXT: persistent-agent-reliability plan (secure-agent-kali 2026-04-18)
 ```
 
-- [ ] **Step 2: Open follow-up plans if needed**
+- [x] **Step 2: Open follow-up plans if needed**
 
 - If disconnect loops (`Server unreachable for 11 minutes`) persist at > 1/day: open a new plan **against derio-net/frank** for egress/Cilium investigation. Do not expand scope of this plan.
 - If phantoms still accumulate despite graceful shutdown: open an upstream feature request with Anthropic documenting the findings doc.
 - If audit.jsonl is still empty: the key-mismatch fix is not the whole problem — open a debug plan against secure-agent-kali.
 
-- [ ] **Step 3: Mark Status complete**
+- [x] **Step 3: Mark Status complete**
 
 Edit the `Status:` header of this plan to `Complete` and of the spec to `Complete`.
 
