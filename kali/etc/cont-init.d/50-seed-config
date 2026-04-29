@@ -3,7 +3,8 @@
 # Idempotent: only copies when the target file is absent.
 set -e
 HOME="${AGENT_HOME:-$HOME}"
-[ -f "$HOME/.crontab" ]              || cp /opt/crontab "$HOME/.crontab"
+# Substitute __AGENT_HOME__ placeholder in crontab (PATH line, log redirections).
+[ -f "$HOME/.crontab" ]              || sed "s|__AGENT_HOME__|${HOME}|g" /opt/crontab > "$HOME/.crontab"
 [ -f "$HOME/.load-env.sh" ]          || cp /opt/load-env.sh "$HOME/.load-env.sh"
 [ -f "$HOME/.bashrc" ]               || cp /opt/bashrc "$HOME/.bashrc"
 [ -f "$HOME/.claude/settings.json" ] || { mkdir -p "$HOME/.claude"; cp /opt/settings.json "$HOME/.claude/settings.json"; }

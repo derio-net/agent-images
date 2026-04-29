@@ -19,10 +19,10 @@ fi
 # script has created ~/.willikins-agent.
 mkdir -p "$(dirname "$STATE")"
 
-# logrotate.conf uses /home/claude as a placeholder; substitute at runtime
+# logrotate.conf uses __AGENT_HOME__ as a placeholder; substitute at runtime
 # so the config works regardless of which username this pod runs as.
 TMPCONF=$(mktemp)
 trap 'rm -f "$TMPCONF"' EXIT
-sed "s|/home/claude|${HOME}|g" "$CONF" > "$TMPCONF"
+sed "s|__AGENT_HOME__|${HOME}|g" "$CONF" > "$TMPCONF"
 
 logrotate --state "$STATE" "$TMPCONF"

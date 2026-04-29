@@ -29,15 +29,11 @@ RUN if ! id -u "${AGENT_USER}" >/dev/null 2>&1; then \
                 --shell /bin/bash ${AGENT_USER}; \
     fi
 
-# Re-own s6 runtime dirs for the new UID (agent-shell-base chowned them to the
-# `agent` UID, which is numerically the same 1000 — this is a no-op today but
-# explicit for correctness when AGENT_UID diverges in future).
-RUN chown -R 1000:1000 \
-    /run/service /run/s6 /run/s6-rc /var/run/s6 /run/sshd /var/run/sshd
-
 # Re-substitute sshd_config: agent-shell-base baked in `/home/agent`; replace with
-# the kali-specific AGENT_HOME at kali build time.
-RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config
+# the kali-specific AGENT_HOME at kali build time. The grep assertion confirms the
+# substitution actually fired — catches any future change to agent-shell-base's default path.
+RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
+    && grep -q "${AGENT_HOME}" /opt/sshd_config
 
 # ── Kali archive + dist-upgrade (resolve bookworm→kali-rolling version conflicts) ──
 RUN apt-get update && apt-get install -y --no-install-recommends \

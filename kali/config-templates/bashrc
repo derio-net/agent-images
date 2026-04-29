@@ -10,6 +10,6 @@ export TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_env_from_pid1 TELEGRAM_CHAT_ID)}
 export GRAFANA_API_KEY="${GRAFANA_API_KEY:-$(_env_from_pid1 GRAFANA_API_KEY)}"
 export GRAFANA_API_EDITOR_KEY="${GRAFANA_API_EDITOR_KEY:-$(_env_from_pid1 GRAFANA_API_EDITOR_KEY)}"
 
-export WILLIKINS_REPOS="/home/claude/repos/willikins:willikins"
+export WILLIKINS_REPOS="${HOME}/repos/willikins:willikins"
 export PUSHGATEWAY_URL="http://pushgateway.monitoring.svc.cluster.local:9091"
 export PATH="$HOME/.local/bin:$PATH"
