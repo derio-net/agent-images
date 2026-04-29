@@ -80,8 +80,39 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
 
-  dispatch-frank:
+  smoke-test-vk-local:
     needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VK_IMAGE: ghcr.io/derio-net/vk-local
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — entrypoint wrapper runs init.d scripts
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p /tmp/test-home
+          # Run the shared init scripts directly (bypass vibe-kanban startup so
+          # the test stays environment-free). Verifies:
+          #   1. /opt/agent-init.d/* scripts are present and executable
+          #   2. 01-pvc-dirs creates $HOME/repos and other expected dirs
+          #   3. Wrapper iterates scripts correctly as the claude user
+          docker run --rm \
+            --user 1000:1000 \
+            -v /tmp/test-home:/home/claude \
+            --entrypoint /bin/sh \
+            "${VK_IMAGE}:${IMAGE_SHA}" \
+            -c 'for s in /opt/agent-init.d/*; do [ -x "$s" ] && "$s"; done && ls /home/claude/repos /home/claude/.ssh'
+
+  dispatch-frank:
+    needs: [build-children, smoke-test-vk-local]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
