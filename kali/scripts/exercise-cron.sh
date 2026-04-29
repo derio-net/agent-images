@@ -3,8 +3,13 @@
 # Usage: exercise-cron.sh [desk|standing]
 set -euo pipefail
 
-# Source bashrc for env vars (TELEGRAM_BOT_TOKEN, etc.)
+# Source bashrc for env vars (TELEGRAM_BOT_TOKEN, etc.). The PVC-side
+# bashrc may reference shell-state vars bound only in interactive/tmux
+# sessions (e.g. `_TMUX_LAST_PWD`); disable nounset around the source
+# so its missing refs don't kill the cron run.
+set +u
 [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="${WILLIKINS_REPO_PATH:-/home/claude/repos/willikins}"

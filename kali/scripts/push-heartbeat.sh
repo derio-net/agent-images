@@ -11,8 +11,15 @@ set -euo pipefail
 JOB="${1:?Usage: push-heartbeat.sh <job_name> [label=value ...]}"
 shift
 
-# Source bashrc for PUSHGATEWAY_URL if not already set
-[[ -z "${PUSHGATEWAY_URL:-}" ]] && [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+# Source bashrc for PUSHGATEWAY_URL if not already set. The PVC-side
+# bashrc may reference shell-state vars bound only in interactive/tmux
+# sessions (e.g. `_TMUX_LAST_PWD`); disable nounset around the source
+# so its missing refs don't kill the cron run.
+if [[ -z "${PUSHGATEWAY_URL:-}" ]] && [[ -f "$HOME/.bashrc" ]]; then
+  set +u
+  source "$HOME/.bashrc"
+  set -u
+fi
 
 PUSHGATEWAY_URL="${PUSHGATEWAY_URL:?PUSHGATEWAY_URL must be set}"
 
