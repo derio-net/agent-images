@@ -7,12 +7,14 @@ set -euo pipefail
 
 # Source bashrc for env vars (WILLIKINS_REPOS, GITHUB_TOKEN, etc.)
 # Needed when invoked by supercronic which doesn't load login shell.
-# The PVC-side bashrc may reference shell-state vars that are bound
-# only in interactive/tmux sessions (e.g. `_TMUX_LAST_PWD`); disable
-# nounset around the source so its missing refs don't kill the cron run.
-set +u
+# The PVC-side bashrc routinely contains code that's only valid in an
+# interactive/tmux context (e.g. tmux helper functions invoking
+# `[ -n "$TMUX" ]` which returns 1 in cron). Disable BOTH errexit
+# and nounset around the source so a non-zero command or unbound-var
+# reference in bashrc doesn't propagate up and kill the cron run.
+set +eu
 [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
-set -u
+set -eu
 
 LOGFILE="/home/claude/.willikins-agent/session-manager.log"
 PIDDIR="/home/claude/.willikins-agent/pids"
