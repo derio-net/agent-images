@@ -1,7 +1,7 @@
 # Persistent Agent Reliability — Design
 
 *Date: 2026-04-18*
-*Status: In Progress*
+*Status: Complete*
 
 ## Context
 
@@ -54,6 +54,7 @@ None. No new capabilities, no loosened guardrails. The audit-hook fix restores a
 
 | Plan | Repo | File | Status | Depends on |
 |------|------|------|--------|------------|
-| Persistent Agent Reliability Implementation Plan |  | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | In Progress | — |
-| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns.md` | In Progress | — |
-| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md` | In Progress | — |
+| Persistent Agent Reliability Implementation Plan |  | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | Complete | — |
+| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns.md` | Complete | — |
+| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md` | Complete | — |
+| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms.md` | Not Started | — |
