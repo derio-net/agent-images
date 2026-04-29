@@ -14,9 +14,9 @@ set +eu
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="${WILLIKINS_REPO_PATH:-/home/claude/repos/willikins}"
+REPO_DIR="${WILLIKINS_REPO_PATH:-${HOME}/repos/willikins}"
 CONTEXT="${1:-desk}"
-LOGFILE="/home/claude/.willikins-agent/exercise-cron.log"
+LOGFILE="${HOME}/.willikins-agent/exercise-cron.log"
 
 log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOGFILE"; }
 

@@ -15,9 +15,10 @@ set +eu
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AUDIT_LOG="/home/claude/.willikins-agent/audit.jsonl"
-ARCHIVE_DIR="/home/claude/.willikins-agent/audit-archive"
-LOGFILE="/home/claude/.willikins-agent/audit-digest.log"
+WILLIKINS_DIR="${HOME}/.willikins-agent"
+AUDIT_LOG="${WILLIKINS_DIR}/audit.jsonl"
+ARCHIVE_DIR="${WILLIKINS_DIR}/audit-archive"
+LOGFILE="${WILLIKINS_DIR}/audit-digest.log"
 
 log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOGFILE"; }
 

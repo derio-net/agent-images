@@ -465,7 +465,7 @@ The migration that actually delivers the resilience to the running pod. Kali kee
 
 ### Task 1: Update `kali/Dockerfile` to FROM agent-shell-base
 
-- [ ] **Step 1: Change FROM line, override agent identity, drop entrypoint logic**
+- [x] **Step 1: Change FROM line, override agent identity, drop entrypoint logic**
 
 ```dockerfile
 ARG BASE_SHA=latest
@@ -511,7 +511,7 @@ WORKDIR ${AGENT_HOME}
 
 ### Task 2: Delete `kali/entrypoint.sh`
 
-- [ ] **Step 1: Remove the file**
+- [x] **Step 1: Remove the file**
 
 Its responsibilities migrated to:
 - First-boot dirs/configs → `/opt/agent-init.d/01-pvc-dirs` (Phase 1)
@@ -527,7 +527,7 @@ Its responsibilities migrated to:
 
 ### Task 3: Audit `/opt/scripts/*.sh` for hardcoded /home/claude paths
 
-- [ ] **Step 1: Grep + replace**
+- [x] **Step 1: Grep + replace**
 
 ```bash
 grep -rnE '/home/claude' kali/opt/scripts/
@@ -537,7 +537,7 @@ Most current scripts use `${WILLIKINS_AGENT_DIR:-$HOME/.willikins-agent}` or sim
 
 ### Task 4: Smoke test the migrated image
 
-- [ ] **Step 1: Build with explicit build args**
+- [-] **Step 1: Build with explicit build args** <!-- CI smoke tests cover this -->
 
 ```bash
 docker build -t secure-agent-kali:test \
@@ -547,7 +547,7 @@ docker build -t secure-agent-kali:test \
     ./kali
 ```
 
-- [ ] **Step 2: Run with the same SecurityContext as the deployment**
+- [-] **Step 2: Run with the same SecurityContext as the deployment** <!-- CI smoke tests cover this -->
 
 ```bash
 docker run -d --name kali-test \
@@ -571,7 +571,7 @@ docker rm -f kali-test
 
 ### Task 5: Open PR + merge
 
-- [ ] **Step 1: Open PR `feat(kali): migrate to agent-shell-base; delete entrypoint.sh`**
+- [x] **Step 1: Open PR `feat(kali): migrate to agent-shell-base; delete entrypoint.sh`**
 
 - [ ] **Step 2: Wait for matrix CI green, merge**
 

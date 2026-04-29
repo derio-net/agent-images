@@ -85,7 +85,7 @@ assert_allowed "Git push to derio-net" \
   '{"hook_type":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push origin feature-branch"}}'
 
 assert_allowed "Write to repos" \
-  '{"hook_type":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/home/claude/repos/willikins/test.py","content":"hello"}}'
+  "{\"hook_type\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${HOME}/repos/willikins/test.py\",\"content\":\"hello\"}}"
 
 assert_allowed "Kubectl get (non-destructive)" \
   '{"hook_type":"PreToolUse","tool_name":"Bash","tool_input":{"command":"kubectl get pods -n production"}}'
@@ -94,7 +94,7 @@ assert_allowed "Talos upgrade with preserve" \
   '{"hook_type":"PreToolUse","tool_name":"Bash","tool_input":{"command":"talosctl upgrade --preserve"}}'
 
 assert_allowed ".env inside repos" \
-  '{"hook_type":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/home/claude/repos/willikins/.env","content":"# local config"}}'
+  "{\"hook_type\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${HOME}/repos/willikins/.env\",\"content\":\"# local config\"}}"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # session-manager.sh — Ensure Claude Code remote-control sessions are running
 # Reads WILLIKINS_REPOS env var (colon-separated path:name pairs)
-# Example: WILLIKINS_REPOS="/home/claude/repos/willikins:willikins:/home/claude/repos/frank:frank"
+# Example: WILLIKINS_REPOS="$HOME/repos/willikins:willikins:$HOME/repos/frank:frank"
 
 set -euo pipefail
 
@@ -16,15 +16,15 @@ set +eu
 [[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 set -eu
 
-LOGFILE="/home/claude/.willikins-agent/session-manager.log"
-PIDDIR="/home/claude/.willikins-agent/pids"
+LOGFILE="${HOME}/.willikins-agent/session-manager.log"
+PIDDIR="${HOME}/.willikins-agent/pids"
 SHUTDOWN_MARKER="/tmp/willikins-shutting-down"
 mkdir -p "$(dirname "$LOGFILE")" "$PIDDIR"
 
 log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOGFILE"; }
 
-# Bail out when entrypoint.sh is draining the pod. Prevents supercronic's
-# 5-min tick from respawning claude after shutdown.sh has killed it.
+# Bail out during pod shutdown (marker written by cont-finish.d/01-shutdown).
+# Prevents a supercronic tick racing in after s6 has started draining.
 if [[ -f "$SHUTDOWN_MARKER" ]]; then
   log "Shutdown in progress — skipping session check"; exit 0
 fi
@@ -59,7 +59,7 @@ for ((i=0; i<${#ENTRIES[@]}; i+=2)); do
   # calls DELETE /v1/environments/bridge/<env_id>. Using a process-
   # substitution stdin avoids a pipeline (which would again fork).
   nohup bash -c "exec claude remote-control --name '$SESSION_NAME' < <(echo y)" \
-    >> "/home/claude/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
+    >> "${HOME}/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
   echo $! > "$PIDFILE"
   log "Session '$SESSION_NAME' started (PID $!)"
   cd - > /dev/null

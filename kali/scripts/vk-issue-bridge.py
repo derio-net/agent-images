@@ -28,7 +28,7 @@ GH_LABEL_READY       = os.environ.get("VK_LABEL_READY", "vk-ready")
 GH_LABEL_SYNCED      = os.environ.get("VK_LABEL_SYNCED", "vk-synced")
 TRANSITION_SCRIPT    = os.environ.get(
     "WILLIKINS_TRANSITION_SCRIPT",
-    "/home/claude/repos/willikins/scripts/hooks/vk-lifecycle-transition.sh",
+    os.path.expanduser("~/repos/willikins/scripts/hooks/vk-lifecycle-transition.sh"),
 )
 PUSHGATEWAY_URL      = os.environ.get(
     "PUSHGATEWAY_URL",
@@ -38,7 +38,7 @@ DRY_RUN              = "--dry-run" in sys.argv
 MAX_CONCURRENT       = int(os.environ.get("VK_MAX_CONCURRENT", "8"))
 
 # Base directory for repo discovery (env-overridable)
-REPOS_DIR = os.environ.get("VK_REPOS_DIR", "/home/claude/repos")
+REPOS_DIR = os.environ.get("VK_REPOS_DIR", os.path.expanduser("~/repos"))
 
 
 def discover_repos(repos_dir: str = REPOS_DIR) -> list[str]:

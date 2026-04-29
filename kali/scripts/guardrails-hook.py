@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 ALLOWED_GIT_REMOTE = "github.com/derio-net/"
-SAFE_WRITE_PREFIX = "/home/claude/repos/"
+SAFE_WRITE_PREFIX = os.path.expanduser("~/repos/")
 AUDIT_LOG = os.path.expanduser("~/.willikins-agent/audit.jsonl")
 NOTIFY_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notify-telegram.sh")
 

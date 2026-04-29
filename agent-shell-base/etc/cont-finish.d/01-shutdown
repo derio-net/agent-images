@@ -1,5 +1,11 @@
 #!/usr/bin/with-contenv bash
 set +e
+# Write shutdown marker for session-manager.sh. Note: in s6-overlay v3, cont-finish.d
+# runs AFTER all services are already stopped, so the marker arrives too late to prevent
+# a supercronic tick that fires during the service takedown window. This is a known
+# limitation of the cont-finish architecture; the practical impact is one extra
+# claude session start that shutdown.sh immediately terminates.
+touch /tmp/willikins-shutting-down
 if [ -x /opt/scripts/shutdown.sh ]; then
     echo "[cont-finish] running /opt/scripts/shutdown.sh"
     /opt/scripts/shutdown.sh
