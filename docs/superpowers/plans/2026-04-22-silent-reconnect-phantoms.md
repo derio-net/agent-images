@@ -29,7 +29,7 @@
 **Files:**
 - Create: `kali/docs/findings/2026-04-22-orphan-env-reaper.md`
 
-- [ ] **Step 1: Baseline inspection on the pod**
+- [x] **Step 1: Baseline inspection on the pod**
 
 ```bash
 source .env_devops 2>/dev/null || true  # if the op runs on the Frank host
@@ -47,7 +47,7 @@ kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
 
 Capture output verbatim into findings doc Section 1.
 
-- [ ] **Step 2: Start a throwaway bridge**
+- [x] **Step 2: Start a throwaway bridge**
 
 On the pod, in a side shell (not the session-manager-managed willikins session):
 
@@ -73,7 +73,7 @@ kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
 
 Expected: pointer file exists; log shows a `registered environment` or similar line with `env_…` id. Capture both verbatim into findings Section 2.
 
-- [ ] **Step 3: SIGKILL and verify pointer survival**
+- [x] **Step 3: SIGKILL and verify pointer survival**
 
 ```bash
 kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
@@ -93,7 +93,7 @@ Record in findings Section 3:
 - Does the pointer file still exist? (decides Branch A vs B)
 - If yes, what fields does the JSON contain? Does it include an originating PID?
 
-- [ ] **Step 4: Locate organization UUID**
+- [x] **Step 4: Locate organization UUID**
 
 ```bash
 kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
@@ -110,7 +110,7 @@ kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
 
 Record in findings Section 4: exact path + JSON key for the org UUID. If absent from state, fall back to the CLI bundle: `strings "$(realpath "$(which claude)")" | grep -i organization | head`.
 
-- [ ] **Step 5: Compose and verify a working DELETE**
+- [x] **Step 5: Compose and verify a working DELETE**
 
 Using the env_id captured in Step 3 and the bearer/org UUID from Step 4, compose a curl:
 
@@ -129,11 +129,11 @@ kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
 
 Expected: HTTP 200 or 204. Verify in the claude.ai UI that the `spike-reaper-2026-04-22` environment disappears within 30s. Record the exact curl that worked.
 
-- [ ] **Step 6: TTL observation (non-gating)**
+- [x] **Step 6: TTL observation (non-gating)**
 
 If curl DELETE succeeded, this step is empty. If DELETE failed and we left the env orphan, note the time. At Step 8 (findings writeup), check claude.ai again — did the env disappear on its own? Record the delta. This informs whether the reaper is "strict cleanup" or "belt-and-suspenders."
 
-- [ ] **Step 7: Cleanup**
+- [x] **Step 7: Cleanup**
 
 ```bash
 kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
@@ -142,7 +142,7 @@ kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
 '
 ```
 
-- [ ] **Step 8: Write findings doc**
+- [x] **Step 8: Write findings doc**
 
 Create `kali/docs/findings/2026-04-22-orphan-env-reaper.md` with five sections:
 
