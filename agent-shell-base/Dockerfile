@@ -16,6 +16,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssh-server \
       tmux mosh locales-all \
+      xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TMUX_RESURRECT_REF=v4.0.0
