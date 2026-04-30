@@ -7,7 +7,8 @@ claude `2.1.119 (Claude Code)` and `https://api.anthropic.com`.
 ## Pointer survival under SIGKILL
 
 **Conclusion: claude does not write a `bridge-pointer.json` file at all.** The
-plan's Branch A premise is invalid.
+plan's Branch A premise is invalid. (See [Decision for Phase 1](#decision-for-phase-1)
+for the chosen branch.)
 
 Empirical verification:
 
@@ -106,13 +107,16 @@ Observed responses:
 The 404-on-retry shape is friendly to a "treat 404 as success, drop pointer"
 branch in the reaper — same outcome as a fresh successful delete.
 
-### Side note: no LIST endpoint
+### Side note: no LIST endpoint discovered
 
 `GET /v1/environments/bridge` and `GET /v1/environments` both return HTTP 400
-(`Unexpected value(s) \`environments-2025-11-01\` for the \`anthropic-beta\`
-header. ...`). The beta header is currently scoped to the bridge `<id>`
-DELETE/GET path. There is no server-side enumeration we can call from the pod
-to discover orphans; **the reaper must remember env_ids it created**.
+with `Unexpected value(s) \`environments-2025-11-01\` for the \`anthropic-beta\`
+header.` That 400 says the beta value is wrong for those paths, not that those
+paths can't enumerate. We did not probe alternative beta values, org-scoped
+shapes (e.g. `/v1/organizations/<uuid>/environments`), or other plausible
+prefixes. **For Phase 1 purposes, treat the reaper as the authoritative env_id
+record** — discovering a usable LIST endpoint later would only let a future
+version become stateless; it is not required to ship the reaper.
 
 ## TTL note (optional)
 
@@ -129,9 +133,9 @@ n/a — DELETE succeeded on first attempt.
 write a `bridge-pointer.json` (or any equivalent state file) under `~/.claude`
 for `claude remote-control` sessions. Empirical verification at three points
 (before spike, mid-run, post-SIGKILL) found zero matching files anywhere under
-`~/.claude`. There is also no LIST endpoint on the Anthropic side to enumerate
-orphan envs server-side. The only sources of env_id today are claude's own
-stdout/stderr ("Continue coding in the Claude app or
+`~/.claude`. We also found no LIST endpoint with the headers we tried (see Side
+note above). The only sources of env_id today are claude's own stdout/stderr
+("Continue coding in the Claude app or
 https://claude.ai/code?environment=env_<id>"), which `session-manager.sh`
 already redirects into `~/.willikins-agent/session-<name>.log`. Therefore Phase
 1 must own the env_id record itself: a thin Python supervisor (`wrap-claude.py`)
@@ -141,20 +145,29 @@ and unlinks it on graceful exit. Under SIGKILL the file is left behind for the
 reaper. The reaper enumerates `~/.willikins-agent/envs/*.json` (NOT
 `~/.claude/projects/*/bridge-pointer.json`) and uses `kill -0 $pid` for liveness.
 
-### Adjustments Phase 1 must apply versus the plan template
+### Plan-structure consequences
+
+- All Branch A tasks (Phase 1 Tasks 2–3 in the plan) are irrelevant; do not
+  author `kali/tests/test_reap_orphan_envs.sh` against pointer files. The
+  Branch B variant scanning `$WILLIKINS_AGENT_DIR/envs/*.json` is the only
+  one that matches reality.
+- Phase 1 Task 1's grep already routes execution to Branch B given the
+  `**Chosen: B (supervisor wrapper).**` line above.
+
+### Constants Phase 1 must apply versus the plan template
+
+These three are the binding contract for Phase 1's reaper script. They are
+mechanical drop-ins; the reaper's overall shape (curl + jq, status-code
+branching, `kill -0` liveness, auth backoff, session-manager integration) is
+unaffected.
 
 1. **Bearer JSON path** is `.claudeAiOauth.accessToken` (not
-   `.accessToken // .bearer // .token`). Update `BEARER_KEY` constant.
+   `.accessToken // .bearer // .token`). Update `BEARER_KEY` constant. Phase 1
+   should compile the jq expression with `// empty` plus a hard-fail when
+   empty so a future credential-format drift surfaces loudly instead of
+   producing an empty bearer that 401s the DELETE.
 2. **Org UUID source** is `~/.claude.json`, key `.oauthAccount.organizationUuid`
    (not `~/.claude/config.json` `.organizationUuid`). Update `ORG_UUID_PATH`
    and `ORG_UUID_KEY` constants.
 3. **DELETE requires `anthropic-beta: environments-2025-11-01`.** Add this
    header to every reaper request.
-4. **Branch A skip.** All Branch A tasks (3 in plan) become irrelevant; do
-   not author `kali/tests/test_reap_orphan_envs.sh` against pointer files —
-   the Branch B variant scanning `$WILLIKINS_AGENT_DIR/envs/*.json` is the
-   only one that matches reality.
-
-These changes are mechanical and non-controversial; the reaper's overall
-shape (curl + jq, status-code branching, `kill -0` liveness, auth backoff,
-session-manager integration) is unaffected.
