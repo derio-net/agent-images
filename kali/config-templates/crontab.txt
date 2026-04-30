@@ -30,3 +30,15 @@ PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
 
 # Audit digest — daily summary of all agent activity (21:00 UTC / 23:00 Berlin)
 0 21 * * * /opt/scripts/audit-digest.sh
+
+# vk-local housekeeping — npm cache prune (weekly Sunday 04:00 UTC)
+# Reaps tarballs untouched for >7d, then `npm cache verify` rebuilds the index
+# and reports size. Avoids `npm cache clean --force` which would re-pay download
+# cost on every active session. See plan: frank/2026-04-30--agents--vk-local-oom-remediation.
+0 4 * * 0 /opt/scripts/npm-cache-prune.sh >> __AGENT_HOME__/.willikins-agent/npm-cache-prune.log 2>&1
+
+# vk-local housekeeping — vibe-kanban worktree prune (daily 04:30 UTC)
+# Removes administrative records for worktrees whose checkout directories are
+# gone (e.g. wiped from /var/tmp on pod restart). Heap residue per stale
+# worktree was ~17 MiB in the 2026-04-22 memprofile.
+30 4 * * * /opt/scripts/worktree-prune.sh >> __AGENT_HOME__/.willikins-agent/worktree-prune.log 2>&1
