@@ -17,14 +17,14 @@ USER root
 RUN if ! id -u "${AGENT_USER}" >/dev/null 2>&1; then \
         if getent passwd 1000 >/dev/null; then \
             existing=$(getent passwd 1000 | cut -d: -f1); \
-            userdel -r "${existing}" 2>/dev/null || true; \
+            /usr/sbin/userdel -r "${existing}" 2>/dev/null || true; \
         fi; \
         if getent group 1000 >/dev/null; then \
             existing_grp=$(getent group 1000 | cut -d: -f1); \
-            groupdel "${existing_grp}" 2>/dev/null || true; \
+            /usr/sbin/groupdel "${existing_grp}" 2>/dev/null || true; \
         fi; \
-        groupadd --gid 1000 ${AGENT_USER}; \
-        useradd --uid 1000 --gid 1000 \
+        /usr/sbin/groupadd --gid 1000 ${AGENT_USER}; \
+        /usr/sbin/useradd --uid 1000 --gid 1000 \
                 --create-home --home-dir ${AGENT_HOME} \
                 --shell /bin/bash ${AGENT_USER}; \
     fi
