@@ -29,6 +29,15 @@ if [[ -f "$SHUTDOWN_MARKER" ]]; then
   log "Shutdown in progress — skipping session check"; exit 0
 fi
 
+# Reap any orphaned bridge envs before spawning new sessions. Non-fatal —
+# the reaper exits 0 on any expected error path; only catastrophic shell
+# failures would propagate here, in which case continuing is still the
+# right choice (a missed reap tick is recovered next cycle).
+if [[ "${REAP_ORPHAN_ENVS:-1}" == "1" ]]; then
+  "$(dirname "$0")/reap-orphan-envs.sh" 2>/dev/null \
+    || log "[warn] reap-orphan-envs returned non-zero"
+fi
+
 if [[ -z "${WILLIKINS_REPOS:-}" ]]; then
   log "ERROR: WILLIKINS_REPOS not set"; exit 1
 fi
@@ -54,11 +63,14 @@ for ((i=0; i<${#ENTRIES[@]}; i+=2)); do
 
   log "Starting session '$SESSION_NAME' in $REPO_PATH"
   cd "$REPO_PATH"
-  # `exec` replaces the bash wrapper in place, so $! below is claude's own
-  # PID — required for SIGTERM to reach the bridge:shutdown handler that
-  # calls DELETE /v1/environments/bridge/<env_id>. Using a process-
-  # substitution stdin avoids a pipeline (which would again fork).
-  nohup bash -c "exec claude remote-control --name '$SESSION_NAME' < <(echo y)" \
+  # Spawn through wrap-claude.py: the supervisor scrapes the bridge env_id
+  # from claude's stderr and writes ~/.willikins-agent/envs/<session>.json
+  # so reap-orphan-envs.sh can DELETE the env when claude dies without
+  # running its own bridge:shutdown handler (OOMKill, stdin-close cascade,
+  # etc.). On graceful SIGTERM the wrapper forwards the signal and unlinks
+  # the file after a clean exit. The `exec` replaces the bash wrapper in
+  # place, so $! below is the python supervisor's PID.
+  nohup bash -c "exec python3 -u /opt/scripts/wrap-claude.py '$SESSION_NAME' < <(echo y)" \
     >> "${HOME}/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
   echo $! > "$PIDFILE"
   log "Session '$SESSION_NAME' started (PID $!)"

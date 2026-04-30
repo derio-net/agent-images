@@ -197,7 +197,7 @@ Phase 1 Task 1 reads this file and branches on the Decision section.
 **Files:**
 - Read: `kali/docs/findings/2026-04-22-orphan-env-reaper.md`
 
-- [ ] **Step 1: Confirm chosen branch**
+- [x] **Step 1: Confirm chosen branch**
 
 ```bash
 grep -A2 "^**Chosen:**\|^## Decision for Phase 1" kali/docs/findings/2026-04-22-orphan-env-reaper.md
@@ -212,7 +212,7 @@ Record the chosen letter in this session's scratch notes. All subsequent tasks r
 **Files:**
 - Create: `kali/tests/test_reap_orphan_envs.sh`
 
-- [ ] **Step 1: Write the bash test harness**
+- [x] **Step 1: Write the bash test harness**
 
 Create `kali/tests/test_reap_orphan_envs.sh`:
 
@@ -314,7 +314,7 @@ Expected: FAIL (`scripts/reap-orphan-envs.sh` does not yet exist — bash will e
 - Create: `kali/scripts/reap-orphan-envs.sh`
 - Modify: `kali/scripts/session-manager.sh`
 
-- [ ] **Step 1: Write `reap-orphan-envs.sh`**
+- [x] **Step 1: Write `reap-orphan-envs.sh`**
 
 Paths referenced below (`ORG_UUID_PATH`, `ORG_UUID_KEY`, `BEARER_KEY`) must match what Phase 0 Step 4 recorded. The template uses the most likely values — adjust before commit.
 
@@ -452,7 +452,7 @@ exit 0
 chmod +x kali/scripts/reap-orphan-envs.sh
 ```
 
-- [ ] **Step 2: Re-run the bash tests**
+- [x] **Step 2: Re-run the bash tests**
 
 ```bash
 bash kali/tests/test_reap_orphan_envs.sh 2>&1
@@ -460,7 +460,7 @@ bash kali/tests/test_reap_orphan_envs.sh 2>&1
 
 Expected: `OK` (all four test cases pass).
 
-- [ ] **Step 3: Integrate into session-manager**
+- [x] **Step 3: Integrate into session-manager**
 
 In `kali/scripts/session-manager.sh`, after the `SHUTDOWN_MARKER` check (around line 22) and before the `WILLIKINS_REPOS` validation, add:
 
@@ -472,7 +472,7 @@ if [[ "${REAP_ORPHAN_ENVS:-1}" == "1" ]]; then
 fi
 ```
 
-- [ ] **Step 4: Smoke test on the pod (post-build)**
+- [x] **Step 4: Smoke test on the pod (post-build)**
 
 After the image is rebuilt and pushed (Task 5), roll the pod and trigger a stale-PID event manually:
 
@@ -500,7 +500,7 @@ Expected: log shows `reaped env_<id> (HTTP 200)` and the original env is gone fr
 - Create: `kali/tests/test_wrap_claude.py`
 - Modify: `kali/scripts/session-manager.sh`
 
-- [ ] **Step 1: Failing test for wrap-claude.py**
+- [x] **Step 1: Failing test for wrap-claude.py**
 
 Create `kali/tests/test_wrap_claude.py`:
 
@@ -598,7 +598,7 @@ python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -15
 
 Expected: FAIL (script missing).
 
-- [ ] **Step 2: Implement `wrap-claude.py`**
+- [x] **Step 2: Implement `wrap-claude.py`**
 
 Create `kali/scripts/wrap-claude.py`:
 
@@ -707,7 +707,7 @@ python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -10
 
 Expected: both tests pass.
 
-- [ ] **Step 3: Branch-B reaper variant**
+- [x] **Step 3: Branch-B reaper variant**
 
 Create `kali/scripts/reap-orphan-envs.sh` as in Task 3 Step 1, but replace the pointer discovery block with:
 
@@ -720,7 +720,7 @@ envs_files=( "$AGENT_DIR/envs"/*.json )
 
 All other logic (credentials, DELETE, backoff, status handling) is identical.
 
-- [ ] **Step 4: Update session-manager spawn line**
+- [x] **Step 4: Update session-manager spawn line**
 
 In `kali/scripts/session-manager.sh`, replace line 54:
 
@@ -740,7 +740,7 @@ Also add the reaper invocation per Task 3 Step 3.
 
 ### Task 5: Open PR
 
-- [ ] **Step 1: Verify all tests pass**
+- [x] **Step 1: Verify all tests pass**
 
 Branch A:
 
