@@ -20,6 +20,7 @@
 ---
 
 ## Phase 0: Recon spike [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/29 -->
 
 **Depends on:** —
 
@@ -187,6 +188,7 @@ Phase 1 Task 1 reads this file and branches on the Decision section.
 ---
 
 ## Phase 1: Reaper implementation [agentic]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/30 -->
 
 **Depends on:** Phase 0
 
@@ -775,6 +777,7 @@ gh pr create --fill
 ---
 
 ## Phase 2: 48h soak [manual]
+<!-- Tracking: https://github.com/derio-net/agent-images/issues/31 -->
 
 **Depends on:** Phase 1
 
