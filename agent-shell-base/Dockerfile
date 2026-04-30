@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TMUX_RESURRECT_REF=v4.0.0
-ARG TMUX_CONTINUUM_REF=3.1.2
+ARG TMUX_CONTINUUM_REF=v3.1.0
 RUN mkdir -p /usr/local/share/tmux-plugins \
     && git clone --depth 1 --branch ${TMUX_RESURRECT_REF} \
          https://github.com/tmux-plugins/tmux-resurrect /usr/local/share/tmux-plugins/tmux-resurrect \
