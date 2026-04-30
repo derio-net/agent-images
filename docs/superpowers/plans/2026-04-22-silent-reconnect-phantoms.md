@@ -17,6 +17,8 @@
 
 **Scope boundary:** This plan does **not** change any `derio-net/frank` manifests (no new preStop or grace-period changes — existing Phase 2 wiring is sufficient), does **not** reduce OOMKill *frequency* (owned by `2026-04-22-vk-local-memory-profile.md`), and does **not** touch `WILLIKINS_REPOS` multi-session expansion. It ships only the orphan cleanup mechanism and a 48h soak.
 
+**Phase 1 covers post-mortem leaks only.** The supervisor records the *first* env_id it scrapes from claude's stderr (`if seen_env: continue`); the reaper only acts when the owning PID is dead. That fully covers the OOMKill half (~6 phantoms) and the silent-reconnect cases that end with the claude process dying inside the soak window — at death we DELETE that first env_id. **Mid-process-life env_id rotation** is *not* fixed: if claude silent-reconnects to a new env_id while the same PID keeps running, the *old* env_id becomes a phantom the reaper cannot find (PID still alive), and the *new* env_id is never recorded. Phase 2 soak quantifies this residue. If T+48h phantom growth exceeds the spec acceptance criterion, Phase 2's outcome note triggers a follow-up plan that either (a) DELETEs the prior env_id on rotation from inside the wrapper or (b) maintains a per-env_id file rather than a per-session file. Acceptance for Phase 1 is therefore "≥ OOMKill-portion (~6/17) reduction" — full closure of the silent-reconnect rotation case is explicitly Phase 2 territory.
+
 ---
 
 ## Phase 0: Recon spike [agentic]
@@ -197,7 +199,7 @@ Phase 1 Task 1 reads this file and branches on the Decision section.
 **Files:**
 - Read: `kali/docs/findings/2026-04-22-orphan-env-reaper.md`
 
-- [ ] **Step 1: Confirm chosen branch**
+- [x] **Step 1: Confirm chosen branch**
 
 ```bash
 grep -A2 "^**Chosen:**\|^## Decision for Phase 1" kali/docs/findings/2026-04-22-orphan-env-reaper.md
@@ -212,7 +214,7 @@ Record the chosen letter in this session's scratch notes. All subsequent tasks r
 **Files:**
 - Create: `kali/tests/test_reap_orphan_envs.sh`
 
-- [ ] **Step 1: Write the bash test harness**
+- [-] **Step 1: Write the bash test harness** _(skipped — Branch A; the equivalent test was authored in Task 4 against `$WILLIKINS_AGENT_DIR/envs/*.json` per Phase 0 findings.)_
 
 Create `kali/tests/test_reap_orphan_envs.sh`:
 
@@ -314,7 +316,7 @@ Expected: FAIL (`scripts/reap-orphan-envs.sh` does not yet exist — bash will e
 - Create: `kali/scripts/reap-orphan-envs.sh`
 - Modify: `kali/scripts/session-manager.sh`
 
-- [ ] **Step 1: Write `reap-orphan-envs.sh`**
+- [-] **Step 1: Write `reap-orphan-envs.sh`** _(skipped — Branch A pointer-based reaper; the Branch B variant scanning `$WILLIKINS_AGENT_DIR/envs/*.json` was authored in Task 4 Step 3.)_
 
 Paths referenced below (`ORG_UUID_PATH`, `ORG_UUID_KEY`, `BEARER_KEY`) must match what Phase 0 Step 4 recorded. The template uses the most likely values — adjust before commit.
 
@@ -452,7 +454,7 @@ exit 0
 chmod +x kali/scripts/reap-orphan-envs.sh
 ```
 
-- [ ] **Step 2: Re-run the bash tests**
+- [-] **Step 2: Re-run the bash tests** _(skipped — Branch A; covered by Task 4 Step 3's bash tests against the Branch B reaper.)_
 
 ```bash
 bash kali/tests/test_reap_orphan_envs.sh 2>&1
@@ -460,7 +462,7 @@ bash kali/tests/test_reap_orphan_envs.sh 2>&1
 
 Expected: `OK` (all four test cases pass).
 
-- [ ] **Step 3: Integrate into session-manager**
+- [-] **Step 3: Integrate into session-manager** _(skipped — Branch A; the same integration is performed in Task 4 Step 4 alongside the wrapper spawn-line change.)_
 
 In `kali/scripts/session-manager.sh`, after the `SHUTDOWN_MARKER` check (around line 22) and before the `WILLIKINS_REPOS` validation, add:
 
@@ -472,7 +474,7 @@ if [[ "${REAP_ORPHAN_ENVS:-1}" == "1" ]]; then
 fi
 ```
 
-- [ ] **Step 4: Smoke test on the pod (post-build)**
+- [-] **Step 4: Smoke test on the pod (post-build)** _(deferred — runs after PR merges and the image is rebuilt; the Phase 2 soak exercises this path. Plan note: "Defer to Phase 2 for the soak-level acceptance.")_
 
 After the image is rebuilt and pushed (Task 5), roll the pod and trigger a stale-PID event manually:
 
@@ -500,7 +502,7 @@ Expected: log shows `reaped env_<id> (HTTP 200)` and the original env is gone fr
 - Create: `kali/tests/test_wrap_claude.py`
 - Modify: `kali/scripts/session-manager.sh`
 
-- [ ] **Step 1: Failing test for wrap-claude.py**
+- [x] **Step 1: Failing test for wrap-claude.py**
 
 Create `kali/tests/test_wrap_claude.py`:
 
@@ -598,7 +600,7 @@ python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -15
 
 Expected: FAIL (script missing).
 
-- [ ] **Step 2: Implement `wrap-claude.py`**
+- [x] **Step 2: Implement `wrap-claude.py`**
 
 Create `kali/scripts/wrap-claude.py`:
 
@@ -707,7 +709,7 @@ python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -10
 
 Expected: both tests pass.
 
-- [ ] **Step 3: Branch-B reaper variant**
+- [x] **Step 3: Branch-B reaper variant**
 
 Create `kali/scripts/reap-orphan-envs.sh` as in Task 3 Step 1, but replace the pointer discovery block with:
 
@@ -720,7 +722,7 @@ envs_files=( "$AGENT_DIR/envs"/*.json )
 
 All other logic (credentials, DELETE, backoff, status handling) is identical.
 
-- [ ] **Step 4: Update session-manager spawn line**
+- [x] **Step 4: Update session-manager spawn line**
 
 In `kali/scripts/session-manager.sh`, replace line 54:
 
@@ -740,7 +742,7 @@ Also add the reaper invocation per Task 3 Step 3.
 
 ### Task 5: Open PR
 
-- [ ] **Step 1: Verify all tests pass**
+- [x] **Step 1: Verify all tests pass**
 
 Branch A:
 

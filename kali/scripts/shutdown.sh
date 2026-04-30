@@ -4,10 +4,16 @@
 # Invoked by K8s preStop hook or by an operator during pod drain. Per
 # docs/findings/2026-04-18-remote-control-shutdown.md, the `claude` CLI's
 # SIGTERM handler calls DELETE /v1/environments/bridge/<env_id>, which is
-# how we avoid phantom sessions in claude.ai. We therefore rely on
-# session-manager.sh recording claude's own PID (not a bash wrapper's)
-# in each pidfile, send SIGTERM, and wait for the bridge:shutdown path
-# to drain (~30s per the CLI's loop_grace_ms default) before SIGKILL.
+# how we avoid phantom sessions in claude.ai.
+#
+# Since silent-reconnect-phantoms Phase 1, session-manager.sh records the
+# wrap-claude.py supervisor's PID (not claude's) in each pidfile. The
+# supervisor forwards SIGTERM to its claude child's process group, so the
+# bridge:shutdown drain still runs end-to-end. If GRACE_SECONDS expires
+# we SIGKILL the supervisor; PDEATHSIG (set by the supervisor's preexec)
+# then sends SIGTERM to the claude child as the kernel reaps the parent.
+# Any envs file the supervisor left behind is cleaned up by
+# reap-orphan-envs.sh on the next session-manager tick.
 set -euo pipefail
 
 AGENT_DIR="${WILLIKINS_AGENT_DIR:-$HOME/.willikins-agent}"
