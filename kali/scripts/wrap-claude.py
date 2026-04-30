@@ -12,8 +12,10 @@ Environment:
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -22,7 +24,31 @@ import threading
 import time
 from pathlib import Path
 
-ENV_RE = re.compile(r"env_[A-Za-z0-9_-]{6,}")
+# env IDs observed in the wild are 24+ chars of [A-Za-z0-9] (e.g.
+# env_01MPTBz8CJR82vP2qXJKpUvt — see Phase 0 findings). Tighten the regex to
+# match that shape rather than the looser `env_[A-Za-z0-9_-]{6,}` template,
+# which would false-positive on stray `env_foo` substrings in unrelated logs.
+ENV_RE = re.compile(r"env_[A-Za-z0-9]{20,}")
+
+# PR_SET_PDEATHSIG: when the wrapper process dies (including via SIGKILL),
+# the kernel delivers this signal to the child. Closes the orphan-on-
+# wrapper-SIGKILL hole — without it, shutdown.sh's grace-window SIGKILL
+# would leave claude reparented to PID 1.
+_PR_SET_PDEATHSIG = 1
+
+
+def _set_pdeathsig() -> None:
+    """preexec_fn — runs in the child between fork and program-image swap."""
+    if platform.system() != "Linux":
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except OSError:
+        return
+    # Send SIGTERM to the child if the parent dies. claude's own SIGTERM
+    # handler still runs bridge:shutdown if it's responsive; if it isn't,
+    # the container teardown takes it the rest of the way.
+    libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
 
 
 def main() -> int:
@@ -49,11 +75,21 @@ def main() -> int:
         stdin=sys.stdin,
         bufsize=1,
         text=True,
+        # New session/process group so we can signal the whole tree, and so
+        # PDEATHSIG (set in preexec) takes effect on the right boundary.
+        start_new_session=True,
+        preexec_fn=_set_pdeathsig,
     )
 
     def forward(signum, _frame):
         if child.poll() is None:
-            child.send_signal(signum)
+            try:
+                # Forward to the entire process group — claude may have
+                # spawned helpers (e.g. an MCP server) that should drain
+                # together.
+                os.killpg(child.pid, signum)
+            except ProcessLookupError:
+                pass
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
 

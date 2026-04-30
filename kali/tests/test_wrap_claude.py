@@ -15,7 +15,7 @@ def _fake_claude(tmp_path: Path) -> Path:
     path = tmp_path / "fake-claude"
     path.write_text(
         "#!/usr/bin/env bash\n"
-        "echo 'registered environment env_TEST123' >&2\n"
+        "echo 'registered environment env_01TEST456789ABCDEFGH0' >&2\n"
         "trap 'exit 0' TERM\n"
         "sleep 300 &\n"
         "wait $!\n"
@@ -48,7 +48,7 @@ def test_graceful_sigterm_clears_envs_file(tmp_path):
         time.sleep(0.1)
     assert target.exists(), f"envs file not created: {list(envs_dir.iterdir())}"
     data = json.loads(target.read_text())
-    assert data["env_id"] == "env_TEST123"
+    assert data["env_id"] == "env_01TEST456789ABCDEFGH0"
     assert data["pid"] > 0
 
     proc.send_signal(signal.SIGTERM)
@@ -79,14 +79,35 @@ def test_sigkill_leaves_envs_file(tmp_path):
         time.sleep(0.1)
     assert target.exists()
 
+    # Capture the child PID for post-SIGKILL liveness check below. We can
+    # read it from the envs file because the wrapper writes child.pid there.
+    child_pid = json.loads(target.read_text())["pid"]
+
     proc.send_signal(signal.SIGKILL)
     proc.wait(timeout=5)
     # SIGKILL on the wrapper does not run the unlink path; the file is left
     # behind for the reaper to find.
     assert target.exists(), "envs file should persist on SIGKILL"
 
-    # Best-effort cleanup of the orphaned fake-claude child so pytest exits.
-    try:
-        subprocess.run(["pkill", "-9", "-f", "fake-claude"], check=False)
-    except FileNotFoundError:
-        pass
+    # PDEATHSIG: when the wrapper dies the kernel sends SIGTERM to the
+    # child. fake-claude's TERM trap exits cleanly. Verify within a short
+    # window that the child does not outlive the wrapper — that's the
+    # whole point of pdeathsig vs. the previous test's pkill cleanup hack.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        # Best-effort cleanup so pytest still exits if pdeathsig didn't fire
+        # (e.g. running under a non-Linux kernel where _set_pdeathsig is a
+        # no-op).
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise AssertionError(
+            f"child {child_pid} survived wrapper SIGKILL — pdeathsig did not fire"
+        )

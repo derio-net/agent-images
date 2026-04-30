@@ -34,6 +34,25 @@ log() {
   echo "$msg" >> "$LOGFILE" 2>/dev/null || true
 }
 
+# Serialise overlapping ticks. supercronic fires every 5min; if a tick is slow
+# (large queue, 5xx waits, or post-I-4 timeouts), the next tick can stomp
+# into the same envs files. The Anthropic API is idempotent so this never
+# corrupts state, but it doubles "[reap]" log lines and DELETE counts which
+# muddies the Phase 2 soak's accounting. Non-blocking lock — a contended
+# tick exits cleanly and the next tick picks up.
+LOCKFILE="$AGENT_DIR/reap.lock"
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  log "another reaper tick in flight; skipping"
+  exit 0
+fi
+
+# Surface credential-format drift early. The reaper resolves creds lazily
+# (only when at least one orphan exists), which means a missing file would
+# otherwise stay invisible until the first orphan turns up — possibly weeks.
+[[ -f "$BEARER_PATH" ]] || log "[warn] $BEARER_PATH missing — reaper will fail on first orphan"
+[[ -f "$ORG_UUID_PATH" ]] || log "[warn] $ORG_UUID_PATH missing — reaper will fail on first orphan"
+
 if [[ -f "$AUTH_STATE" ]]; then
   last_err=$(awk '{print $1}' "$AUTH_STATE" 2>/dev/null || echo 0)
   fail_count=$(awk '{print $2}' "$AUTH_STATE" 2>/dev/null || echo 0)
@@ -93,7 +112,12 @@ for envfile in "${envs_files[@]}"; do
   fi
 
   log "DELETE $env_id (file=$envfile pid=${pid:-none})"
-  http_code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+  # --max-time / --connect-timeout: a hung TCP connection must not block
+  # the entire 5-minute tick. With ~17 baseline phantoms and worst-case
+  # 15s per call this caps a stuck reaper at ~4.5 minutes, leaving headroom
+  # before the next supercronic tick fires.
+  http_code=$(curl -sS --max-time 15 --connect-timeout 5 \
+    -o /dev/null -w '%{http_code}' -X DELETE \
     -H "Authorization: Bearer $bearer" \
     -H "x-organization-uuid: $org_uuid" \
     -H "anthropic-beta: $ANTHROPIC_BETA" \
