@@ -125,7 +125,11 @@ jobs:
         env:
           IMAGE_SHA: ${{ github.sha }}
         run: |
+          # The mount target is owned by the runner (root); chown to UID 1000
+          # so the in-container claude user (also UID 1000) can write into it.
+          # Without this, the init scripts hit EACCES on mkdir.
           mkdir -p /tmp/test-home
+          sudo chown 1000:1000 /tmp/test-home
           # Run the shared init scripts directly (bypass vibe-kanban startup so
           # the test stays environment-free). Verifies:
           #   1. /opt/agent-init.d/* scripts are present and executable
