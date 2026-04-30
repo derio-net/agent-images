@@ -49,14 +49,14 @@ RUN if id -u "${AGENT_USER}" >/dev/null 2>&1; then \
     else \
         if getent passwd "${AGENT_UID}" >/dev/null; then \
             existing_user=$(getent passwd "${AGENT_UID}" | cut -d: -f1); \
-            userdel -r "${existing_user}" 2>/dev/null || true; \
+            /usr/sbin/userdel -r "${existing_user}" 2>/dev/null || true; \
         fi; \
         if getent group "${AGENT_GID}" >/dev/null; then \
             existing_group=$(getent group "${AGENT_GID}" | cut -d: -f1); \
-            groupdel "${existing_group}" 2>/dev/null || true; \
+            /usr/sbin/groupdel "${existing_group}" 2>/dev/null || true; \
         fi; \
-        groupadd --gid ${AGENT_GID} ${AGENT_USER}; \
-        useradd --uid ${AGENT_UID} --gid ${AGENT_GID} \
+        /usr/sbin/groupadd --gid ${AGENT_GID} ${AGENT_USER}; \
+        /usr/sbin/useradd --uid ${AGENT_UID} --gid ${AGENT_GID} \
                 --create-home --home-dir ${AGENT_HOME} \
                 --shell /bin/bash ${AGENT_USER}; \
     fi
