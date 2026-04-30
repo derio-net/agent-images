@@ -1,7 +1,7 @@
 # Agent Pod Restart Resilience — Implementation Plan (agent-images side)
 
 **Spec:** `derio-net/frank:docs/superpowers/specs/2026-04-27--agents--restart-resilience-design.md`
-**Status:** Phase 1 Done
+**Status:** In Progress
 
 **Type:** Foundation extension of the agent-images repo. Companion to the spec in `derio-net/frank` (linked above) and the [frank-side plan](https://github.com/derio-net/frank/blob/main/docs/superpowers/plans/2026-04-27--agents--restart-resilience.md) which handles the cluster-side work (notifications + cutover + verification).
 

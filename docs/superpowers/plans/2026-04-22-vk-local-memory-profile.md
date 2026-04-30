@@ -5,7 +5,7 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-18-persistent-agent-reliability-design.md`
-**Status:** Phase 3 complete — Decision: A (raise limit to 8 Gi, immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap). Implementation via brainstorm issue `derio-net/frank#140`.
+**Status:** In Progress
 
 **Goal:** Diagnose why the `vk-local` container in `secure-agent-pod` is consistently OOMKilled at its 2Gi limit (6× in ~48h observed during Phase 3 soak of the 2026-04-18 plan — Deviation D4), and produce a data-driven recommendation for one of: (a) raise the limit, (b) cap working-set in the binary, (c) identify and fix a leak.
 
@@ -420,3 +420,4 @@ EOF
 ## Status updates
 
 - 2026-04-22: Plan written alongside `2026-04-22-vk-bridge-warn-patterns.md` during the Phase 3 T+48h checkpoint of the 2026-04-18 plan. Investigation-only — the fix it recommends lives in whichever repo the finding indicates.
+- 2026-04-30: Phase 3 complete. Decision: A (raise limit to 8 Gi, immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap). Implementation tracked via brainstorm issue `derio-net/frank#140`. Plan marked Complete.
