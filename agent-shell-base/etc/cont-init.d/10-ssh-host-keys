@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 10-ssh-host-keys — Generate sshd host keys on first boot, idempotent.
 # 00-run-agent-init (which runs first by lex order) calls /opt/agent-init.d/01-pvc-dirs
 # which creates and chmods $KEYDIR. We mkdir defensively here in case ordering changes.

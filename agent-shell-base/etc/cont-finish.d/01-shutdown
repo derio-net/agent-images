@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 set +e
 # Write shutdown marker for session-manager.sh. Note: in s6-overlay v3, cont-finish.d
 # runs AFTER all services are already stopped, so the marker arrives too late to prevent

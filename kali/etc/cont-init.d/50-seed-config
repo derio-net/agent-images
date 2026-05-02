@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 50-seed-config — Seed kali config templates to PVC on first boot.
 # Idempotent: only copies when the target file is absent.
 set -e
