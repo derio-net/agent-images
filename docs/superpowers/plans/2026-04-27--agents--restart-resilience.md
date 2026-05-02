@@ -653,3 +653,28 @@ After this merges, the bumper has accumulated 4 changes (Phases 1-4). Either let
 - Tmux usage inside vk-local — VK-side decision; out of scope here
 - Per-pod egress profiles for new shell pods — per-pod plans (in their own time)
 - Service dependencies (s6-rc) for credential-mount-ready ordering — when needed
+
+---
+
+## Post-deploy deviations
+
+### 2026-05-02 — `/run` ownership regression under K8s securityContext
+
+**Symptom:** After `frank` PR #166 (auto-bumper) promoted `secure-agent-pod` to image SHA `3fdae2b…`, the kali container hit `CrashLoopBackOff` with:
+
+```
+/package/admin/s6-overlay/libexec/preinit: fatal: /run belongs to uid 0
+   instead of 1000 and we're lacking the privileges to fix it.
+s6-overlay-suexec: fatal: child failed with exit code 100
+```
+
+**Root cause:** `agent-shell-base/Dockerfile` chowned the *subdirectories* it created under `/run` (`/run/service`, `/run/s6`, `/run/s6-rc`, `/run/sshd`, `/var/run/s6`, `/var/run/sshd`) but not `/run` and `/var/run` themselves. s6-overlay v3's preinit needs to create new entries directly under `/run` (e.g. `/run/s6/container_environment`, `/run/s6-linux-init-container-results`). With the K8s pod's `allowPrivilegeEscalation: false` + `capabilities.drop=["ALL"]`, `s6-overlay-suexec` cannot self-elevate to chown `/run`, so preinit bails.
+
+**Why CI didn't catch it:** the only smoke test (`smoke-test-vk-local`, added in PR #40) targets `vk-local`, which has no s6 supervisor, and uses `--entrypoint /bin/sh` to bypass `/init` entirely. The kali path never ran under K8s-equivalent constraints in CI, so the missing chown surfaced only on live deploy.
+
+**Fix:** `fix(agent-shell-base): chown /run + /var/run for s6-overlay non-root preinit`
+
+- `agent-shell-base/Dockerfile`: replace `chown -R … /run/service /run/s6 …` with `chown -R … /run /var/run` so `/run` itself is agent-owned and preinit's writes succeed.
+- `.github/workflows/build.yaml`: add `smoke-test-secure-agent-kali` job that boots `/init` with `--user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges`, mirroring the live pod's securityContext, and waits for `s6-svstat /run/service/sshd` to report `up`. Regression-tests this exact failure mode.
+
+**Outcome:** Image rebuilt and bumped via the standard bumper flow; pod returned to `Running`. Gotcha appended to `frank:.claude/rules/frank-gotchas.md`.
