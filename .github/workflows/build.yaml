@@ -85,6 +85,10 @@ jobs:
             build_args: |
               AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
               VK_FORK_SHA=${{ github.event.client_payload.vk_fork_sha || 'latest' }}
+          - name: paperclip-shell
+            context: paperclip-shell
+            build_args: |
+              BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
     permissions:
       contents: read
       packages: write
@@ -190,8 +194,77 @@ jobs:
           docker rm -f kali-smoke
           exit 1
 
+  smoke-test-paperclip-shell:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      PAPERCLIP_SHELL_IMAGE: ghcr.io/derio-net/paperclip-shell
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live paperclip-shell securityContext (runAsUser: 1000,
+          # cap-drop=ALL, no-new-privileges) so the s6-overlay preinit hits the
+          # same /run constraints it does in K8s.
+          mkdir -p /tmp/paperclip-shell-home /tmp/paperclip-shell-inventory
+          sudo chown 1000:1000 /tmp/paperclip-shell-home /tmp/paperclip-shell-inventory
+          # Empty inventory — first-deploy posture. The installer should report
+          # "0 installed" and exit clean, not block sshd.
+          echo '{}' | sudo tee /tmp/paperclip-shell-inventory/inventory.yaml >/dev/null
+          sudo chown 1000:1000 /tmp/paperclip-shell-inventory/inventory.yaml
+
+          docker run -d --name paperclip-shell-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/paperclip-shell-home:/home/agent \
+            -v /tmp/paperclip-shell-inventory:/etc/paperclip-shell:ro \
+            "${PAPERCLIP_SHELL_IMAGE}:${IMAGE_SHA}"
+
+          # /init must reach stage 2 (sshd up). 30s budget mirrors kali smoke.
+          for i in $(seq 1 30); do
+            if docker exec paperclip-shell-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec paperclip-shell-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ sshd never came up within 30s"
+            docker logs paperclip-shell-smoke
+            docker rm -f paperclip-shell-smoke
+            exit 1
+          fi
+
+          # Layer-1 managers must be on PATH and runnable as the agent UID.
+          docker exec paperclip-shell-smoke mise --version
+          docker exec paperclip-shell-smoke rustup --version
+          docker exec paperclip-shell-smoke pipx --version
+          docker exec paperclip-shell-smoke python3 --version
+
+          # Inventory installer must exist on PATH and rerun cleanly with empty inventory.
+          docker exec paperclip-shell-smoke /usr/local/bin/paperclip-shell-reconcile
+
+          # Boot-time reconcile log must show the empty-inventory clean exit.
+          docker exec paperclip-shell-smoke cat /var/log/cont-init.d/40-shell-inventory.log
+
+          # MOTD drop-in must have been written and contain a recognizable summary.
+          docker exec paperclip-shell-smoke cat /var/lib/paperclip-shell/last-reconcile.motd
+
+          docker logs paperclip-shell-smoke
+          docker rm -f paperclip-shell-smoke
+
   dispatch-frank:
-    needs: [build-children, smoke-test-vk-local, smoke-test-secure-agent-kali]
+    needs: [build-children, smoke-test-vk-local, smoke-test-secure-agent-kali, smoke-test-paperclip-shell]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
