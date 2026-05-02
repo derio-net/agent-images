@@ -46,4 +46,22 @@ if ! grep -q "nothing to prune" "$TMP/out2.log"; then
     exit 1
 fi
 
+# Lock guard: a held lock must cause the next run to noop.
+mkdir -p "$AGENT_HOME/.willikins-agent" "$AGENT_HOME/repos"
+(
+    exec 9>"$AGENT_HOME/.willikins-agent/worktree-prune.lock"
+    flock 9
+    sleep 2
+) &
+held_pid=$!
+sleep 0.3
+bash "$SCRIPT_DIR/scripts/worktree-prune.sh" >"$TMP/out3.log" 2>&1
+if ! grep -q "another worktree-prune is running" "$TMP/out3.log"; then
+    echo "FAIL: lock guard did not block concurrent run" >&2
+    cat "$TMP/out3.log" >&2
+    wait $held_pid 2>/dev/null || true
+    exit 1
+fi
+wait $held_pid 2>/dev/null || true
+
 echo PASS
