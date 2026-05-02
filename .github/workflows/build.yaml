@@ -142,8 +142,54 @@ jobs:
             "${VK_IMAGE}:${IMAGE_SHA}" \
             -c 'for s in /opt/agent-init.d/*; do [ -x "$s" ] && "$s"; done && ls /home/claude/repos /home/claude/.ssh'
 
+  smoke-test-secure-agent-kali:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      KALI_IMAGE: ghcr.io/derio-net/secure-agent-kali
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live secure-agent-pod securityContext so the s6-overlay
+          # preinit hits the same /run constraints it does in K8s. Without
+          # --cap-drop=ALL --security-opt=no-new-privileges, suexec can chown
+          # /run at runtime and the test cannot detect missing image-side chowns.
+          mkdir -p /tmp/kali-home
+          sudo chown 1000:1000 /tmp/kali-home
+          docker run -d --name kali-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/kali-home:/home/claude \
+            "${KALI_IMAGE}:${IMAGE_SHA}"
+          # /init must reach stage 2 (services up). 30s is plenty for the
+          # shell-base startup; CrashLoopBackOff would surface inside ~3s.
+          for i in $(seq 1 30); do
+            if docker exec kali-smoke s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              docker logs kali-smoke
+              docker rm -f kali-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "✗ s6-overlay did not bring sshd up within 30s"
+          docker logs kali-smoke
+          docker rm -f kali-smoke
+          exit 1
+
   dispatch-frank:
-    needs: [build-children, smoke-test-vk-local]
+    needs: [build-children, smoke-test-vk-local, smoke-test-secure-agent-kali]
     runs-on: ubuntu-latest
     permissions: {}
     steps:

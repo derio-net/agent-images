@@ -61,12 +61,13 @@ RUN if id -u "${AGENT_USER}" >/dev/null 2>&1; then \
                 --shell /bin/bash ${AGENT_USER}; \
     fi
 
-# s6-overlay v3 needs writable scan-dir and supervisor sockets. Default /run
-# is root-owned tmpfs in K8s, so pre-create + chown for the non-root agent.
-# Same for sshd's privsep dir.
+# s6-overlay v3 needs writable scan-dir and supervisor sockets. /run itself
+# must be agent-owned too: preinit writes /run/s6-linux-init-container-results
+# and /run/s6/container_environment directly under /run, and a pod with
+# allowPrivilegeEscalation=false + capabilities.drop=ALL cannot let
+# s6-overlay-suexec chown it at runtime. Same for sshd's privsep dir.
 RUN mkdir -p /run/service /run/s6 /run/s6-rc /var/run/s6 /run/sshd /var/run/sshd \
-    && chown -R ${AGENT_UID}:${AGENT_GID} \
-         /run/service /run/s6 /run/s6-rc /var/run/s6 /run/sshd /var/run/sshd
+    && chown -R ${AGENT_UID}:${AGENT_GID} /run /var/run
 
 COPY etc/ /etc/
 RUN chmod +x /etc/cont-init.d/* /etc/services.d/*/run /etc/services.d/*/finish /etc/cont-finish.d/*
