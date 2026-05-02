@@ -1,8 +1,14 @@
 ARG BASE_SHA=latest
 FROM ghcr.io/derio-net/agent-shell-base:${BASE_SHA}
 
-# Inherit AGENT_USER=agent, AGENT_HOME=/home/agent, AGENT_UID/GID=1000 from
-# agent-shell-base — do not override. Fresh PV, no legacy identity to preserve.
+# Inherit AGENT_USER=agent, AGENT_HOME=/home/agent, AGENT_UID=1000 from
+# agent-shell-base via its ENV line — do not override.
+#
+# AGENT_GID is set as ARG (not ENV) in agent-shell-base, so it does not
+# propagate to child images. Re-declare it here so Docker substitutes it at
+# build time in the RUN below; without this, ${AGENT_GID} expands to empty
+# in /bin/sh and `install -d -o 1000 -g  -m 0755` fails (-m read as group).
+ARG AGENT_GID=1000
 
 USER root
 
