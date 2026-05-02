@@ -10,12 +10,17 @@ from pathlib import Path
 WRAP = Path(__file__).parent.parent / "scripts" / "wrap-claude.py"
 
 
-def _fake_claude(tmp_path: Path) -> Path:
-    """Write a script that prints a registration line then sleeps."""
+def _fake_claude(tmp_path: Path, *, fd: str = "2") -> Path:
+    """Write a fake claude that prints an env_id banner then sleeps.
+
+    `fd` selects the stream the banner is emitted on: "1" (stdout) matches
+    the real `claude remote-control` TUI banner, "2" (stderr) preserves the
+    original spike-era assumption.
+    """
     path = tmp_path / "fake-claude"
     path.write_text(
         "#!/usr/bin/env bash\n"
-        "echo 'registered environment env_01TEST456789ABCDEFGH0' >&2\n"
+        f"echo 'registered environment env_01TEST456789ABCDEFGH0' >&{fd}\n"
         "trap 'exit 0' TERM\n"
         "sleep 300 &\n"
         "wait $!\n"
@@ -111,3 +116,40 @@ def test_sigkill_leaves_envs_file(tmp_path):
         raise AssertionError(
             f"child {child_pid} survived wrapper SIGKILL — pdeathsig did not fire"
         )
+
+
+def test_env_id_on_stdout_is_captured(tmp_path):
+    """Real `claude remote-control` prints the env_id banner on stdout, not
+    stderr (the spike-era assumption baked into the original wrapper). This
+    test pins the fix in place — if the wrapper regresses to stderr-only
+    scraping, production envs/<session>.json files will silently stay empty
+    and the reaper will be a no-op, exactly as observed on c804fab."""
+    agent_dir = tmp_path / ".willikins-agent"
+    envs_dir = agent_dir / "envs"
+    envs_dir.mkdir(parents=True)
+
+    fake = _fake_claude(tmp_path, fd="1")  # stdout
+    env = {
+        **os.environ,
+        "WILLIKINS_AGENT_DIR": str(agent_dir),
+        "CLAUDE_BIN_OVERRIDE": str(fake),
+    }
+    proc = subprocess.Popen(
+        ["python3", "-u", str(WRAP), "willikins-test"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    target = envs_dir / "willikins-test.json"
+    try:
+        for _ in range(40):
+            if target.exists():
+                break
+            time.sleep(0.1)
+        assert target.exists(), (
+            "envs file not created — wrapper failed to scrape env_id from stdout"
+        )
+        assert json.loads(target.read_text())["env_id"] == "env_01TEST456789ABCDEFGH0"
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)

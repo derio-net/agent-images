@@ -68,10 +68,17 @@ def main() -> int:
     else:
         argv = ["claude", "remote-control", "--name", session, *extra]
 
+    # Capture stdout (and merge stderr into it) so we can scrape env_id from
+    # the full output stream. The real `claude remote-control` TUI banner —
+    # "Continue coding in the Claude app or https://claude.ai/code?environment=env_..."
+    # — emits on stdout, not stderr. The original spike-era wrapper tailed
+    # stderr only and silently dropped every env_id in production. Merging
+    # also matches the session-manager.sh `>> log 2>&1` redirect downstream,
+    # so no observable difference in the log file.
     child = subprocess.Popen(
         argv,
-        stdout=sys.stdout,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         stdin=sys.stdin,
         bufsize=1,
         text=True,
@@ -93,12 +100,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
 
-    def tail_stderr():
-        assert child.stderr is not None
+    def tail_output():
+        assert child.stdout is not None
         seen_env = False
-        for line in child.stderr:
-            sys.stderr.write(line)
-            sys.stderr.flush()
+        for line in child.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
             if seen_env:
                 continue
             m = ENV_RE.search(line)
@@ -110,7 +117,7 @@ def main() -> int:
                 }))
                 seen_env = True
 
-    t = threading.Thread(target=tail_stderr, daemon=True)
+    t = threading.Thread(target=tail_output, daemon=True)
     t.start()
 
     rc = child.wait()
