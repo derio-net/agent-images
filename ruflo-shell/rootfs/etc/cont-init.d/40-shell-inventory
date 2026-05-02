@@ -1,0 +1,4 @@
+#!/command/with-contenv bash
+# 40-shell-inventory — Reconcile the declarative software inventory on every
+# container boot. Idempotent and fail-open — never blocks sshd startup.
+exec /usr/local/lib/ruflo-shell/install-inventory.sh
