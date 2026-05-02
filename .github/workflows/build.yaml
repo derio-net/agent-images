@@ -174,8 +174,10 @@ jobs:
             "${KALI_IMAGE}:${IMAGE_SHA}"
           # /init must reach stage 2 (services up). 30s is plenty for the
           # shell-base startup; CrashLoopBackOff would surface inside ~3s.
+          # s6-overlay v3 installs binaries under /command/ — the agent-base
+          # PATH does not include it, so we must call s6-svstat by full path.
           for i in $(seq 1 30); do
-            if docker exec kali-smoke s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            if docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
               echo "✓ s6-overlay started, sshd is up"
               docker logs kali-smoke
               docker rm -f kali-smoke
