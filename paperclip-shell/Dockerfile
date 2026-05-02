@@ -8,7 +8,16 @@ USER root
 
 COPY --chown=root:root rootfs/ /
 
-RUN chmod +x \
+# Pre-create the dirs the inventory installer writes to. Under K8s
+# (runAsUser: 1000, cap-drop=ALL, allowPrivilegeEscalation: false) the agent
+# UID cannot create root-owned directories at runtime, and agent-shell-base
+# only chowns /run + /var/run. Without these, install-inventory.sh's tee +
+# motd write fail silently inside cont-init.d, the installer appears to
+# "succeed" (fail-open exit 0), and the operator gets no log and no MOTD.
+RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
+      /var/log/cont-init.d \
+      /var/lib/paperclip-shell \
+ && chmod +x \
       /etc/cont-init.d/40-shell-inventory \
       /etc/profile.d/40-paperclip-shell-paths.sh \
       /etc/profile.d/50-paperclip-shell-motd.sh \

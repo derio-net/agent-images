@@ -17,15 +17,10 @@ if [[ -z "$FRANK_C2_TELEGRAM_BOT_TOKEN" || -z "$FRANK_C2_TELEGRAM_CHAT_ID" ]]; t
 fi
 
 POD="${HOSTNAME:-paperclip-shell}"
-TEXT=$(cat <<EOF
-${TITLE}
-
-${DETAIL}
-
-Pod: ${POD}
-Logs: kubectl logs ${POD} -c paperclip-shell
-EOF
-)
+# `printf` (no trailing %s\n) avoids the trailing-blank-line that a HEREDOC
+# leaves in the urlencoded body — Telegram renders the extra blank line in chat.
+TEXT=$(printf '%s\n\n%s\n\nPod: %s\nLogs: kubectl logs %s -c paperclip-shell' \
+    "$TITLE" "$DETAIL" "$POD" "$POD")
 
 curl -fsS --max-time 10 \
     -X POST "https://api.telegram.org/bot${FRANK_C2_TELEGRAM_BOT_TOKEN}/sendMessage" \

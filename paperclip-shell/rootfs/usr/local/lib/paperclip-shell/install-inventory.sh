@@ -5,6 +5,11 @@
 #   * Source of truth: /etc/paperclip-shell/inventory.yaml (mounted ConfigMap).
 #   * On any failure, fires a Telegram alert via notify-telegram.sh.
 #
+# YAML parsing deliberately uses /usr/bin/python3 + apt-installed PyYAML
+# (python3-yaml). At cont-init.d boot time mise shims are not yet on PATH for
+# the script's own environment, and we want YAML parsing to keep working
+# even before any mise-managed runtimes land on the PV.
+#
 # NOT `set -e` — failures are accumulated, not propagated.
 set -uo pipefail
 
@@ -37,16 +42,19 @@ declare -a failures=()
 run() {
     local label="$1"
     shift
+    local rc
     if "$@"; then
         echo "✓ $label"
         return 0
-    else
-        local rc=$?
-        echo "✗ $label (rc=$rc)"
-        failures+=("$label")
-        failed+=1
-        return 1
     fi
+    # Capture rc immediately on the first line of the failure path so any
+    # future refactor that adds a command above this line does not silently
+    # corrupt rc (e.g. an `echo`'s `$?` shadowing the real failure).
+    rc=$?
+    echo "✗ $label (rc=$rc)"
+    failures+=("$label")
+    failed+=1
+    return "$rc"
 }
 
 # Read a top-level list from inventory.yaml. Returns one item per line.
@@ -141,7 +149,16 @@ fi
 if command -v cargo >/dev/null 2>&1; then
     while IFS= read -r crate; do
         [[ -z "$crate" ]] && continue
-        if cargo install --list 2>/dev/null | awk '/^[a-zA-Z0-9_-]+ /{print $1}' | grep -qx "$crate"; then
+        # `cargo install --list` output:
+        #     ripgrep v14.1.0:
+        #         rg
+        #     cargo-binstall v1.6.0:
+        #         cargo-binstall
+        # Package lines start at column 0; binary-name lines are indented.
+        # Strip the version+colon to get just the package name.
+        if cargo install --list 2>/dev/null \
+            | awk '/^[^[:space:]]/{sub(/ .*$/, ""); print}' \
+            | grep -qx "$crate"; then
             already+=1
             echo "= cargo $crate"
             continue
