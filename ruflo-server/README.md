@@ -5,6 +5,23 @@ Container image for the ruvocal web UI + swarm orchestrator from
 Deployed on Frank as the long-lived service half of the `ruflo` pod, paired
 with [`ruflo-shell`](../ruflo-shell/) as an SSH-able sidecar.
 
+## Phase 1 finding (recorded in plan Deployment Notes)
+
+Between the spec date and this build, upstream ruvocal **migrated MongoDB →
+PostgreSQL** and switched to an OpenAI-compatible inference contract. The
+upstream `.env` now tags MongoDB env vars as `# Legacy MongoDB vars (unused —
+kept for reference)`, with `DATABASE_URL` (Postgres) and `OPENAI_BASE_URL` as
+the load-bearing settings. Frank's Phase 2 manifests therefore must:
+
+- Use `DATABASE_URL` (Postgres connection string) instead of `MONGO_URL`.
+- Provision `apps/ruflo-db/` as a Postgres workload (e.g., CloudNativePG)
+  rather than a MongoDB Helm chart.
+- Set `OPENAI_BASE_URL=http://litellm.litellm-system:4000/v1` (or similar)
+  so ruvocal's inference traffic routes through LiteLLM.
+
+See the plan's *Deployment Notes* table (P1.T2 row) in
+`docs/superpowers/plans/2026-05-02--orch--ruflo-pod.md` for the full deviation.
+
 ## Build
 
 `Dockerfile` thin-wraps the upstream `ruflo/src/ruvocal/Dockerfile` at a pinned

@@ -2,13 +2,19 @@
 # Pinned to ruvnet/ruflo SHA — bump deliberately when re-vendoring.
 ARG RUFLO_GIT_REF=9b169814849b75bdee4b75e7d3d85a0db567802d
 
-# --- source: clone the upstream repo at the pinned SHA. Single source of truth
-#     for both the builder and runtime stages so we never drift between them.
-FROM alpine/git AS source
+# --- source: shallow-clone the upstream repo at the pinned SHA. Single source
+#     of truth for both the builder and runtime stages so we never drift.
+#     `git init` + `git fetch --depth 1 <SHA>` is the only shape that works for
+#     a SHA-pinned shallow clone (`git clone --depth 1 <url>` without a branch
+#     ref-spec doesn't accept arbitrary SHAs). Saves ~100 MB vs a full clone.
+#     node:24 ships git, so we don't need a separate alpine/git stage.
+FROM node:24 AS source
 ARG RUFLO_GIT_REF
-WORKDIR /src
-RUN git clone https://github.com/ruvnet/ruflo.git . \
- && git checkout "${RUFLO_GIT_REF}"
+WORKDIR /src/ruflo
+RUN git init \
+ && git remote add origin https://github.com/ruvnet/ruflo.git \
+ && git fetch --depth 1 origin "${RUFLO_GIT_REF}" \
+ && git checkout FETCH_HEAD
 
 # --- builder: mirrors upstream `builder` stage in src/ruvocal/Dockerfile.
 #     Full node:24 (not slim) for the Svelte build's native deps.
@@ -23,6 +29,9 @@ RUN --mount=type=cache,target=/app/.npm \
     npm set cache /app/.npm \
  && npm ci
 COPY --from=source --chown=1000:1000 /src/ruflo/src/ruvocal/ ./
+# `git config safe.directory /app` is mirrored from upstream's Dockerfile (their
+# build context is `src/ruvocal/` so they have no `.git` either — the line is a
+# defensive no-op for any sveltekit plugin that probes for git metadata).
 RUN git config --global --add safe.directory /app \
  && npm run build
 
@@ -57,8 +66,11 @@ RUN sed -i 's/^MODELS=$/# MODELS=/' /app/.env \
 COPY --from=builder --chown=1000:1000 /app/build /app/build
 COPY --from=builder --chown=1000:1000 /app/node_modules /app/node_modules
 
+# Mirror upstream's `ENV PATH=/home/user/.local/bin:$PATH` shape so we keep
+# /usr/local/sbin:/usr/sbin:/sbin from the inherited node-image PATH (some
+# native node modules call sbin tools at runtime).
 ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin \
+    PATH=/home/user/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     BODY_SIZE_LIMIT=15728640 \
     INCLUDE_DB=false
 

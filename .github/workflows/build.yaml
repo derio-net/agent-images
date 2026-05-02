@@ -367,31 +367,31 @@ jobs:
           # Ruvocal connects to the database lazily on first request; the HTTP
           # server binds 3000 at startup regardless of DB availability. Smoke
           # test asserts: container stays running, port 3000 is reachable, and
-          # / returns any HTTP status (2xx/3xx/4xx/5xx — anything but no-conn).
+          # / returns any HTTP status (1xx-5xx — anything but no-conn).
+          # `curl -sS -o /dev/null -w "%{http_code}"` exits 0 even on
+          # connection-refused (it just writes "000" to stdout), so we drive
+          # the success/failure decision purely off the body, not curl's rc.
           docker run -d --name ruflo-server-smoke \
             --user 1000:1000 \
             -p 13000:3000 \
             "${RUFLO_SERVER_IMAGE}:${IMAGE_SHA}"
 
+          status=000
           for i in $(seq 1 60); do
-            if curl -fsS -o /dev/null -w "" http://localhost:13000/ 2>/dev/null \
-                || curl -sS -o /dev/null -w "%{http_code}" http://localhost:13000/ 2>/dev/null \
-                  | grep -qE '^[1-5][0-9][0-9]$'; then
-              echo "✓ ruvocal listening on port 3000 after ${i}s"
+            status=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:13000/ 2>/dev/null || echo "000")
+            if [[ "$status" =~ ^[1-5][0-9][0-9]$ ]]; then
+              echo "✓ ruvocal answered HTTP $status after ${i}s"
               break
             fi
             sleep 1
           done
 
-          # Final assertion — any HTTP status code from the server proves it bound.
-          status=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:13000/ 2>/dev/null || echo "000")
-          if ! echo "$status" | grep -qE '^[1-5][0-9][0-9]$'; then
-            echo "✗ ruvocal never answered on port 3000 (last status: $status)"
+          if ! [[ "$status" =~ ^[1-5][0-9][0-9]$ ]]; then
+            echo "✗ ruvocal never bound port 3000 (last status: $status)"
             docker logs ruflo-server-smoke
             docker rm -f ruflo-server-smoke
             exit 1
           fi
-          echo "✓ ruvocal answered with HTTP $status"
 
           # Container must still be running (didn't crash post-bind).
           if ! docker inspect -f '{{.State.Running}}' ruflo-server-smoke | grep -q true; then
