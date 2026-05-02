@@ -1,2 +1,2 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 exec /usr/sbin/sshd -f /opt/sshd_config -D -e

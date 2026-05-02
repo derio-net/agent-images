@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 set -e
 if [ -f /etc/ssh-keys/authorized_keys ]; then
     cp /etc/ssh-keys/authorized_keys "${AGENT_HOME}/.ssh/authorized_keys"

@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 20-venv — Python venv for cron heartbeat scripts (compute-next-run.py,
 # push-next-expected.sh use croniter).
 set -e

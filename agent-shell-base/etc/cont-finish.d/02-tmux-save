@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 02-tmux-save — Force tmux-resurrect save before s6 tears down services.
 # Container runs as ${AGENT_USER} already; no `su` needed (and `su` would
 # require a password when invoked from a non-root context).

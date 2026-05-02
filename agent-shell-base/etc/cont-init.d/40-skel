@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 40-skel — Seed missing dotfiles from /etc/skel into $AGENT_HOME on first boot.
 # `useradd --create-home` only seeds skel into the image-layer home; once the
 # PVC is mounted at runtime it overlays $AGENT_HOME and hides any baked-in files.

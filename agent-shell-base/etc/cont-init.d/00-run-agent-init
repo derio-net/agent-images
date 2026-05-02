@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # 00-run-agent-init — Call shared first-boot scripts from agent-base.
 set -e
 shopt -s nullglob
