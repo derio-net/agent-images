@@ -7,8 +7,10 @@ ARG AGENT_GID=1000
 ARG AGENT_HOME=/home/agent
 # HOME tracks AGENT_HOME so supervised processes (sshd, supercronic, cont-init scripts)
 # do not silently fall back to the parent image's /home/claude.
-ENV AGENT_USER=${AGENT_USER} AGENT_UID=${AGENT_UID} AGENT_HOME=${AGENT_HOME} \
-    HOME=${AGENT_HOME}
+# AGENT_GID is propagated alongside AGENT_UID so child images can reference
+# both at build time without re-declaring the ARG.
+ENV AGENT_USER=${AGENT_USER} AGENT_UID=${AGENT_UID} AGENT_GID=${AGENT_GID} \
+    AGENT_HOME=${AGENT_HOME} HOME=${AGENT_HOME}
 
 USER root
 
