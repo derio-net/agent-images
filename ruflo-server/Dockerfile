@@ -65,9 +65,14 @@ RUN npm install -g dotenv-cli \
  && rm -rf /var/lib/apt/lists/* \
  && userdel -r node \
  && useradd -m -u 1000 user \
- && mkdir -p /home/user/.npm \
- && chown -R 1000:1000 /home/user/.npm
+ && mkdir -p /home/user/.npm /app /app/db \
+ && chown -R 1000:1000 /home/user/.npm /app
 
+# /app needs to be writable to UID 1000: ruvocal's startup code path runs
+# `Database.init` which unconditionally `mkdir`s `/app/db` (regardless of
+# INCLUDE_DB), so the directory itself must be owned by user. Upstream's
+# Dockerfile gets this for free because their WORKDIR runs after `USER user`;
+# our multi-stage build creates /app while still root, so we chown above.
 WORKDIR /app
 COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/.env /app/.env
 COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/entrypoint.sh /app/entrypoint.sh
