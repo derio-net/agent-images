@@ -3,6 +3,17 @@
 **Spec:** `derio-net/frank:docs/superpowers/specs/2026-04-27--agents--restart-resilience-design.md`
 **Status:** Complete
 
+> **Post-merge correction (2026-05-03):** the env-source mechanism described
+> in this plan as `/proc/1/environ` (lines ~52, 56, 62, 499) is no longer
+> accurate. Under s6-overlay, PID 1 is `s6-svscan`, which does not reliably
+> propagate K8s `envFrom` variables. The s6-overlay envdir at
+> `/run/s6/basedir/env/` is the canonical source and is now used by
+> `kali/config-templates/load-env.sh`, `kali/config-templates/bashrc`, and
+> `kali/config-templates/gitconfig`. The shared
+> `base/opt/agent-init.d/02-credential-migrate` script detects the legacy
+> `/proc/1/environ` helper on PVC-resident gitconfigs and re-migrates to
+> the current shape. See the load-env-s6 PR for details.
+
 **Type:** Foundation extension of the agent-images repo. Companion to the spec in `derio-net/frank` (linked above) and the [frank-side plan](https://github.com/derio-net/frank/blob/main/docs/superpowers/plans/2026-04-27--agents--restart-resilience.md) which handles the cluster-side work (notifications + cutover + verification).
 
 **Goal:** Build the image foundation that lets the secure-agent-pod (and the planned fleet of sibling agent pods) survive container restarts gracefully. Specifically: introduce `agent-shell-base` (s6-overlay v3 + supervised sshd/supercronic + tmux-resurrect/continuum + parameterized AGENT_USER/AGENT_HOME), migrate secure-agent-kali to use it, and give vk-local consistent first-boot setup without subjecting it to s6 (vibe-kanban stays a single-driver-process container under K8s supervision).
