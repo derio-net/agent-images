@@ -1,14 +1,25 @@
 # .bashrc — secure-agent-pod environment
-# Seeded to ~/.bashrc on first boot. Secrets injected via K8s envFrom.
+# Seeded to ~/.bashrc on first boot. Secrets injected via K8s envFrom and
+# materialized by /init into the s6-overlay envdir at /run/s6/basedir/env/.
 
-# Extract env vars from PID 1 (K8s injects into entrypoint, not SSH sessions)
-_env_from_pid1() { cat /proc/1/environ 2>/dev/null | tr '\0' '\n' | grep "^${1}=" | cut -d= -f2-; }
+# Read a single env var from the s6-overlay envdir. Each file under
+# /run/s6/basedir/env/ has name = env var, content = value (no meaningful
+# trailing newline — `$(< "$f")` strips at most one).
+#
+# Replaces the previous `/proc/1/environ` reader: under s6-overlay, PID 1 is
+# s6-svscan, which deliberately does not propagate K8s envFrom variables.
+# The envdir is the canonical s6 source.
+_env_from_s6() {
+    local f="/run/s6/basedir/env/$1"
+    [ -f "$f" ] || return 0
+    printf '%s' "$(< "$f")"
+}
 
-export GITHUB_TOKEN="${GITHUB_TOKEN:-$(_env_from_pid1 GITHUB_TOKEN)}"
-export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_env_from_pid1 TELEGRAM_BOT_TOKEN)}"
-export TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_env_from_pid1 TELEGRAM_CHAT_ID)}"
-export GRAFANA_API_KEY="${GRAFANA_API_KEY:-$(_env_from_pid1 GRAFANA_API_KEY)}"
-export GRAFANA_API_EDITOR_KEY="${GRAFANA_API_EDITOR_KEY:-$(_env_from_pid1 GRAFANA_API_EDITOR_KEY)}"
+export GITHUB_TOKEN="${GITHUB_TOKEN:-$(_env_from_s6 GITHUB_TOKEN)}"
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_env_from_s6 TELEGRAM_BOT_TOKEN)}"
+export TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_env_from_s6 TELEGRAM_CHAT_ID)}"
+export GRAFANA_API_KEY="${GRAFANA_API_KEY:-$(_env_from_s6 GRAFANA_API_KEY)}"
+export GRAFANA_API_EDITOR_KEY="${GRAFANA_API_EDITOR_KEY:-$(_env_from_s6 GRAFANA_API_EDITOR_KEY)}"
 
 export WILLIKINS_REPOS="${HOME}/repos/willikins:willikins"
 export PUSHGATEWAY_URL="http://pushgateway.monitoring.svc.cluster.local:9091"

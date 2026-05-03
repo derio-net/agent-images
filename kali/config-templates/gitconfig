@@ -2,4 +2,4 @@
 	email = clawdia-ai-assistant@gmail.com
 	name = Clawdia
 [credential]
-	helper = "!f() { echo \"username=clawdia-ai-assistant\"; echo \"password=$(tr '\\0' '\\n' < /proc/1/environ | sed -n 's/^GITHUB_TOKEN=//p')\"; }; f"
+	helper = "!f() { echo \"username=clawdia-ai-assistant\"; printf 'password=%s\\n' \"$(< /run/s6/basedir/env/GITHUB_TOKEN)\"; }; f"
