@@ -8,7 +8,17 @@ USER root
 
 COPY --chown=root:root rootfs/ /
 
-RUN chmod +x \
+# Pre-create the dirs the inventory installer writes to. Under K8s
+# (runAsUser: 1000, cap-drop=ALL, allowPrivilegeEscalation: false) the agent
+# UID cannot create root-owned directories at runtime, and agent-shell-base
+# only chowns /run + /var/run. Without these, install-inventory.sh's tee +
+# motd write fail with EACCES inside cont-init.d. Mirrors paperclip-shell's
+# Dockerfile — kept in sync between the two shell images by convention.
+ARG AGENT_GID=1000
+RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
+      /var/log/cont-init.d \
+      /var/lib/ruflo-shell \
+ && chmod +x \
       /etc/cont-init.d/40-shell-inventory \
       /etc/profile.d/40-ruflo-shell-paths.sh \
       /etc/profile.d/50-ruflo-shell-motd.sh \
