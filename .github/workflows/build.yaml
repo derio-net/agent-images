@@ -89,6 +89,13 @@ jobs:
             context: paperclip-shell
             build_args: |
               BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+          - name: ruflo-shell
+            context: ruflo-shell
+            build_args: |
+              BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+          - name: ruflo-server
+            context: ruflo-server
+            build_args: ""
     permissions:
       contents: read
       packages: write
@@ -263,8 +270,148 @@ jobs:
           docker logs paperclip-shell-smoke
           docker rm -f paperclip-shell-smoke
 
+  smoke-test-ruflo-shell:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      RUFLO_SHELL_IMAGE: ghcr.io/derio-net/ruflo-shell
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live ruflo-shell securityContext (runAsUser: 1000,
+          # cap-drop=ALL, no-new-privileges) so the s6-overlay preinit hits the
+          # same /run constraints it does in K8s.
+          mkdir -p /tmp/ruflo-shell-home /tmp/ruflo-shell-inventory
+          sudo chown 1000:1000 /tmp/ruflo-shell-home /tmp/ruflo-shell-inventory
+          # Empty inventory — first-deploy posture. The installer should report
+          # "0 installed" and exit clean, not block sshd.
+          echo '{}' | sudo tee /tmp/ruflo-shell-inventory/inventory.yaml >/dev/null
+          sudo chown 1000:1000 /tmp/ruflo-shell-inventory/inventory.yaml
+
+          docker run -d --name ruflo-shell-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/ruflo-shell-home:/home/agent \
+            -v /tmp/ruflo-shell-inventory:/etc/ruflo-shell:ro \
+            "${RUFLO_SHELL_IMAGE}:${IMAGE_SHA}"
+
+          # /init must reach stage 2 (sshd up). 30s budget mirrors paperclip smoke.
+          for i in $(seq 1 30); do
+            if docker exec ruflo-shell-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec ruflo-shell-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ sshd never came up within 30s"
+            docker logs ruflo-shell-smoke
+            docker rm -f ruflo-shell-smoke
+            exit 1
+          fi
+
+          # Layer-1 managers must be on PATH and runnable as the agent UID.
+          docker exec ruflo-shell-smoke mise --version
+          docker exec ruflo-shell-smoke rustup --version
+          docker exec ruflo-shell-smoke pipx --version
+          docker exec ruflo-shell-smoke python3 --version
+
+          # claude-code is baked in — must be on PATH from a fresh SSH session.
+          docker exec ruflo-shell-smoke claude --version
+
+          # Inventory installer must exist on PATH and rerun cleanly with empty inventory.
+          docker exec ruflo-shell-smoke /usr/local/bin/ruflo-shell-reconcile
+
+          # Boot-time reconcile log must show the empty-inventory clean exit.
+          docker exec ruflo-shell-smoke cat /var/log/cont-init.d/40-shell-inventory.log
+
+          # MOTD drop-in must have been written and contain a recognizable summary.
+          docker exec ruflo-shell-smoke cat /var/lib/ruflo-shell/last-reconcile.motd
+
+          # Banner profile.d drop-in must be present (sourced by /etc/profile on
+          # SSH login; we only assert the file is in place and runnable here).
+          docker exec ruflo-shell-smoke test -x /etc/profile.d/60-ruflo-shell-banner.sh
+
+          docker logs ruflo-shell-smoke
+          docker rm -f ruflo-shell-smoke
+
+  smoke-test-ruflo-server:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      RUFLO_SERVER_IMAGE: ghcr.io/derio-net/ruflo-server
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — ruvocal boots and binds port 3000
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Ruvocal connects to the database lazily on first request; the HTTP
+          # server binds 3000 at startup regardless of DB availability. Smoke
+          # test asserts: container stays running, port 3000 is reachable, and
+          # / returns any HTTP status (1xx-5xx — anything but no-conn).
+          # `curl -sS -o /dev/null -w "%{http_code}"` exits 0 even on
+          # connection-refused (it just writes "000" to stdout), so we drive
+          # the success/failure decision purely off the body, not curl's rc.
+          docker run -d --name ruflo-server-smoke \
+            --user 1000:1000 \
+            -p 13000:3000 \
+            "${RUFLO_SERVER_IMAGE}:${IMAGE_SHA}"
+
+          status=000
+          for i in $(seq 1 60); do
+            status=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:13000/ 2>/dev/null || echo "000")
+            if [[ "$status" =~ ^[1-5][0-9][0-9]$ ]]; then
+              echo "✓ ruvocal answered HTTP $status after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! [[ "$status" =~ ^[1-5][0-9][0-9]$ ]]; then
+            echo "✗ ruvocal never bound port 3000 (last status: $status)"
+            docker logs ruflo-server-smoke
+            docker rm -f ruflo-server-smoke
+            exit 1
+          fi
+
+          # Container must still be running (didn't crash post-bind).
+          if ! docker inspect -f '{{.State.Running}}' ruflo-server-smoke | grep -q true; then
+            echo "✗ container exited after binding"
+            docker logs ruflo-server-smoke
+            docker rm -f ruflo-server-smoke
+            exit 1
+          fi
+
+          docker logs ruflo-server-smoke | tail -50
+          docker rm -f ruflo-server-smoke
+
   dispatch-frank:
-    needs: [build-children, smoke-test-vk-local, smoke-test-secure-agent-kali, smoke-test-paperclip-shell]
+    needs:
+      - build-children
+      - smoke-test-vk-local
+      - smoke-test-secure-agent-kali
+      - smoke-test-paperclip-shell
+      - smoke-test-ruflo-shell
+      - smoke-test-ruflo-server
     runs-on: ubuntu-latest
     permissions: {}
     steps:
