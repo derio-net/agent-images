@@ -15,20 +15,25 @@ RUN git init \
  && git remote add origin https://github.com/ruvnet/ruflo.git \
  && git fetch --depth 1 origin "${RUFLO_GIT_REF}" \
  && git checkout FETCH_HEAD
+# Upstream's tree has the actual sveltekit app at `ruflo/src/ruvocal/`
+# (note the extra leading `ruflo/` — the repo's top-level dir mirrors the
+# org name). The plan's Deployment Notes flagged this as a path correction;
+# this Dockerfile honours it: every COPY below uses
+# /src/ruflo/ruflo/src/ruvocal/... not /src/ruflo/src/ruvocal/...
 
 # --- builder: mirrors upstream `builder` stage in src/ruvocal/Dockerfile.
 #     Full node:24 (not slim) for the Svelte build's native deps.
 FROM node:24 AS builder
 WORKDIR /app
 COPY --from=source --chown=1000:1000 \
-     /src/ruflo/src/ruvocal/package.json \
-     /src/ruflo/src/ruvocal/package-lock.json \
+     /src/ruflo/ruflo/src/ruvocal/package.json \
+     /src/ruflo/ruflo/src/ruvocal/package-lock.json \
      ./
 ENV BODY_SIZE_LIMIT=15728640
 RUN --mount=type=cache,target=/app/.npm \
     npm set cache /app/.npm \
  && npm ci
-COPY --from=source --chown=1000:1000 /src/ruflo/src/ruvocal/ ./
+COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/ ./
 # `git config safe.directory /app` is mirrored from upstream's Dockerfile (their
 # build context is `src/ruvocal/` so they have no `.git` either — the line is a
 # defensive no-op for any sveltekit plugin that probes for git metadata).
@@ -51,9 +56,9 @@ RUN npm install -g dotenv-cli \
  && chown -R 1000:1000 /home/user/.npm
 
 WORKDIR /app
-COPY --from=source --chown=1000:1000 /src/ruflo/src/ruvocal/.env /app/.env
-COPY --from=source --chown=1000:1000 /src/ruflo/src/ruvocal/entrypoint.sh /app/entrypoint.sh
-COPY --from=source --chown=1000:1000 /src/ruflo/src/ruvocal/package.json /app/package.json
+COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/.env /app/.env
+COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/entrypoint.sh /app/entrypoint.sh
+COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/package.json /app/package.json
 
 # Match the two seds upstream applies in its `base` stage so empty placeholder
 # values don't block .env.local overrides via `dotenv-cli -c`.
