@@ -20,6 +20,19 @@ RUN git init \
 # org name). The plan's Deployment Notes flagged this as a path correction;
 # this Dockerfile honours it: every COPY below uses
 # /src/ruflo/ruflo/src/ruvocal/... not /src/ruflo/src/ruvocal/...
+#
+# Patch upstream's ChatWindow.svelte: the pinned SHA introduces a
+# `let x = $derived<T>(() => { ... }())` IIFE that vite-plugin-svelte's
+# parser rejects with `js_parse_error` (the `<T>(()=>{...}())` shape
+# confuses generic-vs-comparison disambiguation). Convert to the
+# semantically-equivalent `$derived.by<T>(() => { ... })` form. Tracked
+# upstream as ruvnet/ruflo (no issue filed — apply locally for now).
+RUN sed -i \
+      -e 's/let lastAssistantToolNames = \$derived<string\[\]>(() => {/let lastAssistantToolNames = \$derived.by<string[]>(() => {/' \
+      -e '0,/^\t}());$/{s/^\t}());$/\t});/}' \
+      ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte \
+ && grep -q '\$derived.by<string\[\]>' ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte \
+ && ! grep -q '^\t}());$' ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte
 
 # --- builder: mirrors upstream `builder` stage in src/ruvocal/Dockerfile.
 #     Full node:24 (not slim) for the Svelte build's native deps.
