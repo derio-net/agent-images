@@ -1,2 +1,11 @@
 #!/command/with-contenv bash
-exec supercronic "${AGENT_HOME}/.crontab"
+# Touch a fresh .crontab on first boot so supercronic doesn't crashloop on
+# a freshly-mounted home PVC. supercronic exits 1 if its crontab arg
+# doesn't exist; on a brand-new shell-home volume nothing has populated
+# ${AGENT_HOME} yet, so we'd hit "open ${AGENT_HOME}/.crontab: no such
+# file or directory" → exit 1 → s6 restart loop → 5-deaths-in-60s bail
+# (the gotcha at frank-gotchas.md:s6-crashloop-bail). Idempotent — once
+# the operator writes real entries to ~/.crontab the touch is a no-op.
+crontab="${AGENT_HOME}/.crontab"
+[ -f "$crontab" ] || touch "$crontab"
+exec supercronic "$crontab"
