@@ -77,8 +77,15 @@ COPY config-templates/settings.json /opt/settings.json
 COPY config-templates/gitconfig /opt/gitconfig
 
 # ── Cron env loader ──
-RUN printf '#!/bin/bash\nexport $(xargs -0 < /proc/1/environ)\n' > /opt/load-env.sh \
-    && chmod +x /opt/load-env.sh
+# Loads every env var written to the s6-overlay envdir. Each file under
+# /run/s6/basedir/env/ has name = env var, content = value (no trailing newline).
+# Replaces the legacy `/proc/1/environ` reader: under s6-overlay, PID 1 is
+# s6-svscan, which deliberately does not propagate the K8s envFrom-injected
+# variables that tini used to carry. The envdir is the documented, stable source.
+# Uses `printf -v` rather than `eval` because env values can contain shell
+# metacharacters (=, ", $, newlines).
+COPY config-templates/load-env.sh /opt/load-env.sh
+RUN chmod +x /opt/load-env.sh
 
 # ── Kali-specific cont-init.d: seed config templates on first boot ──
 COPY etc/cont-init.d/ /etc/cont-init.d/
