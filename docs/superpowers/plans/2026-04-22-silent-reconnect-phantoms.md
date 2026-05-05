@@ -5,7 +5,9 @@
 > **For dispatch:** Use vk-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-04-22-silent-reconnect-phantoms-design.md`
-**Status:** Not Started
+**Status:** Complete (Phase 1 + Phase 2)
+
+> **Phase 2 outcome (50 h soak, 2026-05-02 → 2026-05-05):** reaper code deployed and running every 5 min across three pod incarnations; 0 PIDs died in window so the DELETE path stayed uncalibrated. Phase 1's known mid-life env_id rotation gap was directly observed (Pod A, env_019R → env_017n same PID, ≥1 phantom leaked). Recommend Phase 3 to close the rotation case. Soak detail: [issue #31 T+50 h comment](https://github.com/derio-net/agent-images/issues/31#issuecomment-4379897123).
 
 **Goal:** Close the phantom-session leak surfaced by the 2026-04-18 persistent-agent-reliability T+48h soak (17 phantoms: ~11 silent-reconnects + ~6 OOMKills) by adding a client-driven orphan-env reaper invoked inline from `kali/scripts/session-manager.sh` on each 5-minute tick.
 
