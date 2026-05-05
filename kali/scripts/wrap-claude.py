@@ -110,11 +110,20 @@ def main() -> int:
                 continue
             m = ENV_RE.search(line)
             if m:
-                envs_file.write_text(json.dumps({
+                # Atomic write: temp + rename. Path.write_text truncates then
+                # writes, so a reader that hits the truncate window sees an
+                # empty file. The reaper observed exactly this race during the
+                # Phase 2 soak (T+24h checkpoint, 2026-05-03 16:00:00):
+                # `[reap] skip: no env_id in .../envs/willikins.json`. os.replace
+                # is atomic on POSIX so the file is either old-content or
+                # full-new-content, never partial.
+                tmp = envs_file.with_suffix(envs_file.suffix + ".tmp")
+                tmp.write_text(json.dumps({
                     "env_id": m.group(0),
                     "pid": child.pid,
                     "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }))
+                os.replace(tmp, envs_file)
                 seen_env = True
 
     t = threading.Thread(target=tail_output, daemon=True)
