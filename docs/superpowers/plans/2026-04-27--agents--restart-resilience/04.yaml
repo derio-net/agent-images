@@ -1,0 +1,149 @@
+schema_version: 2
+phase:
+  number: 4
+  title: '`vk-local` entrypoint wrapper'
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: https://github.com/derio-net/agent-images/issues/19
+tasks:
+- number: 1
+  title: Add `vk-local/entrypoint-vk-local.sh`
+  steps:
+  - id: P4.T1.S1
+    text: |-
+      Thin wrapper script
+
+
+      ```bash
+      #!/bin/sh
+      # entrypoint-vk-local.sh — Run shared first-boot scripts, then exec vibe-kanban.
+      # vibe-kanban remains the driver process under tini's PID 1; K8s supervises.
+      set -e
+
+      shopt -s nullglob 2>/dev/null || true
+      for s in /opt/agent-init.d/*; do
+          [ -x "$s" ] && "$s"
+      done
+
+      exec vibe-kanban "$@"
+      ```
+- number: 2
+  title: Update `vk-local/Dockerfile`
+  steps:
+  - id: P4.T2.S1
+    text: |-
+      Add wrapper, set ENTRYPOINT through tini
+
+
+      ```dockerfile
+      # (existing FROM agent-base + COPY of vibe-kanban binary, etc.)
+
+      COPY entrypoint-vk-local.sh /entrypoint.sh
+      RUN chmod +x /entrypoint.sh
+
+      ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
+      ```
+- number: 3
+  title: Smoke test vk-local
+  steps:
+  - id: P4.T3.S1
+    text: |-
+      Build + run + verify vibe-kanban starts and serves /api/health
+
+
+      ```bash
+      docker build -t vk-local:test --build-arg BASE_SHA=$(git rev-parse HEAD) ./vk-local
+      docker run -d --name vk-test \
+          --user 1000 \
+          -v $(pwd)/test-home:/home/claude \
+          -p 8081:8081 \
+          -e PORT=8081 -e HOST=0.0.0.0 \
+          vk-local:test
+
+      sleep 5
+      curl -fsS http://127.0.0.1:8081/api/health   # 200 OK
+      docker exec vk-test ls /home/claude/repos    # dir exists (created by 01-pvc-dirs)
+      docker rm -f vk-test
+      ```
+- number: 4
+  title: Open PR + merge
+  steps:
+  - id: P4.T4.S1
+    text: 'Open PR `feat(vk-local): wrapper runs /opt/agent-init.d/* before vibe-kanban`'
+  - id: P4.T4.S2
+    text: |-
+      Wait for matrix CI green, merge
+
+
+      After this merges, the bumper has accumulated 4 changes (Phases 1-4). Either let it open one combined bump PR for frank, or open one explicitly with all SHAs. The frank-side plan picks up from there with its Phase 2 (cutover).
+
+      ---
+
+      ## Out of scope (deliberately)
+
+      - secure-agent-kali rename to `agent`/`/home/agent` — separate plan
+      - Tmux usage inside vk-local — VK-side decision; out of scope here
+      - Per-pod egress profiles for new shell pods — per-pod plans (in their own time)
+      - Service dependencies (s6-rc) for credential-mount-ready ordering — when needed
+
+      ---
+
+      ## Post-deploy deviations
+
+      ### 2026-05-02 — `/run` ownership regression under K8s securityContext
+
+      **Symptom:** After `frank` PR #166 (auto-bumper) promoted `secure-agent-pod` to image SHA `3fdae2b…`, the kali container hit `CrashLoopBackOff` with:
+
+      ```
+      /package/admin/s6-overlay/libexec/preinit: fatal: /run belongs to uid 0
+         instead of 1000 and we're lacking the privileges to fix it.
+      s6-overlay-suexec: fatal: child failed with exit code 100
+      ```
+
+      **Root cause:** `agent-shell-base/Dockerfile` chowned the *subdirectories* it created under `/run` (`/run/service`, `/run/s6`, `/run/s6-rc`, `/run/sshd`, `/var/run/s6`, `/var/run/sshd`) but not `/run` and `/var/run` themselves. s6-overlay v3's preinit needs to create new entries directly under `/run` (e.g. `/run/s6/container_environment`, `/run/s6-linux-init-container-results`). With the K8s pod's `allowPrivilegeEscalation: false` + `capabilities.drop=["ALL"]`, `s6-overlay-suexec` cannot self-elevate to chown `/run`, so preinit bails.
+
+      **Why CI didn't catch it:** the only smoke test (`smoke-test-vk-local`, added in PR #40) targets `vk-local`, which has no s6 supervisor, and uses `--entrypoint /bin/sh` to bypass `/init` entirely. The kali path never ran under K8s-equivalent constraints in CI, so the missing chown surfaced only on live deploy.
+
+      **Fix (three sequential PRs, each unmasked by the previous one):**
+
+      1. **PR #41 — `fix(agent-shell-base): chown /run + /var/run for s6-overlay non-root preinit`** — addresses the root cause above.
+         - `agent-shell-base/Dockerfile`: replace `chown -R … /run/service /run/s6 …` with `chown -R … /run /var/run` so `/run` itself is agent-owned and preinit's writes succeed.
+         - `.github/workflows/build.yaml`: add `smoke-test-secure-agent-kali` job that boots `/init` with `--user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges`, mirroring the live pod's securityContext, and waits for `s6-svstat /run/service/sshd` to report `up`. Regression-tests this exact failure mode.
+
+      2. **PR #42 — `fix(agent-shell-base): with-contenv shebang must be /command/with-contenv`** — uncovered immediately by #41's new smoke test. Every cont-init.d / cont-finish.d / services.d script used `#!/usr/bin/with-contenv bash`, but s6-overlay v3 only installs `with-contenv` under `/command/` (not `/usr/bin/`), so all 12 supervised scripts exited 127 on the interpreter, dragging legacy-cont-init to "unable to start" and a fatal `rc.init: stopping the container`. Latent since the Phase 3 migration; masked by #41's preinit failure. Fixed all 12 files to `#!/command/with-contenv bash`.
+
+      3. **PR #43 — `fix(ci): smoke-test must call s6-svstat by full /command/ path`** — uncovered after #42 made the supervisor actually start. The smoke test's `docker exec kali-smoke s6-svstat …` was failing silently with ENOENT (`/command/` not on agent-base PATH; `2>/dev/null` suppressed the error), so the 30s loop never matched even though sshd and supercronic were healthy. Switched to `/command/s6-svstat` so the regression net actually closes.
+
+      **Outcome:** Image SHA `c804fab75ba1a4f71fe8b597f3d6e9d08d862e43` (post-#43) bumped into frank via PR #168; ArgoCD synced; pod `secure-agent-pod-56874b8f5d-*` came up clean (0 restarts, sshd + supercronic both `up` per `s6-svstat`). Gotchas in `frank:.claude/rules/frank-gotchas.md` cover both the `/run` chown requirement and the `with-contenv` shebang path. **Resolved.**
+
+      **Lessons recorded for future s6-overlay-style migrations:**
+      - A new image lineage with a new init system (s6-overlay vs. tini) MUST get its own end-to-end smoke test exercising `/init` under K8s-equivalent securityContext (`--cap-drop=ALL --security-opt=no-new-privileges`) before being promoted by an auto-bumper. The vk-local-only smoke test predating Phase 3 was structurally unable to catch any kali-side regression.
+      - Latent bugs stack. The `/run` chown failure masked the shebang failure, which masked the smoke-test-path failure. Each fix unblocked the next. Plan for two-to-three iterations when reviving an image chain that's been broken for a while.
+      - `2>/dev/null` in smoke tests should be used surgically. Suppressing all stderr around a probe converts a "command not found" into a successful "wait longer" — exactly the wrong behavior.
+state:
+  steps:
+    P4.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

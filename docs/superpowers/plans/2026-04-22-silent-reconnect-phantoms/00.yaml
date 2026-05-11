@@ -1,0 +1,223 @@
+schema_version: 2
+phase:
+  number: 0
+  title: Recon spike
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/agent-images/issues/29
+tasks:
+- number: 1
+  title: Live-verify pointer survival, credentials, DELETE signature
+  steps:
+  - id: P0.T1.S1
+    text: |-
+      Baseline inspection on the pod
+
+
+      ```bash
+      source .env_devops 2>/dev/null || true  # if the op runs on the Frank host
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        echo "=== claude version ==="
+        claude --version
+        echo "=== state dir ==="
+        ls -la ~/.claude/
+        echo "=== existing pointers ==="
+        find ~/.claude/projects -name bridge-pointer.json 2>/dev/null | head -10
+        echo "=== credentials file presence ==="
+        ls -la ~/.claude/.credentials.json ~/.claude/config.json ~/.claude/state.json 2>/dev/null || true
+      '
+      ```
+
+      Capture output verbatim into findings doc Section 1.
+  - id: P0.T1.S2
+    text: |-
+      Start a throwaway bridge
+
+
+      On the pod, in a side shell (not the session-manager-managed willikins session):
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        cd /tmp && mkdir -p spike-reaper && cd spike-reaper
+        git init -q 2>/dev/null
+        nohup bash -c "exec claude remote-control --name spike-reaper-2026-04-22 < <(echo y)" \
+          > /tmp/spike-reaper.log 2>&1 &
+        echo $!
+      '
+      ```
+
+      Record the returned PID (call it `$SPIKE_PID`). Wait 15s, then:
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        find ~/.claude/projects -path "*spike-reaper*" -name bridge-pointer.json
+        find ~/.claude/projects -path "*spike-reaper*" -name bridge-pointer.json -exec cat {} \; | head
+        tail -20 /tmp/spike-reaper.log
+      '
+      ```
+
+      Expected: pointer file exists; log shows a `registered environment` or similar line with `env_…` id. Capture both verbatim into findings Section 2.
+  - id: P0.T1.S3
+    text: |-
+      SIGKILL and verify pointer survival
+
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        # Find the claude PID (not our bash wrapper)
+        pgrep -f "claude remote-control --name spike-reaper" | head -1 | xargs -I{} kill -9 {}
+        sleep 3
+        echo "=== after SIGKILL ==="
+        pgrep -f "claude remote-control --name spike-reaper" || echo "claude gone"
+        echo "=== pointer survival ==="
+        find ~/.claude/projects -path "*spike-reaper*" -name bridge-pointer.json
+        find ~/.claude/projects -path "*spike-reaper*" -name bridge-pointer.json -exec cat {} \;
+      '
+      ```
+
+      Record in findings Section 3:
+      - Is claude process gone? (expected: yes)
+      - Does the pointer file still exist? (decides Branch A vs B)
+      - If yes, what fields does the JSON contain? Does it include an originating PID?
+  - id: P0.T1.S4
+    text: |-
+      Locate organization UUID
+
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        echo "=== credentials.json ==="
+        jq -r "keys" ~/.claude/.credentials.json 2>/dev/null || cat ~/.claude/.credentials.json
+        echo "=== config.json ==="
+        cat ~/.claude/config.json 2>/dev/null | head -50
+        echo "=== state ==="
+        ls ~/.claude/state* ~/.claude/*state* 2>/dev/null
+        echo "=== grep for organization ==="
+        grep -rIn "organization" ~/.claude/ --include="*.json" 2>/dev/null | head -20
+      '
+      ```
+
+      Record in findings Section 4: exact path + JSON key for the org UUID. If absent from state, fall back to the CLI bundle: `strings "$(realpath "$(which claude)")" | grep -i organization | head`.
+  - id: P0.T1.S5
+    text: |-
+      Compose and verify a working DELETE
+
+
+      Using the env_id captured in Step 3 and the bearer/org UUID from Step 4, compose a curl:
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        BEARER=$(jq -r ".accessToken // .bearer // .token" ~/.claude/.credentials.json)
+        ORG_UUID=$(jq -r "<field discovered in Step 4>" <path discovered in Step 4>)
+        ENV_ID="env_<id from Step 3>"
+        curl -fsS -X DELETE \
+          -H "Authorization: Bearer $BEARER" \
+          -H "x-organization-uuid: $ORG_UUID" \
+          "https://api.anthropic.com/v1/environments/bridge/$ENV_ID" \
+          -w "\nHTTP %{http_code}\n"
+      '
+      ```
+
+      Expected: HTTP 200 or 204. Verify in the claude.ai UI that the `spike-reaper-2026-04-22` environment disappears within 30s. Record the exact curl that worked.
+  - id: P0.T1.S6
+    text: |-
+      TTL observation (non-gating)
+
+
+      If curl DELETE succeeded, this step is empty. If DELETE failed and we left the env orphan, note the time. At Step 8 (findings writeup), check claude.ai again — did the env disappear on its own? Record the delta. This informs whether the reaper is "strict cleanup" or "belt-and-suspenders."
+  - id: P0.T1.S7
+    text: |-
+      Cleanup
+
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        rm -rf /tmp/spike-reaper /tmp/spike-reaper.log
+        find ~/.claude/projects -path "*spike-reaper*" -exec rm -rf {} + 2>/dev/null || true
+      '
+      ```
+  - id: P0.T1.S8
+    text: |-
+      Write findings doc
+
+
+      Create `kali/docs/findings/2026-04-22-orphan-env-reaper.md` with five sections:
+
+      ```markdown
+      # Orphan-Env Reaper — Findings
+
+      ## Pointer survival under SIGKILL
+      [verbatim Step 3 output; one-line conclusion: survived | did not survive]
+
+      ## Pointer JSON shape
+      [fields; presence of env_id, pid, other]
+
+      ## Organization UUID location
+      [path + key, with example value redacted]
+
+      ## DELETE signature
+      [exact working curl invocation from Step 5]
+
+      ## TTL note (optional)
+      [observed / not applicable / n/a]
+
+      ## Decision for Phase 1
+
+      One of:
+      - **A (pointer-based reaper):** `bridge-pointer.json` survives SIGKILL and exposes env_id. Phase 1 builds `reap-orphan-envs.sh` that scans these pointers.
+      - **B (supervisor wrapper):** pointer does not survive SIGKILL. Phase 1 adds `wrap-claude.py` supervisor that records env_id to `~/.willikins-agent/envs/<session>.json` on registration and preserves on crash; reaper scans that dir.
+
+      **Chosen:** <A | B>.
+
+      **Reason:** <one paragraph>.
+      ```
+
+      Commit:
+
+      ```bash
+      cd /Users/derio/Docs/projects/DERIO_NET/agent-images
+      git add kali/docs/findings/2026-04-22-orphan-env-reaper.md
+      git commit -m "docs(findings): orphan-env reaper recon (Phase 0)"
+      ```
+
+      Phase 1 Task 1 reads this file and branches on the Decision section.
+
+      ---
+state:
+  steps:
+    P0.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S4:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S5:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S6:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S7:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S8:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

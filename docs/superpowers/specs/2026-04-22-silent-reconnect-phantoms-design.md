@@ -214,6 +214,6 @@ Triggered only if Phase 0 records Decision **B**.
 
 ## Implementation Plans
 
-| Plan | Repo | File | Status | Depends on |
-|------|------|------|--------|------------|
-| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms.md` | Not Started | — |
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms/` | — |

@@ -1,0 +1,127 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Archive workspace + close GitHub Issue on Done transition
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Add `update_workspace` MCP client method
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Expose the MCP `update_workspace` tool
+
+
+      ```python
+      def update_workspace(self, workspace_id: str, **kwargs) -> Any:
+          return self.call_tool("update_workspace", {
+              "workspace_id": workspace_id, **kwargs
+          })
+      ```
+
+      Maps directly to the MCP tool (which PUTs `/api/workspaces/{id}` with `{archived, pinned, name}`). Verified against the Rust server: `crates/server/src/routes/workspaces/core.rs:83` fires `archive_workspace` when the `archived` field changes.
+- number: 2
+  title: Wire Done transitions to archive workspace + close GH Issue
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      TDD — `TestPollArchivesWorkspaceOnMerge`
+
+
+      Six tests covering:
+      - Matching workspace archived on merge (name prefix `<simple_id> ->`)
+      - In-review transition does NOT archive (only Done)
+      - Archive failure non-fatal (card already transitioned)
+      - `list_workspaces` failure non-fatal
+      - No archive when card transition itself fails (don't archive state we don't understand)
+      - Missing `simple_id` skipped (can't be matched)
+  - id: P2.T2.S2
+    text: |-
+      TDD — `TestPollClosesGhIssueOnMerge`
+
+
+      Five tests covering:
+      - `gh issue close <N> --repo <owner/repo>` invoked once on merge
+      - No close without `latest_pr_url` (no repo to derive)
+      - No close without `gh#N:` in card title (no issue number to derive)
+      - `"already closed"` stderr is silent success
+      - Other `gh` errors are non-fatal
+  - id: P2.T2.S3
+    text: |-
+      Implement `archive_workspace_for_card(client, simple_id)`
+
+
+      Lists non-archived workspaces, matches by `name.startswith(f"{simple_id} ->")`, calls `client.update_workspace(ws_id, archived=True)`. All failure paths logged and swallowed — the card has already moved to Done.
+  - id: P2.T2.S4
+    text: |-
+      Implement `close_gh_issue_for_card(title, pr_url)`
+
+
+      Two small regexes:
+      ```python
+      _GH_REPO_FROM_URL_RE = re.compile(r"https?://github\.com/([\w.-]+/[\w.-]+)/(?:pull|issues)/\d+")
+      _GH_ISSUE_NUM_FROM_TITLE_RE = re.compile(r"gh#(\d+)")
+      ```
+
+      Invokes `gh issue close <num> --repo <repo>`. `"already closed"` detected via `stderr.lower()`; other errors log-and-continue.
+  - id: P2.T2.S5
+    text: |-
+      Wire both into `poll_pr_status`
+
+
+      After `update_issue(card_id, status="Done")` succeeds (only on Done, not In review):
+
+      ```python
+      if new_status == "Done":
+          archive_workspace_for_card(client, simple_id)
+          close_gh_issue_for_card(title, pr_url)
+      ```
+  - id: P2.T2.S6
+    text: |-
+      Run the suite
+
+
+      ```bash
+      python3 -m pytest kali/tests/test_vk_issue_bridge.py -q
+      ```
+
+      Expected: **72 passed** (11 new + 61 from Phase 1).
+
+      ---
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S4:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S5:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S6:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

@@ -1,0 +1,80 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Reap orphan workspaces each cycle
+  tag: agentic
+  depends_on:
+  - 2
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Add `reap_orphan_workspaces` helper
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      TDD — `TestReapOrphanWorkspaces`
+
+
+      Nine tests covering:
+      - Card missing → archive
+      - Card present + status Done → archive
+      - Card present + status In progress → do NOT archive
+      - Workspace name not matching bridge pattern → do NOT archive (user-created)
+      - Pinned workspace → never archive
+      - `list_workspaces` failure non-fatal
+      - `list_issues` failure non-fatal
+      - `update_workspace` failure on one orphan does not abort sweep of the next
+      - Multiple orphans (the 7-hum case) all archived
+  - id: P3.T1.S2
+    text: |-
+      Implement `reap_orphan_workspaces(client)`
+
+
+      Named-workspace regex: `r"^(?P<sid>\S+)\s*->\s*gh#\d+\s*$"` — only workspaces that were created by the bridge itself are candidates; anything else (user-created, vk-plan spawned, etc.) is left alone.
+
+      Indexes cards into `{simple_id: status}`; archives when `card_status.get(sid) is None` (missing) or `== "Done"`.
+  - id: P3.T1.S3
+    text: |-
+      Call once per bridge cycle in `main()`
+
+
+      Added after `poll_pr_status(client)`:
+
+      ```python
+      log("[bridge] reaping orphan workspaces...")
+      reap_orphan_workspaces(client)
+      ```
+  - id: P3.T1.S4
+    text: |-
+      Run the full suite
+
+
+      ```bash
+      python3 -m pytest kali/tests/ -q
+      ```
+
+      Expected: **97 passed** (9 new + 88 from Phases 1-2 and unrelated tests in the same directory).
+
+      ---
+state:
+  steps:
+    P3.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T1.S4:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

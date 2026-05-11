@@ -1,0 +1,133 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Fail-loud check_blockers
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/secure-agent-kali/issues/9
+tasks:
+- number: 1
+  title: Remove fail-open on gh errors
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Failing tests — check_blockers raises on gh error
+
+
+      Append:
+
+      ```python
+      class TestCheckBlockersFailLoud:
+          def test_check_blockers_raises_on_gh_error(self, monkeypatch):
+              mod = _load_bridge()
+              import subprocess
+              def fake_run(*a, **kw):
+                  raise subprocess.CalledProcessError(1, "gh", stderr="auth required")
+              monkeypatch.setattr(subprocess, "run", fake_run)
+              with pytest.raises(RuntimeError, match="unreachable"):
+                  mod.check_blockers("org/repo", [(None, 42)])
+
+          def test_check_blockers_returns_open_list_on_success(self, monkeypatch):
+              mod = _load_bridge()
+              import subprocess, json
+              class _R: stdout = json.dumps({"state": "OPEN"})
+              monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _R())
+              assert mod.check_blockers("org/repo", [(None, 42)]) == ["#42"]
+
+          def test_check_blockers_skips_closed(self, monkeypatch):
+              mod = _load_bridge()
+              import subprocess, json
+              class _R: stdout = json.dumps({"state": "CLOSED"})
+              monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _R())
+              assert mod.check_blockers("org/repo", [(None, 42)]) == []
+      ```
+
+      Run; expect failure (current code fails open).
+  - id: P1.T1.S2
+    text: |-
+      Rewrite check_blockers fail-loud
+
+
+      Replace lines 195–219 of `scripts/vk-issue-bridge.py`:
+
+      ```python
+      def check_blockers(repo: str, deps: list[tuple[str | None, int]]) -> list[str]:
+          """Return list of open blockers as human-readable strings.
+
+          Fail-loud: any gh error or timeout raises RuntimeError. The previous
+          fail-open behavior silently bypassed dependency gating when gh was
+          misconfigured, which led to duplicate-work incidents.
+          """
+          open_blockers: list[str] = []
+          for dep_repo, num in deps:
+              check_repo = dep_repo if dep_repo else repo
+              display = f"{dep_repo}#{num}" if dep_repo else f"#{num}"
+              try:
+                  out = subprocess.run(
+                      ["gh", "issue", "view", str(num),
+                       "--repo", check_repo, "--json", "state"],
+                      check=True, capture_output=True, text=True, timeout=10,
+                  ).stdout
+              except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                      FileNotFoundError) as exc:
+                  raise RuntimeError(
+                      f"Blocker {display} in {check_repo} unreachable — cannot gate "
+                      f"safely. Fix: check gh auth, network, or that the Issue exists. "
+                      f"Underlying error: {exc}"
+                  ) from exc
+              try:
+                  state = json.loads(out).get("state", "").upper()
+              except json.JSONDecodeError as exc:
+                  raise RuntimeError(
+                      f"Blocker {display}: gh returned non-JSON. Output: {out[:200]!r}"
+                  ) from exc
+              if state != "CLOSED":
+                  open_blockers.append(display)
+          return open_blockers
+      ```
+
+      Run tests; expect pass.
+  - id: P1.T1.S3
+    text: |-
+      Handle RuntimeError at call site
+
+
+      In `main()` around line 545:
+
+      ```python
+      if deps:
+          try:
+              open_blockers = check_blockers(i.repo, deps)
+          except RuntimeError as exc:
+              log(f"  x {i.repo}#{i.number}: BLOCKER CHECK FAILED — {exc}")
+              push_failure_metric(str(i.number), "blocker_check_failed")
+              failed += 1
+              continue
+          if open_blockers:
+              blocker_str = ", ".join(open_blockers)
+              log(f"  p {i.repo}#{i.number}: blocked by {blocker_str}")
+              deferred += 1
+              continue
+      ```
+
+      Run full suite; expect pass.
+
+      ---
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

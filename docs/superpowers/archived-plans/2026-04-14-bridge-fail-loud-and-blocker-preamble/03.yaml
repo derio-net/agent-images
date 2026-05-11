@@ -1,0 +1,87 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Deploy bridge to production
+  tag: manual
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/secure-agent-kali/issues/11
+tasks:
+- number: 1
+  title: Review, merge, deploy
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Create PR and merge
+
+
+      Open a PR with the changes from Phases 0–2. Get review. Merge to main. No regressions for phase-0 Issues (no deps → no preamble, existing sync flow unchanged).
+  - id: P3.T1.S2
+    text: |-
+      Deploy updated script
+
+
+      Follow the existing deployment path for `vk-issue-bridge.py`. Depending on infrastructure:
+
+      ```bash
+      # Direct copy (if pod mounts source dir):
+      cp /home/claude/repos/secure-agent-kali/scripts/vk-issue-bridge.py /opt/scripts/vk-issue-bridge.py
+      chmod +x /opt/scripts/vk-issue-bridge.py
+      ```
+
+      Or trigger the image rebuild + pod restart via whatever pipeline is standard.
+  - id: P3.T1.S3
+    text: |-
+      Smoke test next cron tick
+
+
+      Wait ≤ 2 minutes:
+
+      ```bash
+      ssh secure-agent-pod 'tail -40 /var/log/supercronic/vk-issue-bridge.log'
+      ```
+
+      Expected: `[bridge] starting — dry_run=False` and a clean run. If Python traceback appears, roll back immediately by restoring the previous `/opt/scripts/vk-issue-bridge.py`.
+  - id: P3.T1.S4
+    text: |-
+      Verify deferral behavior on a live blocked Issue
+
+
+      Find an Issue with a `phase:N` label where `N > 0` and whose `- Blocked by #M` blocker (`#M`) is still OPEN. In the next bridge tick, confirm the log shows:
+
+      ```
+        p derio-net/<repo>#<N>: blocked by #<M>
+      ```
+
+      If instead the bridge spawned a workspace for it, ordering or label propagation is broken — investigate before proceeding.
+  - id: P3.T1.S5
+    text: |-
+      Notify superpowers-for-vk Phase 5 to proceed
+
+
+      Once smoke test passes, the operational migration (Phase 5 of the superpowers-for-vk plan) can run. Leave a comment on the corresponding Phase 5 tracking Issue confirming bridge deployment. Mark this plan's Status as `Complete`.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S5:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

@@ -1,0 +1,157 @@
+schema_version: 2
+phase:
+  number: 1
+  title: '`/opt/agent-init.d/` shared first-boot scripts in `agent-base`'
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/agent-images/issues/16
+tasks:
+- number: 1
+  title: Add `/opt/agent-init.d/01-pvc-dirs` to `agent-base/`
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Create `agent-base/opt/agent-init.d/01-pvc-dirs` script
+
+
+      ```bash
+      #!/bin/bash
+      # 01-pvc-dirs — Create PVC-backed directories with correct permissions.
+      # Idempotent: every-boot script. Uses $AGENT_HOME (set in agent-base ENV).
+      set -e
+      HOME="${AGENT_HOME:-$HOME}"
+      mkdir -p "$HOME/.ssh-host-keys" "$HOME/.ssh" "$HOME/repos" "$HOME/.claude" "$HOME/.willikins-agent"
+      chmod 700 "$HOME/.ssh-host-keys" "$HOME/.ssh"
+      ```
+  - id: P1.T1.S2
+    text: |-
+      Add to `agent-base/Dockerfile`
+
+
+      ```dockerfile
+      COPY opt/agent-init.d/ /opt/agent-init.d/
+      RUN chmod +x /opt/agent-init.d/*
+      ```
+- number: 2
+  title: Add `/opt/agent-init.d/02-credential-migrate`
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Create `agent-base/opt/agent-init.d/02-credential-migrate` script
+
+
+      Migrates the legacy gitconfig credential helper from env-var-based (which silently failed for VS Code subprocesses and cron) to `/proc/1/environ` reader. Lifted from current `kali/entrypoint.sh` lines covering this migration. Use `$AGENT_HOME`, not `/home/claude`.
+
+      ```bash
+      #!/bin/bash
+      # 02-credential-migrate — Migrate legacy gitconfig credential helper to /proc/1/environ.
+      set -e
+      HOME="${AGENT_HOME:-$HOME}"
+      [ -f /opt/gitconfig ] || exit 0
+      [ -f "$HOME/.gitconfig" ] || exit 0
+      if grep -qF 'password=$GITHUB_TOKEN' "$HOME/.gitconfig"; then
+          echo "[agent-init] migrating git credential helper to /proc/1/environ reader"
+          cp /opt/gitconfig "$HOME/.gitconfig"
+      fi
+      ```
+- number: 3
+  title: Add `/opt/agent-init.d/03-credential-scrub`
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Create `agent-base/opt/agent-init.d/03-credential-scrub` script
+
+
+      Removes leaked git credentials from PVC state (URL `.insteadof` rewrites, embedded-token origin URLs). Lifted from current `kali/entrypoint.sh`. Idempotent — runs every boot.
+
+      ```bash
+      #!/bin/bash
+      # 03-credential-scrub — Strip leaked tokens from PVC-resident git config.
+      set -e
+      HOME="${AGENT_HOME:-$HOME}"
+
+      while IFS= read -r key; do
+          [ -z "$key" ] && continue
+          case "$key" in
+              *@github.com*) git config --global --unset-all "$key" || true ;;
+          esac
+      done < <(git config --global --name-only --get-regexp '^url\..*\.insteadof$' 2>/dev/null || true)
+
+      shopt -s nullglob
+      for repo_dir in "$HOME"/repos/*/; do
+          [ -d "$repo_dir/.git" ] || continue
+          origin_url=$(git -C "$repo_dir" remote get-url origin 2>/dev/null) || continue
+          clean_url=$(printf '%s' "$origin_url" | sed -E 's#https://[^@/]+@github\.com/#https://github.com/#')
+          if [ "$origin_url" != "$clean_url" ]; then
+              git -C "$repo_dir" remote set-url origin "$clean_url"
+              echo "[agent-init] scrubbed credentials from $(basename "$repo_dir") origin"
+          fi
+      done
+      shopt -u nullglob
+      ```
+- number: 4
+  title: Validate scripts work standalone
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Build agent-base locally and exercise the scripts
+
+
+      ```bash
+      docker build -t agent-base:test ./agent-base
+      docker run --rm -e AGENT_HOME=/tmp/test-home -e HOME=/tmp/test-home agent-base:test \
+          bash -c 'mkdir -p /tmp/test-home && for s in /opt/agent-init.d/*; do echo "==> $s"; "$s"; done'
+      ```
+
+      Expected: each script runs to completion with exit 0. The `01-pvc-dirs` script creates the expected dirs. `02-credential-migrate` and `03-credential-scrub` are no-ops on the empty test home.
+- number: 5
+  title: Open PR + merge
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Open PR `feat(base): /opt/agent-init.d shared first-boot scripts`
+
+
+      Body explains the role: shared first-boot setup that both `agent-shell-base`-derived images (via `cont-init.d`) and `vk-local` (via entrypoint wrapper) call. No behavior change to existing children yet — kali still has its own entrypoint that doesn't call these. Phase 3 cuts kali over.
+  - id: P1.T5.S2
+    text: |-
+      Wait for matrix CI green, then merge
+
+
+      CI builds agent-base + secure-agent-kali + vk-local on every push. Confirm all three still build. The bumper workflow will fire a chore PR in frank — **do not merge it yet** until Phase 4 lands. Hold or close the bump PR.
+
+      ---
+state:
+  steps:
+    P1.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
