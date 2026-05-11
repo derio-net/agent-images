@@ -52,9 +52,9 @@ None. No new capabilities, no loosened guardrails. The audit-hook fix restores a
 
 ## Implementation Plans
 
-| Plan | Repo | File | Status | Depends on |
-|------|------|------|--------|------------|
-| Persistent Agent Reliability Implementation Plan |  | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability.md` | Complete | — |
-| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns.md` | In Progress | — |
-| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md` | In Progress | — |
-| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms.md` | Not Started | — |
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| Persistent Agent Reliability Implementation Plan |  | `docs/superpowers/plans/2026-04-18-persistent-agent-reliability/` | — |
+| vk-bridge Warn-Pattern Broadening Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-bridge-warn-patterns/` | — |
+| vk-local Memory Profiling Implementation Plan |  | `docs/superpowers/plans/2026-04-22-vk-local-memory-profile/` | — |
+| Silent-Reconnect Phantom Reaper Implementation Plan |  | `docs/superpowers/plans/2026-04-22-silent-reconnect-phantoms/` | — |

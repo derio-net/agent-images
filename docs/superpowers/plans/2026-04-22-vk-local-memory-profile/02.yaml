@@ -1,0 +1,177 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Observation window
+  tag: manual
+  depends_on:
+  - 1
+  tracking_issue: https://github.com/derio-net/agent-images/issues/8
+tasks:
+- number: 1
+  title: Run the 24h data collection
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Record pre-window snapshot
+
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        START_TS=$(date -u +%FT%TZ) && \
+        echo "Window start: $START_TS" && \
+        kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+        bash -c 'cat /proc/1/status | grep -E "^(VmRSS|VmSize|VmPeak|VmHWM|RssAnon|RssFile|Threads)"; echo; cat /proc/1/smaps_rollup 2>/dev/null | head -20'
+      ```
+
+      Record `VmRSS` (current resident), `VmHWM` (high-water mark), `Threads`. Append to findings doc.
+
+      > **Executed 2026-04-26T09:27:28Z** using the redirected sampler from the Phase 2 callout (the original `/proc/1/status` path is wrong — vibe-kanban is PID 7, not 1; PID 1 is `tini`). T+0 row appended to findings doc. cgroup.peak read 2 GiB + 4 KiB, confirming the 2026-04-24T20:30:33Z OOMKill is *within* the same container start.
+  - id: P2.T1.S2
+    text: |-
+      Set up a lightweight in-pod sampler
+
+
+      The pod has no persistent sidecar for this, so run a one-shot ad-hoc sampler that writes to the PVC for later retrieval:
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- \
+        bash -c 'cat > /home/claude/.willikins-agent/vk-local-memsample.sh <<'"'"'EOF'"'"'
+      #!/bin/bash
+      # Ad-hoc RSS sampler — runs from kali container, samples vk-local process via shared PID namespace check.
+      OUT="/home/claude/.willikins-agent/vk-local-memsample.tsv"
+      if [[ ! -f "$OUT" ]]; then
+        echo -e "ts_utc\tpid\trss_kb\tvsize_kb\tthreads" > "$OUT"
+      fi
+      # We are in kali; kubectl exec to vk-local peer requires shared PID namespace — not default.
+      # Instead, read from the cgroup via the kubelet exposed path.
+      # Fallback: rely on VictoriaMetrics scrape (see Phase 1 Task 2).
+      ts=$(date -u +%FT%TZ)
+      # Use container_memory stats via /sys if mounted — otherwise emit a ping marker.
+      echo -e "${ts}\t-\t-\t-\t-" >> "$OUT"
+      EOF
+      chmod +x /home/claude/.willikins-agent/vk-local-memsample.sh'
+      ```
+
+      **Important:** kali and vk-local are separate containers in the same pod but do NOT share a PID namespace by default (no `shareProcessNamespace: true` on the pod spec). So kali can't `ps` vk-local's process directly. The reliable path is to sample from vk-local directly via `kubectl exec` at an interval, OR use the Prometheus series already scraping the container.
+
+      Given that, **skip the in-pod sampler and rely on VictoriaMetrics** for continuous sampling. Use the sampler only to mark experiment boundaries.
+
+      > **Executed 2026-04-26T09:49:35Z (T+0:22m).** Step 2's two suggested paths are both unavailable: (a) in-pod sampler from kali can't reach vk-local without shared PID namespace, and (b) VictoriaMetrics has no cadvisor scrape for `gpu-1` (Phase 1 finding). Built the redirected sampler from Phase 1's Phase 2 callout — a Mac-local one-shot script (`~/.local/bin/vk-local-memprofile-sample.sh`) plus a launchd plist (`~/Library/LaunchAgents/local.derionet.vk-local-memprofile.plist`) for 60-second intervals. The harness guardrail blocked auto-loading the launchd job (recurring `kubectl exec` against a production-namespace pod requires explicit operator authorization). Decision: do not run an unattended daemon; use the manual 4h cadence from Step 3 below as the sole snapshot source. The script + plist remain on the Frank control host so the operator can authorize and load them later if desired. T+0:22m sanity row appended to findings doc — confirms the sampler works and shows ~1.6 MiB/h idle drift.
+  - id: P2.T1.S3
+    text: |-
+      Take 6 manual RSS snapshots over 24h (every 4h)
+
+
+      From the Frank control host, at T+0, T+4h, T+8h, T+12h, T+16h, T+20h, T+24h:
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        TS=$(date -u +%FT%TZ) && \
+        kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c vk-local -- \
+        bash -c "cat /proc/1/status | grep -E '^(VmRSS|VmHWM|Threads)' | awk -v ts=\"$TS\" '{print ts, \$0}'"
+      ```
+
+      Append each snapshot to the findings doc under a "Manual RSS snapshots" table. If an OOMKill happens mid-window, note the timestamp and the pre-kill RSS (visible in kubectl describe → Last State → Finished).
+  - id: P2.T1.S4
+    text: |-
+      At T+24h, export the VictoriaMetrics time-series
+
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        START=$(date -u -v-24H +%s) && \
+        END=$(date -u +%s) && \
+        kubectl exec -n monitoring deploy/vmselect-victoria -- \
+        wget -qO- "http://localhost:8481/select/0/prometheus/api/v1/query_range?query=container_memory_working_set_bytes{namespace=\"secure-agent-pod\",container=\"vk-local\"}&start=${START}&end=${END}&step=60s" \
+        > /tmp/vk-local-wss-24h.json
+        wc -l /tmp/vk-local-wss-24h.json
+        jq '.data.result[0].values | length' /tmp/vk-local-wss-24h.json
+      ```
+
+      Expected: one series with 1440 data points (24h × 60 min). If the series has gaps (< 1200 pts), note this — OOMKills cause scrape gaps.
+  - id: P2.T1.S5
+    text: |-
+      Correlate with OOMKills
+
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        kubectl get events -n secure-agent-pod --field-selector reason=Killing -o json 2>&1 | \
+        jq -r '.items[] | select(.message | test("OOM|memory")) | "\(.lastTimestamp) \(.message)"'
+      ```
+
+      Append OOMKill timestamps to the findings doc. Cross-reference with pre-kill RSS values — each OOM should have a peak within the scrape window just prior.
+- number: 2
+  title: Activity correlation
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Count kali audit log entries in the window
+
+
+      The kali audit log (`~/.willikins-agent/audit.jsonl` + daily archives under `audit-archive/`) tracks tool-use bursts which may correlate with VK HTTP load.
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        kubectl exec -n secure-agent-pod deploy/secure-agent-pod -c kali -- \
+        bash -c 'ls -lh ~/.willikins-agent/audit-archive/ && wc -l ~/.willikins-agent/audit-archive/audit-$(date -u +%Y%m%d).jsonl'
+      ```
+
+      Append line count + size to the findings doc for the observation day.
+  - id: P2.T2.S2
+    text: |-
+      Hour-bucket audit activity and RSS
+
+
+      Write a short Python snippet (on the Frank host, not in the pod) that:
+      1. Reads the 24h VictoriaMetrics export from Phase 2 Task 1 Step 4.
+      2. Computes max RSS per hour.
+      3. Correlates with hourly audit-line counts (from the downloaded audit archive).
+      4. Emits a CSV with columns `hour, max_rss_mb, audit_lines, oomkill_in_hour`.
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env && \
+        kubectl cp secure-agent-pod/$(kubectl get pod -n secure-agent-pod -l app=secure-agent-pod -o jsonpath='{.items[0].metadata.name}'):/home/claude/.willikins-agent/audit-archive/audit-$(date -u +%Y%m%d).jsonl /tmp/audit-today.jsonl -c kali
+        ls -lh /tmp/audit-today.jsonl
+      ```
+
+      Run a correlation script locally (script body flexible; just load both time-series and emit the CSV). Append summary table to findings doc.
+
+      If hour-level correlation is strong (r > 0.5): memory scales with workload → bump limit or cap. If weak: likely a leak.
+
+      ---
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S4:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S5:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

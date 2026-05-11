@@ -1,0 +1,305 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Graceful shutdown
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/secure-agent-kali/issues/17
+tasks:
+- number: 1
+  title: Write shutdown script
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Read Phase 0 decision
+
+
+      ```bash
+      cat docs/findings/2026-04-18-remote-control-shutdown.md
+      ```
+
+      Identify chosen path (A / B / C). This determines whether `shutdown.sh` calls a close API, sends a specific signal sequence, or is a no-op wrapper that only cleans PID files.
+  - id: P2.T1.S2
+    text: |-
+      Write shutdown.sh skeleton (signal-based baseline)
+
+
+      Create `scripts/shutdown.sh`:
+
+      ```bash
+      #!/usr/bin/env bash
+      # shutdown.sh — gracefully terminate all willikins-agent remote-control sessions
+      # Invoked by K8s preStop hook OR by ad-hoc operator.
+      set -euo pipefail
+
+      LOGFILE="/home/claude/.willikins-agent/shutdown.log"
+      PIDDIR="/home/claude/.willikins-agent/pids"
+      mkdir -p "$(dirname "$LOGFILE")" "$PIDDIR"
+
+      log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE" >&2; }
+
+      if [[ ! -d "$PIDDIR" ]]; then
+        log "no PID dir — nothing to shut down"
+        exit 0
+      fi
+
+      shopt -s nullglob
+      pids_seen=0
+      for pidfile in "$PIDDIR"/*.pid; do
+        pids_seen=1
+        name="$(basename "$pidfile" .pid)"
+        pid="$(cat "$pidfile" 2>/dev/null || true)"
+        [[ -z "$pid" ]] && { log "empty pidfile $pidfile — skipping"; continue; }
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+          log "session '$name' PID $pid already dead — cleaning"
+          rm -f "$pidfile"
+          continue
+        fi
+
+        # --- Phase 0 Decision injection point ---
+        # Path A: close via CLI or HTTP first
+        #   claude remote-control close --name "$name" || log "close returned nonzero"
+        # Path B/C: signal-only
+        log "sending SIGTERM to '$name' (PID $pid)"
+        kill -TERM "$pid" || log "SIGTERM to $pid returned nonzero"
+      done
+
+      if (( pids_seen == 0 )); then
+        log "no PID files present"
+        exit 0
+      fi
+
+      # Wait up to 20s for graceful exit, then SIGKILL stragglers
+      deadline=$(( $(date +%s) + 20 ))
+      while (( $(date +%s) < deadline )); do
+        alive=0
+        for pidfile in "$PIDDIR"/*.pid; do
+          pid="$(cat "$pidfile" 2>/dev/null || true)"
+          [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && alive=1
+        done
+        (( alive == 0 )) && break
+        sleep 1
+      done
+
+      for pidfile in "$PIDDIR"/*.pid; do
+        pid="$(cat "$pidfile" 2>/dev/null || true)"
+        [[ -z "$pid" ]] && continue
+        if kill -0 "$pid" 2>/dev/null; then
+          log "SIGKILL straggler $pid"
+          kill -KILL "$pid" || true
+        fi
+        rm -f "$pidfile"
+      done
+
+      log "shutdown complete"
+      ```
+
+      ```bash
+      chmod +x scripts/shutdown.sh
+      ```
+
+      If Phase 0 chose Path A, uncomment the `claude remote-control close` block and remove/adjust the comment marker. If Path C, replace the signal block with a `log "no clean shutdown available"` line.
+  - id: P2.T1.S3
+    text: |-
+      Tests for shutdown.sh
+
+
+      Create `tests/test_shutdown.sh`:
+
+      ```bash
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "$TMP"' EXIT
+
+      export HOME="$TMP"
+      mkdir -p "$HOME/.willikins-agent/pids"
+
+      # Start a sleep-forever child that handles SIGTERM
+      bash -c 'trap "exit 0" TERM; sleep 300 &
+               echo $! > '"$HOME"'/.willikins-agent/pids/fake.pid; wait' &
+      HARNESS_PID=$!
+      sleep 1
+
+      # Actually put the child's PID in the pidfile
+      CHILD_PID="$(cat "$HOME/.willikins-agent/pids/fake.pid")"
+
+      # Verify child is alive
+      kill -0 "$CHILD_PID" || { echo "FAIL: harness child not running"; exit 1; }
+
+      # Run shutdown.sh
+      bash scripts/shutdown.sh
+
+      # Child should be dead and pidfile gone
+      if kill -0 "$CHILD_PID" 2>/dev/null; then
+        echo "FAIL: child $CHILD_PID still alive after shutdown.sh"
+        exit 1
+      fi
+      if [[ -f "$HOME/.willikins-agent/pids/fake.pid" ]]; then
+        echo "FAIL: pidfile not cleaned"
+        exit 1
+      fi
+
+      echo "OK"
+      ```
+
+      ```bash
+      chmod +x tests/test_shutdown.sh
+      bash tests/test_shutdown.sh 2>&1
+      ```
+
+      Expected: `OK`.
+- number: 2
+  title: Wire shutdown into session-manager + supercronic exit
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Review entrypoint
+
+
+      ```bash
+      cat entrypoint.sh
+      ```
+
+      Confirm whether it invokes `supercronic` in foreground or backgrounds it with `wait -n`. The goal: on container SIGTERM, entrypoint must run `shutdown.sh` before exiting.
+  - id: P2.T2.S2
+    text: |-
+      Add trap in entrypoint.sh
+
+
+      If entrypoint.sh ends with `exec supercronic ...`, replace with:
+
+      ```bash
+      # Trap SIGTERM to gracefully disconnect remote-control sessions before exit
+      shutdown_handler() {
+        echo "[entrypoint] SIGTERM received — running shutdown.sh"
+        /opt/scripts/shutdown.sh || true
+        exit 0
+      }
+      trap shutdown_handler TERM INT
+
+      supercronic /home/claude/.crontab &
+      SUPERCRONIC_PID=$!
+      wait "$SUPERCRONIC_PID"
+      ```
+
+      If entrypoint already has a trap / supervisor loop, add the shutdown.sh call inside it.
+  - id: P2.T2.S3
+    text: |-
+      Verify trap locally
+
+
+      Using a Docker smoke test (optional if not available locally):
+
+      ```bash
+      docker build -t secure-agent-kali:test . 2>&1 | tail -5
+      docker run -d --name sak-test secure-agent-kali:test
+      sleep 15
+      docker stop --time=30 sak-test
+      docker logs sak-test 2>&1 | grep -i shutdown
+      ```
+
+      Expected: log line `[entrypoint] SIGTERM received — running shutdown.sh` and subsequent lines from shutdown.sh.
+
+      ```bash
+      docker rm -f sak-test 2>/dev/null || true
+      ```
+- number: 3
+  title: K8s preStop hook (frank-side) — filed as separate Issue
+  steps:
+  - id: P2.T3.S1
+    text: |-
+      Open a tracking Issue against derio-net/frank
+
+
+      ```bash
+      gh issue create --repo derio-net/frank \
+        --title "secure-agent-pod: add preStop hook for graceful session shutdown" \
+        --body "$(cat <<'EOF'
+      Part of secure-agent-kali plan `2026-04-18-persistent-agent-reliability.md` Phase 1.
+
+      Add a preStop hook to the `secure-agent-pod` Deployment pointing at `/opt/scripts/shutdown.sh`:
+
+      ```yaml
+      lifecycle:
+        preStop:
+          exec:
+            command: ["/opt/scripts/shutdown.sh"]
+      ```
+
+      And raise `terminationGracePeriodSeconds` to at least `45` (shutdown.sh allows 20s for SIGTERM + margin).
+
+      Depends on: secure-agent-kali image including `shutdown.sh` (shipped in this plan's Phase 1/2 PRs).
+
+      ## Acceptance
+      - Pod redeploy triggers preStop, `shutdown.sh` runs to completion, no orphaned `claude remote-control` processes on the new pod after rollout.
+      EOF
+      )"
+      ```
+  - id: P2.T3.S2
+    text: |-
+      Link in the plan
+
+
+      Record the Issue number in this plan's header (manually edit the Status line to include `; frank#<N>`) so future readers can follow the cross-repo dependency.
+- number: 4
+  title: Phase 2 PR
+  steps:
+  - id: P2.T4.S1
+    text: |-
+      Open PR
+
+
+      ```bash
+      git checkout -b phase2/graceful-shutdown
+      git add scripts/shutdown.sh entrypoint.sh tests/test_shutdown.sh docs/findings/
+      git commit -m "feat(agent): graceful shutdown for remote-control sessions"
+      ```
+
+      PR body should reference the frank Issue created in Task 3. No deploy yet — Phase 3 handles.
+
+      ---
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T2.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T3.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T3.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P2.T4.S1:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

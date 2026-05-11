@@ -1,0 +1,175 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Analysis & recommendation
+  tag: agentic
+  depends_on:
+  - 2
+  tracking_issue: https://github.com/derio-net/agent-images/issues/9
+tasks:
+- number: 1
+  title: Classify the memory pattern
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Plot RSS over the window
+
+
+      ```bash
+      cd /Users/derio/Docs/projects/DERIO_NET/frank
+      # If uv-venv is available:
+      .venv/bin/python -c "
+      import json, sys
+      data = json.load(open('/tmp/vk-local-wss-24h.json'))
+      pts = data['data']['result'][0]['values']
+      # values are [[ts_unix, 'bytes_as_string'], ...]
+      import csv
+      with open('/tmp/vk-local-rss.csv', 'w') as f:
+          w = csv.writer(f)
+          w.writerow(['ts_unix', 'rss_bytes', 'rss_mb'])
+          for ts, v in pts:
+              b = float(v)
+              w.writerow([ts, b, round(b/1024/1024, 1)])
+      print('Wrote /tmp/vk-local-rss.csv with', len(pts), 'rows')
+      " 2>&1
+      ```
+
+      Inspect the CSV. Classify the pattern:
+      - **Sawtooth, reset at OOMKill:** standard "grows under load, killed, restarts" → recommendation A (raise limit) or B (upstream cap).
+      - **Monotonic growth at idle:** leak → recommendation C (code-level fix).
+      - **Stable baseline + large transient spikes:** workload-driven burst → bump limit with margin = max(spike) + 25%.
+  - id: P3.T1.S2
+    text: |-
+      Compute the recommendation number
+
+
+      If Recommendation A:
+      ```bash
+      # Peak RSS observed in window + 25% safety margin
+      .venv/bin/python -c "
+      import csv
+      rows = list(csv.DictReader(open('/tmp/vk-local-rss.csv')))
+      peak_mb = max(float(r['rss_mb']) for r in rows)
+      rec_mib = int(peak_mb * 1.25)
+      # Round up to nearest 256 MiB for K8s limit hygiene
+      rec_mib = ((rec_mib + 255) // 256) * 256
+      print(f'Peak RSS: {peak_mb:.0f} MiB, recommended limit: {rec_mib} MiB ({rec_mib/1024:.1f} Gi)')
+      "
+      ```
+
+      Expected output: a concrete number like "Peak RSS: 1850 MiB, recommended limit: 2560 MiB (2.5 Gi)" — or evidence that even 4 Gi would be insufficient (in which case escalate to Recommendation B or C).
+- number: 2
+  title: Write the report & commit
+  steps:
+  - id: P3.T2.S1
+    text: |-
+      Fill all empty sections of the findings doc
+
+
+      By this point every template section (Binary, HTTP surface, Observation window, Activity correlation, Decision) should have data. Write the narrative: what was observed, what rules it out, what the recommendation is, and the confidence level.
+
+      > **Executed 2026-04-28 (Phase 3 agent).** Phase 3 analysis section written using Phase 2 retake data (three fill sources, 8-session budget table, full A/B/C option analysis). Decision: A (8 Gi immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap).
+  - id: P3.T2.S2
+    text: |-
+      Commit on a feature branch
+
+
+      ```bash
+      cd /Users/derio/Docs/projects/DERIO_NET/agent-images
+      git checkout -b investigation/vk-local-memory-profile
+      git add kali/docs/findings/2026-04-22-vk-local-memory-profile.md \
+              docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md
+      git status
+      git commit -m "docs: vk-local memory profile findings (Phase 3 follow-up of 2026-04-18)"
+      ```
+  - id: P3.T2.S3
+    text: |-
+      Open PR with the recommendation summary in the body
+
+
+      ```bash
+      gh pr create --title "docs: vk-local memory profile — <A|B|C> decision" \
+        --body "$(cat <<'EOF'
+      ## Summary
+
+      Investigation report closing out Deviation D4 from `2026-04-18-persistent-agent-reliability.md`. Soak observed 6 OOMKills in 48h at 2Gi; this profile ran a 24h observation window to characterize the pattern and recommend a fix.
+
+      **Decision:** <A|B|C>
+
+      - **A:** raise `vk-local` memory limit to <N> Gi in `derio-net/frank` `apps/secure-agent-pod/manifests/deployment.yaml:143`.
+      - **B:** upstream issue against the vibe-kanban fork — working-set is unbounded under workload <X>.
+      - **C:** leak — file code-level PR against fork repo; limit bump is a band-aid.
+
+      ## Data
+
+      - Binary: <sha>, <size> MiB, allocator = <jemalloc|glibc>
+      - Observation window: <start UTC> → <end UTC>
+      - OOMKills in window: <N>
+      - Idle RSS baseline: <MB>
+      - Peak RSS pre-kill: <MB>
+      - Workload correlation (r vs audit lines/hour): <value>
+
+      ## Follow-up
+
+      - [ ] Implementation plan for the chosen recommendation (separate PR, separate repo)
+      - [ ] Reference this report from `2026-04-18-persistent-agent-reliability.md` Deviations section
+
+      Refs: `derio-net/agent-images#2` (Phase 3 T+48h comment), plan `docs/superpowers/plans/2026-04-22-vk-local-memory-profile.md`.
+
+      🤖 Generated with [Claude Code](https://claude.com/claude-code)
+      EOF
+      )"
+      ```
+- number: 3
+  title: Close the loop on the umbrella issue
+  steps:
+  - id: P3.T3.S1
+    text: |-
+      Comment on `derio-net/agent-images#2`
+
+
+      Once the PR is merged:
+
+      ```bash
+      gh issue comment 2 --repo derio-net/agent-images --body "$(cat <<'EOF'
+      Phase 3 follow-up plan `2026-04-22-vk-local-memory-profile.md` merged. Findings doc: `kali/docs/findings/2026-04-22-vk-local-memory-profile.md`. Decision: <A|B|C>. Implementation of the recommendation will be a separate plan.
+      EOF
+      )"
+      ```
+
+      ---
+
+      ## Status updates
+
+      - 2026-04-22: Plan written alongside `2026-04-22-vk-bridge-warn-patterns.md` during the Phase 3 T+48h checkpoint of the 2026-04-18 plan. Investigation-only — the fix it recommends lives in whichever repo the finding indicates.
+      - 2026-04-30: Phase 3 complete. Decision: A (raise limit to 8 Gi, immediate) + B-housekeeping (npm cache prune + worktree TTL) + B1 follow-up (max-concurrent-sessions cap). Implementation tracked via brainstorm issue `derio-net/frank#140`. Plan marked Complete.
+state:
+  steps:
+    P3.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T2.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T2.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

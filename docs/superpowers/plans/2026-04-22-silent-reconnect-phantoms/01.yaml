@@ -1,0 +1,654 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Reaper implementation
+  tag: agentic
+  depends_on:
+  - 0
+  tracking_issue: https://github.com/derio-net/agent-images/issues/30
+tasks:
+- number: 1
+  title: Read Phase 0 decision and confirm branch
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Confirm chosen branch
+
+
+      ```bash
+      grep -A2 "^**Chosen:**\|^## Decision for Phase 1" kali/docs/findings/2026-04-22-orphan-env-reaper.md
+      ```
+
+      Record the chosen letter in this session's scratch notes. All subsequent tasks reference it. The remainder of this phase has two branches; execute only the one Phase 0 chose.
+- number: 2
+  title: Failing tests for the reaper (Branch A — pointer-based)
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Write the bash test harness _(skipped — Branch A; the equivalent test was authored in Task 4 against `$WILLIKINS_AGENT_DIR/envs/*.json` per Phase 0 findings.)_
+
+
+      Create `kali/tests/test_reap_orphan_envs.sh`:
+
+      ```bash
+      #!/usr/bin/env bash
+      # test_reap_orphan_envs.sh — harness for scripts/reap-orphan-envs.sh
+      set -euo pipefail
+
+      TMP="$(mktemp -d)"
+      trap 'rm -rf "$TMP"' EXIT
+
+      export HOME="$TMP"
+      export WILLIKINS_AGENT_DIR="$TMP/.willikins-agent"
+      mkdir -p "$HOME/.claude/projects/dead-a" \
+               "$HOME/.claude/projects/live-b" \
+               "$WILLIKINS_AGENT_DIR"
+
+      # Fake credentials & org UUID
+      cat > "$HOME/.claude/.credentials.json" <<'EOF'
+      {"accessToken":"sk-ant-test-bearer","bearer":"sk-ant-test-bearer"}
+      EOF
+      cat > "$HOME/.claude/config.json" <<'EOF'
+      {"organizationUuid":"org-uuid-test-000"}
+      EOF
+
+      # Pointer for a dead-PID env (use PID 999999 — almost certainly dead)
+      cat > "$HOME/.claude/projects/dead-a/bridge-pointer.json" <<'EOF'
+      {"env_id":"env_orphan_A","pid":999999}
+      EOF
+
+      # Pointer for a live env — bind to our own test PID so kill -0 succeeds
+      printf '{"env_id":"env_live_B","pid":%d}\n' "$$" \
+        > "$HOME/.claude/projects/live-b/bridge-pointer.json"
+
+      # Stub curl: prepend a shim dir to PATH
+      STUB_DIR="$TMP/stubs"
+      mkdir -p "$STUB_DIR"
+      cat > "$STUB_DIR/curl" <<'EOF'
+      #!/usr/bin/env bash
+      # Record invocation args + stdin, return canned status based on $CURL_STUB_CODE.
+      echo "curl $*" >> "$CURL_LOG"
+      code="${CURL_STUB_CODE:-200}"
+      printf '\nHTTP %s\n' "$code"
+      # Exit matches curl --fail: 0 on 2xx, 22 on >=400.
+      if [[ "$code" =~ ^2 ]]; then exit 0; else exit 22; fi
+      EOF
+      chmod +x "$STUB_DIR/curl"
+      export PATH="$STUB_DIR:$PATH"
+      export CURL_LOG="$TMP/curl.log"
+
+      # --- Test 1: happy path (dead-a reaped, live-b untouched) ---
+      : > "$CURL_LOG"
+      CURL_STUB_CODE=200 bash "$(cd "$(dirname "$0")/.." && pwd)/scripts/reap-orphan-envs.sh"
+
+      grep -q "env_orphan_A" "$CURL_LOG" || { echo "FAIL: no DELETE for env_orphan_A"; exit 1; }
+      grep -q "env_live_B"   "$CURL_LOG" && { echo "FAIL: DELETE called for live env_live_B"; exit 1; } || true
+      [[ -f "$HOME/.claude/projects/dead-a/bridge-pointer.json" ]] && { echo "FAIL: dead pointer not removed"; exit 1; } || true
+      [[ -f "$HOME/.claude/projects/live-b/bridge-pointer.json" ]] || { echo "FAIL: live pointer wrongly removed"; exit 1; }
+
+      # --- Test 2: 404 treated as success, pointer removed ---
+      cat > "$HOME/.claude/projects/dead-a/bridge-pointer.json" <<'EOF'
+      {"env_id":"env_orphan_A2","pid":999999}
+      EOF
+      : > "$CURL_LOG"
+      CURL_STUB_CODE=404 bash "$(cd "$(dirname "$0")/.." && pwd)/scripts/reap-orphan-envs.sh"
+      [[ -f "$HOME/.claude/projects/dead-a/bridge-pointer.json" ]] && { echo "FAIL: pointer not removed on 404"; exit 1; } || true
+
+      # --- Test 3: 401 treated as error, pointer left in place ---
+      cat > "$HOME/.claude/projects/dead-a/bridge-pointer.json" <<'EOF'
+      {"env_id":"env_orphan_A3","pid":999999}
+      EOF
+      : > "$CURL_LOG"
+      CURL_STUB_CODE=401 bash "$(cd "$(dirname "$0")/.." && pwd)/scripts/reap-orphan-envs.sh"
+      [[ -f "$HOME/.claude/projects/dead-a/bridge-pointer.json" ]] || { echo "FAIL: pointer removed despite 401"; exit 1; }
+
+      # --- Test 4: 5xx treated as transient, pointer left in place ---
+      cat > "$HOME/.claude/projects/dead-a/bridge-pointer.json" <<'EOF'
+      {"env_id":"env_orphan_A4","pid":999999}
+      EOF
+      : > "$CURL_LOG"
+      CURL_STUB_CODE=503 bash "$(cd "$(dirname "$0")/.." && pwd)/scripts/reap-orphan-envs.sh"
+      [[ -f "$HOME/.claude/projects/dead-a/bridge-pointer.json" ]] || { echo "FAIL: pointer removed despite 5xx"; exit 1; }
+
+      echo "OK"
+      ```
+
+      ```bash
+      chmod +x kali/tests/test_reap_orphan_envs.sh
+      bash kali/tests/test_reap_orphan_envs.sh 2>&1
+      ```
+
+      Expected: FAIL (`scripts/reap-orphan-envs.sh` does not yet exist — bash will error on the sourcing line). This is the expected red state for TDD.
+- number: 3
+  title: Implement the reaper (Branch A)
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Write `reap-orphan-envs.sh` _(skipped — Branch A pointer-based reaper; the Branch B variant scanning `$WILLIKINS_AGENT_DIR/envs/*.json` was authored in Task 4 Step 3.)_
+
+
+      Paths referenced below (`ORG_UUID_PATH`, `ORG_UUID_KEY`, `BEARER_KEY`) must match what Phase 0 Step 4 recorded. The template uses the most likely values — adjust before commit.
+
+      Create `kali/scripts/reap-orphan-envs.sh`:
+
+      ```bash
+      #!/usr/bin/env bash
+      # reap-orphan-envs.sh — DELETE orphaned claude remote-control bridge envs.
+      #
+      # Invoked by session-manager.sh on each 5-minute tick. Scans claude's own
+      # bridge-pointer.json files and, for any whose owning PID is gone, calls
+      # DELETE /v1/environments/bridge/<env_id> against the Anthropic API.
+      # See docs/findings/2026-04-22-orphan-env-reaper.md for reconnaissance.
+      set -euo pipefail
+
+      AGENT_DIR="${WILLIKINS_AGENT_DIR:-$HOME/.willikins-agent}"
+      LOGFILE="$AGENT_DIR/reap-orphan-envs.log"
+      AUTH_STATE="$AGENT_DIR/reap-auth-error.state"
+      AUTH_BACKOFF_SECS=3600
+      AUTH_FAIL_THRESHOLD=3
+      API_BASE="${CLAUDE_API_BASE:-https://api.anthropic.com}"
+      BEARER_PATH="$HOME/.claude/.credentials.json"
+      BEARER_KEY=".accessToken // .bearer // .token"
+      ORG_UUID_PATH="$HOME/.claude/config.json"
+      ORG_UUID_KEY=".organizationUuid // .organization_uuid"
+
+      mkdir -p "$AGENT_DIR"
+
+      log() {
+        local msg="[$(date -u '+%Y-%m-%d %H:%M:%S')] [reap] $*"
+        echo "$msg" >&2
+        echo "$msg" >> "$LOGFILE" 2>/dev/null || true
+      }
+
+      # Respect auth-error backoff window
+      if [[ -f "$AUTH_STATE" ]]; then
+        last_err=$(awk '{print $1}' "$AUTH_STATE" 2>/dev/null || echo 0)
+        fail_count=$(awk '{print $2}' "$AUTH_STATE" 2>/dev/null || echo 0)
+        if (( fail_count >= AUTH_FAIL_THRESHOLD )); then
+          now=$(date +%s)
+          if (( now - last_err < AUTH_BACKOFF_SECS )); then
+            log "auth-backoff active (${fail_count} recent failures); skipping"
+            exit 0
+          fi
+        fi
+      fi
+
+      shopt -s nullglob
+      pointers=( "$HOME/.claude/projects"/*/bridge-pointer.json )
+
+      if (( ${#pointers[@]} == 0 )); then
+        exit 0
+      fi
+
+      # Lazily resolve credentials — only if we have orphans.
+      bearer=""; org_uuid=""
+      read_creds() {
+        if [[ ! -f "$BEARER_PATH" ]]; then
+          log "error: $BEARER_PATH missing"; return 1
+        fi
+        bearer=$(jq -r "$BEARER_KEY" "$BEARER_PATH" 2>/dev/null || true)
+        if [[ -z "$bearer" || "$bearer" == "null" ]]; then
+          log "error: could not extract bearer from $BEARER_PATH"; return 1
+        fi
+        if [[ ! -f "$ORG_UUID_PATH" ]]; then
+          log "error: $ORG_UUID_PATH missing"; return 1
+        fi
+        org_uuid=$(jq -r "$ORG_UUID_KEY" "$ORG_UUID_PATH" 2>/dev/null || true)
+        if [[ -z "$org_uuid" || "$org_uuid" == "null" ]]; then
+          log "error: could not extract organization UUID from $ORG_UUID_PATH"; return 1
+        fi
+        return 0
+      }
+
+      auth_error=0
+      reaped=0
+
+      for pointer in "${pointers[@]}"; do
+        env_id=$(jq -r '.env_id // .environmentId // empty' "$pointer" 2>/dev/null || true)
+        pid=$(jq -r '.pid // empty' "$pointer" 2>/dev/null || true)
+        if [[ -z "$env_id" ]]; then
+          log "skip: no env_id in $pointer"
+          continue
+        fi
+        # Liveness: if pid field present and process alive, keep pointer.
+        if [[ -n "$pid" && "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
+          continue
+        fi
+
+        if [[ -z "$bearer" ]]; then
+          read_creds || { log "aborting — credentials unresolved"; exit 0; }
+        fi
+
+        log "DELETE $env_id (pointer=$pointer pid=${pid:-none})"
+        # --fail returns 22 on HTTP >= 400. Capture status via -w.
+        http_code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+          -H "Authorization: Bearer $bearer" \
+          -H "x-organization-uuid: $org_uuid" \
+          "$API_BASE/v1/environments/bridge/$env_id" || echo "000")
+
+        case "$http_code" in
+          2*|404)
+            log "reaped $env_id (HTTP $http_code)"
+            rm -f "$pointer"
+            reaped=$((reaped+1))
+            ;;
+          401|403)
+            log "auth-error $env_id (HTTP $http_code) — leaving pointer"
+            auth_error=1
+            ;;
+          5*)
+            log "transient $env_id (HTTP $http_code) — leaving pointer"
+            ;;
+          *)
+            log "unexpected $env_id (HTTP $http_code) — leaving pointer"
+            ;;
+        esac
+      done
+
+      # Update auth-backoff state
+      if (( auth_error == 1 )); then
+        now=$(date +%s)
+        prev=0
+        [[ -f "$AUTH_STATE" ]] && prev=$(awk '{print $2}' "$AUTH_STATE" 2>/dev/null || echo 0)
+        echo "$now $((prev+1))" > "$AUTH_STATE"
+      else
+        rm -f "$AUTH_STATE"
+      fi
+
+      (( reaped > 0 )) && log "reaped $reaped orphan env(s)"
+      exit 0
+      ```
+
+      ```bash
+      chmod +x kali/scripts/reap-orphan-envs.sh
+      ```
+  - id: P1.T3.S2
+    text: |-
+      Re-run the bash tests _(skipped — Branch A; covered by Task 4 Step 3's bash tests against the Branch B reaper.)_
+
+
+      ```bash
+      bash kali/tests/test_reap_orphan_envs.sh 2>&1
+      ```
+
+      Expected: `OK` (all four test cases pass).
+  - id: P1.T3.S3
+    text: |-
+      Integrate into session-manager _(skipped — Branch A; the same integration is performed in Task 4 Step 4 alongside the wrapper spawn-line change.)_
+
+
+      In `kali/scripts/session-manager.sh`, after the `SHUTDOWN_MARKER` check (around line 22) and before the `WILLIKINS_REPOS` validation, add:
+
+      ```bash
+      # Reap any orphaned bridge envs before spawning new sessions. Non-fatal.
+      if [[ "${REAP_ORPHAN_ENVS:-1}" == "1" ]]; then
+        "$(dirname "$0")/reap-orphan-envs.sh" 2>/dev/null \
+          || log "[warn] reap-orphan-envs returned non-zero"
+      fi
+      ```
+  - id: P1.T3.S4
+    text: |-
+      Smoke test on the pod (post-build) _(deferred — runs after PR merges and the image is rebuilt; the Phase 2 soak exercises this path. Plan note: "Defer to Phase 2 for the soak-level acceptance.")_
+
+
+      After the image is rebuilt and pushed (Task 5), roll the pod and trigger a stale-PID event manually:
+
+      ```bash
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        # Capture current env_id
+        POINTER=$(find ~/.claude/projects -name bridge-pointer.json | head -1)
+        cat "$POINTER"
+        # SIGKILL willikins to create an orphan
+        pgrep -f "claude remote-control --name willikins" | head -1 | xargs -r kill -9
+        sleep 310  # wait for two session-manager ticks
+        tail -20 ~/.willikins-agent/reap-orphan-envs.log
+      '
+      ```
+
+      Expected: log shows `reaped env_<id> (HTTP 200)` and the original env is gone from claude.ai. Defer to Phase 2 for the soak-level acceptance.
+- number: 4
+  title: Implement supervisor wrapper (Branch B — conditional)
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Failing test for wrap-claude.py
+
+
+      Create `kali/tests/test_wrap_claude.py`:
+
+      ```python
+      """Tests for wrap-claude.py supervisor: envs file lifecycle."""
+      from __future__ import annotations
+      import json
+      import os
+      import signal
+      import subprocess
+      import time
+      from pathlib import Path
+
+      WRAP = Path(__file__).parent.parent / "scripts" / "wrap-claude.py"
+
+
+      def _fake_claude(tmp_path: Path) -> Path:
+          """Write a script that prints a registration line then sleeps."""
+          path = tmp_path / "fake-claude"
+          path.write_text(
+              "#!/usr/bin/env bash\n"
+              "echo 'registered environment env_TEST123' >&2\n"
+              "trap 'exit 0' TERM\n"
+              "sleep 300\n"
+          )
+          path.chmod(0o755)
+          return path
+
+
+      def test_graceful_sigterm_clears_envs_file(tmp_path):
+          agent_dir = tmp_path / ".willikins-agent"
+          envs_dir = agent_dir / "envs"
+          envs_dir.mkdir(parents=True)
+
+          fake = _fake_claude(tmp_path)
+          env = {
+              **os.environ,
+              "WILLIKINS_AGENT_DIR": str(agent_dir),
+              "CLAUDE_BIN_OVERRIDE": str(fake),
+          }
+          proc = subprocess.Popen(
+              ["python3", "-u", str(WRAP), "willikins-test"],
+              env=env,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+          )
+          # Wait for envs file
+          target = envs_dir / "willikins-test.json"
+          for _ in range(40):
+              if target.exists():
+                  break
+              time.sleep(0.1)
+          assert target.exists(), f"envs file not created: {list(envs_dir.iterdir())}"
+          data = json.loads(target.read_text())
+          assert data["env_id"] == "env_TEST123"
+          assert data["pid"] > 0
+
+          proc.send_signal(signal.SIGTERM)
+          proc.wait(timeout=10)
+          assert proc.returncode == 0
+          assert not target.exists(), "envs file should be removed on graceful exit"
+
+
+      def test_sigkill_leaves_envs_file(tmp_path):
+          agent_dir = tmp_path / ".willikins-agent"
+          envs_dir = agent_dir / "envs"
+          envs_dir.mkdir(parents=True)
+
+          fake = _fake_claude(tmp_path)
+          env = {
+              **os.environ,
+              "WILLIKINS_AGENT_DIR": str(agent_dir),
+              "CLAUDE_BIN_OVERRIDE": str(fake),
+          }
+          proc = subprocess.Popen(
+              ["python3", "-u", str(WRAP), "willikins-test"],
+              env=env,
+          )
+          target = envs_dir / "willikins-test.json"
+          for _ in range(40):
+              if target.exists():
+                  break
+              time.sleep(0.1)
+          assert target.exists()
+
+          proc.send_signal(signal.SIGKILL)
+          proc.wait(timeout=5)
+          # SIGKILL on the wrapper also kills its child; envs file is orphaned.
+          assert target.exists(), "envs file should persist on SIGKILL"
+      ```
+
+      ```bash
+      python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -15
+      ```
+
+      Expected: FAIL (script missing).
+  - id: P1.T4.S2
+    text: |-
+      Implement `wrap-claude.py`
+
+
+      Create `kali/scripts/wrap-claude.py`:
+
+      ```python
+      #!/usr/bin/env python3
+      """wrap-claude.py — supervisor around `claude remote-control` that records the
+      bridge env_id to a file we own, so an orphan reaper can clean up when claude
+      dies without invoking its own bridge:shutdown handler.
+
+      Usage:
+        wrap-claude.py <session_name> [extra claude args...]
+
+      Environment:
+        WILLIKINS_AGENT_DIR  — default ~/.willikins-agent (envs file lives here)
+        CLAUDE_BIN_OVERRIDE  — alternate binary path, for tests
+      """
+      from __future__ import annotations
+
+      import json
+      import os
+      import re
+      import signal
+      import subprocess
+      import sys
+      import threading
+      import time
+      from pathlib import Path
+
+      ENV_RE = re.compile(r"env_[A-Za-z0-9_-]{6,}")
+
+
+      def main() -> int:
+          if len(sys.argv) < 2:
+              print("usage: wrap-claude.py <session_name> [extra args]", file=sys.stderr)
+              return 2
+          session = sys.argv[1]
+          extra = sys.argv[2:]
+          agent_dir = Path(os.environ.get("WILLIKINS_AGENT_DIR", Path.home() / ".willikins-agent"))
+          envs_dir = agent_dir / "envs"
+          envs_dir.mkdir(parents=True, exist_ok=True)
+          envs_file = envs_dir / f"{session}.json"
+
+          claude_bin = os.environ.get("CLAUDE_BIN_OVERRIDE", "claude")
+          if claude_bin == "claude":
+              argv = ["claude", "remote-control", "--name", session, *extra]
+          else:
+              argv = [claude_bin]
+
+          child = subprocess.Popen(
+              argv,
+              stdout=sys.stdout,
+              stderr=subprocess.PIPE,
+              stdin=sys.stdin,
+              bufsize=1,
+              text=True,
+          )
+
+          # Forward SIGTERM/SIGINT to child
+          def forward(signum, _frame):
+              if child.poll() is None:
+                  child.send_signal(signum)
+          signal.signal(signal.SIGTERM, forward)
+          signal.signal(signal.SIGINT, forward)
+
+          # Tail stderr in a thread; write unchanged to our stderr; grep for env_id.
+          def tail_stderr():
+              assert child.stderr is not None
+              seen_env = False
+              for line in child.stderr:
+                  sys.stderr.write(line)
+                  sys.stderr.flush()
+                  if seen_env:
+                      continue
+                  m = ENV_RE.search(line)
+                  if m:
+                      envs_file.write_text(json.dumps({
+                          "env_id": m.group(0),
+                          "pid": child.pid,
+                          "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                      }))
+                      seen_env = True
+
+          t = threading.Thread(target=tail_stderr, daemon=True)
+          t.start()
+
+          rc = child.wait()
+          t.join(timeout=2)
+
+          if rc == 0:
+              try:
+                  envs_file.unlink()
+              except FileNotFoundError:
+                  pass
+
+          return rc
+
+
+      if __name__ == "__main__":
+          sys.exit(main())
+      ```
+
+      ```bash
+      chmod +x kali/scripts/wrap-claude.py
+      python -m pytest kali/tests/test_wrap_claude.py -x 2>&1 | tail -10
+      ```
+
+      Expected: both tests pass.
+  - id: P1.T4.S3
+    text: |-
+      Branch-B reaper variant
+
+
+      Create `kali/scripts/reap-orphan-envs.sh` as in Task 3 Step 1, but replace the pointer discovery block with:
+
+      ```bash
+      shopt -s nullglob
+      envs_files=( "$AGENT_DIR/envs"/*.json )
+      # and iterate envs_files rather than pointer files, reading from them
+      # the same env_id / pid fields.
+      ```
+
+      All other logic (credentials, DELETE, backoff, status handling) is identical.
+  - id: P1.T4.S4
+    text: |-
+      Update session-manager spawn line
+
+
+      In `kali/scripts/session-manager.sh`, replace line 54:
+
+      ```bash
+      nohup bash -c "exec claude remote-control --name '$SESSION_NAME' < <(echo y)" \
+        >> "/home/claude/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
+      ```
+
+      with:
+
+      ```bash
+      nohup bash -c "exec python3 -u /opt/scripts/wrap-claude.py '$SESSION_NAME' < <(echo y)" \
+        >> "/home/claude/.willikins-agent/session-${SESSION_NAME}.log" 2>&1 &
+      ```
+
+      Also add the reaper invocation per Task 3 Step 3.
+- number: 5
+  title: Open PR
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Verify all tests pass
+
+
+      Branch A:
+
+      ```bash
+      bash kali/tests/test_reap_orphan_envs.sh
+      python -m pytest kali/tests/ 2>&1 | tail -10
+      ```
+
+      Branch B:
+
+      ```bash
+      python -m pytest kali/tests/test_wrap_claude.py kali/tests/ 2>&1 | tail -10
+      bash kali/tests/test_reap_orphan_envs.sh  # if authored as bash for B too
+      ```
+
+      Expected: all green.
+  - id: P1.T5.S2
+    text: |-
+      Commit and push
+
+
+      ```bash
+      cd /Users/derio/Docs/projects/DERIO_NET/agent-images
+      git checkout -b feat/orphan-env-reaper
+      # Branch A:
+      git add kali/scripts/reap-orphan-envs.sh kali/scripts/session-manager.sh \
+              kali/tests/test_reap_orphan_envs.sh \
+              kali/docs/findings/2026-04-22-orphan-env-reaper.md
+      # Branch B additionally:
+      # git add kali/scripts/wrap-claude.py kali/tests/test_wrap_claude.py
+      git commit -m "feat(agent): orphan-env reaper for silent-reconnect phantoms"
+      git push -u origin feat/orphan-env-reaper
+      gh pr create --fill
+      ```
+
+      ---
+state:
+  steps:
+    P1.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: '-'
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: '-'
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: '-'
+      ticked_at: null
+      note: null
+    P1.T3.S3:
+      state: '-'
+      ticked_at: null
+      note: null
+    P1.T3.S4:
+      state: '-'
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T4.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T4.S4:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

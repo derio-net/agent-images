@@ -1,0 +1,66 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Accept explicit no-deps marker for any phase number
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Widen the no-deps marker detection in `parse_dependencies`
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      TDD — add failing tests for the no-deps marker at any phase number
+
+
+      Added four tests inside `TestParseDependenciesFailLoud`:
+
+      - `test_none_marker_accepted_for_phase_1`
+      - `test_none_marker_accepted_for_high_phase_number`
+      - `test_none_marker_case_insensitive`
+      - `test_unrecognized_prose_still_raises_for_phase_n` (regression guard — arbitrary prose must still fail loud)
+
+      Baseline: 3 new tests failed as expected, prose-regression passed.
+  - id: P1.T1.S2
+    text: |-
+      Implement the marker regex
+
+
+      In `parse_dependencies`:
+
+      ```python
+      none_re = re.compile(r"^\s*none\b.*no blocking phases", re.IGNORECASE)
+      ```
+
+      Track `saw_no_deps_marker` while scanning the `## Dependencies` section. Skip the fail-loud `raise` when the marker was seen. Existing `phase_number == 0` behaviour and the "prose without marker or bullets" error path are preserved.
+  - id: P1.T1.S3
+    text: |-
+      Run the suite
+
+
+      ```bash
+      python3 -m pytest kali/tests/test_vk_issue_bridge.py -q
+      ```
+
+      Expected: **61 passed** (4 new + 57 existing).
+
+      ---
+state:
+  steps:
+    P1.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

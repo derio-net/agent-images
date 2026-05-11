@@ -1,0 +1,146 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Blocker preamble in build_prompt
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/secure-agent-kali/issues/10
+tasks:
+- number: 1
+  title: Prepend preamble when deps present
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Failing tests — preamble presence contract
+
+
+      Append:
+
+      ```python
+      class TestBuildPromptBlockerPreamble:
+          def _issue(self, mod):
+              return mod.GhIssue(
+                  number=77, title="Phase 2", body="body",
+                  html_url="https://gh/org/r/issues/77", repo="org/r",
+                  labels=(),
+              )
+
+          def _parsed(self, mod):
+              return mod.ParsedBody(skill="vk-execute", repos=["r"], raw_instruction="x")
+
+          def test_no_preamble_when_no_deps(self):
+              mod = _load_bridge()
+              p = mod.build_prompt(self._issue(mod), self._parsed(mod), deps=[])
+              assert "BEFORE YOU BEGIN" not in p
+
+          def test_preamble_when_deps_present(self):
+              mod = _load_bridge()
+              deps = [(None, 42), ("other/repo", 7)]
+              p = mod.build_prompt(self._issue(mod), self._parsed(mod), deps=deps)
+              assert "BEFORE YOU BEGIN" in p
+              assert "#42" in p
+              assert "other/repo#7" in p
+              assert "STOP" in p
+              assert "do not duplicate" in p.lower()
+      ```
+
+      Run; expect TypeError.
+  - id: P2.T1.S2
+    text: |-
+      Extend build_prompt signature
+
+
+      Replace lines 378–388:
+
+      ```python
+      def build_prompt(
+          issue: GhIssue,
+          parsed: ParsedBody,
+          deps: list[tuple[str | None, int]] | None = None,
+      ) -> str:
+          preamble = ""
+          if deps:
+              dep_refs = ", ".join(
+                  f"{r}#{n}" if r else f"#{n}" for r, n in deps
+              )
+              preamble = (
+                  f"BEFORE YOU BEGIN: This Issue declares dependencies: {dep_refs}.\n"
+                  f"Verify each is CLOSED via "
+                  f"`gh issue view <n> --repo <owner/repo> --json state`.\n"
+                  f"If any is OPEN:\n"
+                  f"  - STOP. Do not start work.\n"
+                  f"  - Do not duplicate the upstream work.\n"
+                  f"  - Do not start 'parts that don't depend on it'.\n"
+                  f"  - Exit with message: 'Blocked on <open_blocker>, not starting.'\n"
+                  f"The bridge should have deferred this workspace if a blocker were "
+                  f"open — if you see this and blockers are open, report it to the "
+                  f"operator.\n\n"
+                  f"---\n\n"
+              )
+          return (
+              preamble
+              + f"You are a VK-spawned agent working on GitHub Issue gh#{issue.number}:\n"
+              f"{issue.title}\n\n"
+              f"The Issue is at: {issue.html_url}\n"
+              f"Repo: {parsed.repos[0]}\n\n"
+              f"Use superpowers-for-vk:{parsed.skill} to implement this task.\n\n"
+              "The full task description is in the GitHub Issue body — read it before "
+              "starting. When you finish, open a PR. The lifecycle board will reflect "
+              "your progress automatically."
+          )
+      ```
+
+      Run; expect pass.
+  - id: P2.T1.S3
+    text: |-
+      Thread deps into sync_issue call
+
+
+      Update `sync_issue` signature (line 391):
+
+      ```python
+      def sync_issue(
+          issue: GhIssue,
+          parsed: ParsedBody,
+          deps: list[tuple[str | None, int]],
+          client: VkMcpClient,
+      ) -> bool:
+      ```
+
+      Update its `build_prompt` call (line 455) to pass `deps=deps`.
+
+      In `main()` (around line 579), change:
+
+      ```python
+      if sync_issue(i, parsed, client):
+      ```
+
+      to:
+
+      ```python
+      if sync_issue(i, parsed, deps, client):
+      ```
+
+      Note: blocked Issues are already deferred earlier in the loop, so in practice `deps` here describes deps whose blockers are all CLOSED. The preamble still runs as defense-in-depth — if the bridge misfires or a human manually labels an Issue, the agent refuses.
+
+      Run full suite `python -m pytest tests/ 2>&1 | tail -10`. Expect pass.
+
+      ---
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

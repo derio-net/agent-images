@@ -1,0 +1,176 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Migrate `secure-agent-kali` to `FROM agent-shell-base`
+  tag: agentic
+  depends_on:
+  - 2
+  tracking_issue: https://github.com/derio-net/agent-images/issues/18
+tasks:
+- number: 1
+  title: Update `kali/Dockerfile` to FROM agent-shell-base
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Change FROM line, override agent identity, drop entrypoint logic
+
+
+      ```dockerfile
+      ARG BASE_SHA=latest
+      FROM ghcr.io/derio-net/agent-shell-base:${BASE_SHA}
+
+      # Preserve existing PV state: stay as `claude` / `/home/claude`.
+      ARG AGENT_USER=claude
+      ARG AGENT_HOME=/home/claude
+      USER root
+
+      # agent-shell-base created `agent` user; replace with legacy identity.
+      RUN userdel -r agent 2>/dev/null || true \
+          && groupadd --gid 1000 ${AGENT_USER} \
+          && useradd --uid 1000 --gid 1000 \
+                     --create-home --home-dir ${AGENT_HOME} \
+                     --shell /bin/bash ${AGENT_USER}
+
+      ENV AGENT_USER=${AGENT_USER} AGENT_HOME=${AGENT_HOME}
+
+      # Re-substitute sshd_config for the legacy home.
+      RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config
+
+      # Kali repos + tools (existing).
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+            kali-archive-keyring \
+          && echo "deb https://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list \
+          && apt-get update && apt-get install -y --no-install-recommends \
+             kali-tools-top10 nmap netcat-traditional logrotate \
+          && rm -rf /var/lib/apt/lists/*
+
+      # Existing /opt/scripts/, /opt/crontab, /opt/load-env.sh, /opt/bashrc,
+      # /opt/settings.json, /opt/gitconfig — UNCHANGED, copied as before.
+      COPY opt/ /opt/
+
+      # Existing CLI installs (kubectl, talosctl, omnictl, claude, gh, ...) —
+      # UNCHANGED; copy from current Dockerfile lines.
+
+      USER ${AGENT_USER}
+      WORKDIR ${AGENT_HOME}
+
+      # ENTRYPOINT inherited from agent-shell-base ("/init"). Do NOT override.
+      ```
+- number: 2
+  title: Delete `kali/entrypoint.sh`
+  steps:
+  - id: P3.T2.S1
+    text: |-
+      Remove the file
+
+
+      Its responsibilities migrated to:
+      - First-boot dirs/configs → `/opt/agent-init.d/01-pvc-dirs` (Phase 1)
+      - Credential migration/scrub → `/opt/agent-init.d/02-credential-migrate`, `03-credential-scrub` (Phase 1)
+      - ssh host keys → `/etc/cont-init.d/10-ssh-host-keys` (Phase 2)
+      - venv creation → `/etc/cont-init.d/20-venv` (Phase 2)
+      - authorized_keys → `/etc/cont-init.d/30-authorized-keys` (Phase 2)
+      - sshd start → `/etc/services.d/sshd/run` (Phase 2)
+      - supercronic start → `/etc/services.d/supercronic/run` (Phase 2)
+      - SIGTERM trap → handled by s6
+      - shutdown.sh → `/etc/cont-finish.d/01-shutdown` calls `/opt/scripts/shutdown.sh`
+      - `wait -n` → not needed; s6 supervises
+- number: 3
+  title: Audit `/opt/scripts/*.sh` for hardcoded /home/claude paths
+  steps:
+  - id: P3.T3.S1
+    text: |-
+      Grep + replace
+
+
+      ```bash
+      grep -rnE '/home/claude' kali/opt/scripts/
+      ```
+
+      Most current scripts use `${WILLIKINS_AGENT_DIR:-$HOME/.willikins-agent}` or similar — these are clean. Any hardcoded `/home/claude` references must be replaced with `$HOME` or `$AGENT_HOME` even though kali stays as `claude` today. **Required cleanup before merge** — hardcoded paths block the future rename plan.
+- number: 4
+  title: Smoke test the migrated image
+  steps:
+  - id: P3.T4.S1
+    text: |-
+      Build with explicit build args <!-- CI smoke tests cover this -->
+
+
+      ```bash
+      docker build -t secure-agent-kali:test \
+          --build-arg BASE_SHA=$(git rev-parse HEAD) \
+          --build-arg AGENT_USER=claude \
+          --build-arg AGENT_HOME=/home/claude \
+          ./kali
+      ```
+  - id: P3.T4.S2
+    text: |-
+      Run with the same SecurityContext as the deployment <!-- CI smoke tests cover this -->
+
+
+      ```bash
+      docker run -d --name kali-test \
+          --user 1000 \
+          --cap-drop ALL \
+          -v $(pwd)/test-home:/home/claude \
+          -p 2222:2222 \
+          secure-agent-kali:test
+
+      sleep 3
+      docker exec kali-test id
+      docker exec kali-test ls /home/claude/.ssh-host-keys/ssh_host_ed25519_key
+      docker exec kali-test pgrep -af 'sshd: /usr/sbin'
+      docker exec kali-test pgrep -af supercronic
+      docker exec kali-test ls /usr/local/share/tmux-plugins/
+
+      ssh -p 2222 -i test-key claude@127.0.0.1 'whoami'   # claude
+
+      docker rm -f kali-test
+      ```
+- number: 5
+  title: Open PR + merge
+  steps:
+  - id: P3.T5.S1
+    text: 'Open PR `feat(kali): migrate to agent-shell-base; delete entrypoint.sh`'
+  - id: P3.T5.S2
+    text: |-
+      Wait for matrix CI green, merge
+
+
+      Bumper fires; **STILL hold the bump** in frank until Phase 4 lands. Bundling kali + vk-local in one cutover is cleaner than two consecutive bounces.
+
+      ---
+state:
+  steps:
+    P3.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T2.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T3.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T4.S1:
+      state: '-'
+      ticked_at: null
+      note: null
+    P3.T4.S2:
+      state: '-'
+      ticked_at: null
+      note: null
+    P3.T5.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P3.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

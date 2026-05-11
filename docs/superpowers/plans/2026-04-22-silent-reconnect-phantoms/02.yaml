@@ -1,0 +1,181 @@
+schema_version: 2
+phase:
+  number: 2
+  title: 48h soak
+  tag: manual
+  depends_on:
+  - 1
+  tracking_issue: https://github.com/derio-net/agent-images/issues/31
+tasks:
+- number: 1
+  title: Deploy
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Merge Phase 1 PR and build image
+
+
+      ```bash
+      gh pr merge --squash --delete-branch $(gh pr view feat/orphan-env-reaper --json number -q .number)
+      gh workflow run build.yml --repo derio-net/agent-images --ref main
+      # Wait for image to publish; note the new tag (ghcr.io/derio-net/secure-agent-kali:<sha>)
+      ```
+  - id: P2.T1.S2
+    text: |-
+      Roll the pod on Frank
+
+
+      ```bash
+      cd /Users/derio/Docs/projects/DERIO_NET/frank
+      # Update kali image tag in apps/secure-agent-pod/manifests/deployment.yaml
+      # Commit, push — ArgoCD auto-syncs. Or manually:
+      source .env
+      kubectl -n secure-agent-pod set image deploy/secure-agent-pod kali=ghcr.io/derio-net/secure-agent-kali:<new-sha>
+      kubectl -n secure-agent-pod rollout status deploy/secure-agent-pod --timeout=5m
+      ```
+  - id: P2.T1.S3
+    text: |-
+      Capture baseline
+
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env
+      START_TS=$(date -u +%FT%T)
+      echo "$START_TS" > /tmp/reaper-soak-start.txt
+
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        echo "=== reap log present? ==="
+        ls -la ~/.willikins-agent/reap-orphan-envs.log 2>&1 || echo "not yet"
+        echo "=== pointer files ==="
+        find ~/.claude/projects -name bridge-pointer.json | wc -l
+        echo "=== envs files (Branch B only) ==="
+        ls ~/.willikins-agent/envs/ 2>/dev/null || echo "none"
+        echo "=== session-manager log tail ==="
+        tail -5 ~/.willikins-agent/session-manager.log
+      '
+      ```
+
+      Manually count current phantom `willikins` environments in the claude.ai UI. Record as baseline.
+- number: 2
+  title: Observe for 48h
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Checkpoint at T+8h
+
+
+      ```bash
+      source /Users/derio/Docs/projects/DERIO_NET/frank/.env
+      kubectl -n secure-agent-pod exec deploy/secure-agent-pod -c kali -- bash -c '
+        echo "=== stale-PID restarts ==="
+        grep -c "stale PID" ~/.willikins-agent/session-manager.log || true
+        echo "=== reaper invocations ==="
+        grep -c "\[reap\]" ~/.willikins-agent/reap-orphan-envs.log || true
+        echo "=== DELETE response breakdown ==="
+        grep -oE "HTTP [0-9]{3}" ~/.willikins-agent/reap-orphan-envs.log | sort | uniq -c || true
+        echo "=== live claude PIDs ==="
+        pgrep -af "claude remote-control" | wc -l
+      '
+      kubectl -n secure-agent-pod describe pod -l app=secure-agent-pod | grep -E "OOMKilled|Last State|Restart" | head -20
+      ```
+
+      Count phantoms in claude.ai UI. Record delta vs. baseline.
+  - id: P2.T2.S2
+    text: |-
+      Checkpoint at T+24h
+
+
+      Re-run the T+8h commands. Any new OOMKill events? Any new stale-PID restarts? Does phantom count in claude.ai match the reaper's DELETE count?
+  - id: P2.T2.S3
+    text: |-
+      Checkpoint at T+48h
+
+
+      Re-run once more. Record the final stratification:
+
+      - Total stale-PID restarts (session-manager log)
+      - Total reaper DELETE attempts (HTTP 2xx + 404 + 401 + 5xx + other)
+      - Net phantom-count delta in claude.ai
+      - OOMKill events from `kubectl describe`
+- number: 3
+  title: Outcome note and follow-up decisions
+  steps:
+  - id: P2.T3.S1
+    text: |-
+      Post soak summary to agent-images#2
+
+
+      ```bash
+      gh issue comment 2 --repo derio-net/agent-images --body "$(cat <<'EOF'
+      ## Orphan-env reaper — T+48h soak outcome
+
+      [baseline phantom count → final]
+      [stale-PID restarts in window / reaper DELETE counts by response code]
+      [OOMKill events stratified]
+      [any 401/403/5xx bugs discovered]
+
+      **Conclusion:** <net reduction achieved / residual gaps identified>
+
+      **Follow-ups filed:** <links or "none">
+      EOF
+      )"
+      ```
+  - id: P2.T3.S2
+    text: |-
+      Trigger follow-up plans if needed
+
+
+      Decision rules:
+      - **DELETEs succeeded but phantoms still accumulating** → log-scan to find the unclean-death path the reaper misses (e.g., a cwd change before crash invalidates the pointer location). Open a new plan.
+      - **401/403 on DELETE loops** → creds format drift; open a small fix plan.
+      - **No OOMKills in window but phantom count only fell by ~11 (silent-reconnect piece only)** → Plan 3 (vk-local memory profile) status unchanged, this plan is complete.
+      - **OOMKills fired and reaper caught them** → Plan 3 can later downgrade priority.
+      - **Zero stale-PID events in 48h** → reaper untested in production; extend soak by another 48h before closing.
+  - id: P2.T3.S3
+    text: |-
+      Mark plan status
+
+
+      Edit the **Status:** header of this plan to `Deployed` (or `Complete` if the reaper was useful but uneventful). Update the **Status** column in the original spec's Implementation Plans table. Close the loop on the soak-followup issue if appropriate.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

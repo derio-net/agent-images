@@ -1,0 +1,144 @@
+schema_version: 2
+phase:
+  number: 0
+  title: Remote-control close/list spike
+  tag: agentic
+  depends_on: []
+  tracking_issue: https://github.com/derio-net/secure-agent-kali/issues/15
+tasks:
+- number: 1
+  title: Investigate Claude CLI for session/env management
+  steps:
+  - id: P0.T1.S1
+    text: |-
+      Survey `claude` CLI surface
+
+
+      ```bash
+      claude --version 2>&1
+      claude --help 2>&1 | tail -60
+      claude remote-control --help 2>&1
+      ```
+
+      Capture output verbatim. Look specifically for subcommands named `list`, `close`, `disconnect`, `stop`, `rm`, `logout`, or flags like `--session-id`, `--env-id`.
+  - id: P0.T1.S2
+    text: |-
+      Inspect Claude state dir for env/session bookkeeping
+
+
+      ```bash
+      ls -la ~/.claude/ 2>&1
+      find ~/.claude -type f \( -name '*.json' -o -name '*.jsonl' \) 2>&1 | head -30
+      ```
+
+      If state files mention `env_`, `session_`, or `remote_control`, `jq` the relevant ones to understand the schema. Do not modify anything — read-only inspection.
+  - id: P0.T1.S3
+    text: |-
+      Probe for a server-side disconnect endpoint
+
+
+      Check whether Claude Code's HTTP client (node bundle) exposes a disconnect RPC. Grep the installed bundle:
+
+      ```bash
+      which claude
+      realpath "$(which claude)" 2>&1
+      CLAUDE_BIN="$(realpath "$(which claude)")"
+      # Find adjacent node modules or source
+      ls -la "$(dirname "$CLAUDE_BIN")/../lib" 2>&1 | head
+      grep -l "remote[-_]control" "$(dirname "$CLAUDE_BIN")/../lib/node_modules" -r 2>&1 | head -5 || true
+      ```
+
+      Grep any hits for URL patterns like `/api/remote_control`, `disconnect`, `close_environment`. Do not call any endpoint — this is reconnaissance only.
+  - id: P0.T1.S4
+    text: |-
+      Test SIGTERM/SIGINT behavior in a sandbox
+
+
+      On the pod (not in production), start a short-lived remote-control session and observe what signals do:
+
+      ```bash
+      # In a separate shell on the pod:
+      nohup bash -c "echo y | claude remote-control --name spike-test" \
+        > /tmp/spike.log 2>&1 &
+      SPIKE_PID=$!
+      sleep 10
+      # See child tree
+      pstree -p "$SPIKE_PID" 2>&1 || ps --ppid "$SPIKE_PID" 2>&1
+      # Test SIGTERM propagation
+      kill -TERM "$SPIKE_PID"
+      sleep 5
+      # Did anything in ~/.claude change? Does the session still show in claude.ai?
+      tail -30 /tmp/spike.log
+      ```
+
+      Capture: does SIGTERM reach the child? Does it write any "disconnecting" log line? Does the session disappear from claude.ai UI, or linger?
+
+      Repeat with SIGINT.
+  - id: P0.T1.S5
+    text: |-
+      Write findings doc and commit
+
+
+      Create `docs/findings/2026-04-18-remote-control-shutdown.md` with four sections:
+
+      ```markdown
+      # Remote-Control Shutdown — Findings
+
+      ## CLI surface
+      [verbatim relevant output from Step 1]
+
+      ## State dir
+      [what's stored locally; does anything help?]
+
+      ## Server endpoint
+      [whether a disconnect RPC exists, with evidence]
+
+      ## Signal behavior
+      [what SIGTERM / SIGINT actually do to a live session]
+
+      ## Decision for Phase 1
+
+      One of:
+      - **A (close API available):** call `claude remote-control close <name>` / HTTP endpoint in shutdown.sh.
+      - **B (signal-only):** SIGTERM → wait → SIGKILL fallback; document that phantoms will still accumulate at a reduced rate.
+      - **C (no clean shutdown possible):** document limitation, file upstream feature request, ship only SIGTERM trap + audit/rotation fixes.
+
+      **Chosen:** <A|B|C>. Reason: <one paragraph>.
+      ```
+
+      Commit:
+
+      ```bash
+      git add docs/findings/2026-04-18-remote-control-shutdown.md
+      git commit -m "docs: remote-control shutdown findings (Phase 0)"
+      ```
+
+      Phase 1 implementer reads this file before starting.
+
+      ---
+state:
+  steps:
+    P0.T1.S1:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S2:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S3:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S4:
+      state: x
+      ticked_at: null
+      note: null
+    P0.T1.S5:
+      state: x
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
