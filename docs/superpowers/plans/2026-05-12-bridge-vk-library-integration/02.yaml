@@ -1,0 +1,66 @@
+schema_version: 2
+phase:
+  number: 2
+  title: End-to-end integration test against a real v2 plan
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Fixture plan with cross-phase deps
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Create a 2-phase fixture v2 plan
+
+      Under `kali/tests/fixtures/`, create a complete v2 plan folder
+      with Phase 1 (depends_on: []) and Phase 2 (depends_on: [1]). Both
+      agentic. Each phase has one task with one step. The point is to
+      exercise the renderer's phase→issue translation that v2.1.0 added.
+  - id: P2.T1.S2
+    text: |-
+      Stub the GitHub-side state
+
+      Build a fake GhState fixture where Phase 1's Issue exists (open,
+      labelled `vk-ready`) and Phase 2's Issue doesn't exist yet. Both
+      will be created by the tick. Assert that the body of Phase 2's
+      created Issue contains `- Blocked by #<Phase 1's issue number>`,
+      NOT `- Blocked by #1`.
+
+      This is the regression test that the renderer fix in v2.1.0
+      actually flows through to the bridge.
+- number: 2
+  title: Run the full tick against the fixture
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Add the integration test to the bridge's test suite
+
+      ```python
+      def test_bridge_dispatches_v2_plan_with_correct_issue_deps(tmp_path):
+          # Set up fixture repo, fixture plan, stub gh + mcp
+          # Run vk.bridge.discover_plans + tick
+          # Assert Phase 2's created Issue body has the correct dep ref
+      ```
+      Run, expect green if v2.1.0 is installed correctly. This test is
+      the protection against the original `#1`/`#issue_number` bug ever
+      regressing.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
