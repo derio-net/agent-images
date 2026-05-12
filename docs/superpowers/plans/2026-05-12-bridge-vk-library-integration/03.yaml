@@ -1,0 +1,76 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Bump secure-agent-kali baseline + roll pod
+  tag: manual
+  depends_on:
+  - 2
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Image bump
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Build + push secure-agent-kali with vk 2.1.0
+
+      After Phases 1+2 merge to main, the CI build of secure-agent-kali
+      will include the new bridge code + vk 2.1.0. Verify by checking
+      GHCR for the new tag matching the merge SHA, OR build locally:
+      ```
+      docker build -t secure-agent-kali:test kali/
+      docker run --rm secure-agent-kali:test python -c "from vk import bridge; print(bridge.__name__)"
+      ```
+      Expect: `vk.bridge`.
+- number: 2
+  title: Pod roll
+  steps:
+  - id: P3.T2.S1
+    text: |-
+      Update the secure-agent-pod manifest in frank
+
+      Bump the `secure-agent-kali` image tag in the relevant frank
+      manifest to the new SHA. ArgoCD will sync; the pod re-rolls and
+      the next 2-minute cron tick runs against the refactored bridge.
+
+      Verify by tailing pod logs:
+      ```
+      kubectl logs -n agents -l app=secure-agent-pod -c kali --tail=50 | grep -i bridge
+      ```
+      Expect log lines mentioning `vk.bridge.tick` (the refactored
+      main() should emit a startup line naming the function).
+- number: 3
+  title: Production smoke check
+  steps:
+  - id: P3.T3.S1
+    text: |-
+      Watch one full tick cycle
+
+      Wait ~3 minutes after the pod rolls, then:
+      ```
+      kubectl logs -n agents -l app=secure-agent-pod -c kali --since=5m
+      ```
+      Expect: a tick log with `TickResult(synced=N, errors=0, ...)`.
+
+      If `errors > 0`, capture the failure tuple in the plan's
+      completion note and decide whether to roll back to the prior
+      image or fix forward. Mark this manual phase complete with a
+      note: "production smoke: TickResult(synced=N, errors=M)".
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

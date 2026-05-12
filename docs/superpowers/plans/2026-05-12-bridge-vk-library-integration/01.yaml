@@ -1,0 +1,159 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Refactor vk-issue-bridge.py to import vk.bridge.tick
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Pin current behaviour with characterisation tests
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Capture today's bridge behaviour as the regression baseline
+
+      Before refactoring, the existing `kali/tests/test_vk_issue_bridge.py`
+      must pass against the current bridge. Run:
+      ```
+      cd kali && python -m pytest tests/test_vk_issue_bridge.py -x
+      ```
+      Expect: green. Record the pass count in commit body. These tests
+      are the safety net for the refactor.
+  - id: P1.T1.S2
+    text: |-
+      Add the missing end-to-end fixture
+
+      The existing tests stub `parse_issue_body` and `parse_dependencies`
+      directly. Add a new test that exercises the full main() loop
+      against fixture Issues + a stub VkMcpClient + a stub GhClient, and
+      asserts:
+        - One `vk-ready` Issue → one MCP card created + `vk-synced` label
+          applied
+        - A second Issue depending on the first (now closed) → also synced
+        - A third Issue depending on an OPEN predecessor → skipped, NOT
+          mistakenly synced
+
+      This is the contract the refactor must preserve. Run it against
+      the unrefactored bridge first — expect green.
+- number: 2
+  title: Add vk 2.1.0 as a dependency
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Pin vk in kali/scripts/pyproject.toml (or equivalent)
+
+      Find where the bridge's dependencies are declared. If there's no
+      pyproject in kali/scripts/, add a minimal one with:
+      ```
+      dependencies = ["vk>=2.1.0,<3.0.0"]
+      ```
+      Otherwise add the line to the existing manifest.
+
+      Verify: `pip install -e kali/scripts/` (or whichever path applies)
+      in a clean venv succeeds and `python -c "from vk import bridge"` works.
+  - id: P1.T2.S2
+    text: |-
+      Document the dep in the Kali Dockerfile
+
+      Audit `kali/Dockerfile` for where `vk` (or `superpowers-for-vk`)
+      gets installed today. If the bridge currently picks up vk via the
+      agent-shell-base baseline, add an explicit pip install line in
+      kali so the bridge's dep is self-contained:
+      ```
+      RUN pip install --no-cache-dir 'vk>=2.1.0,<3.0.0'
+      ```
+      Don't bump the FROM baseline yet — that's Phase 3 of this plan.
+- number: 3
+  title: Replace the hand-rolled loop with vk.bridge.tick
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Build a VkMcpClient adapter around the existing vk_mcp_client
+
+      In `kali/scripts/vk-issue-bridge.py`, add a small adapter class
+      that wraps the existing `VkMcpClient` (in `vk_mcp_client.py`) to
+      match the Protocol from `vk.bridge.VkMcpClient`:
+      ```python
+      class _McpAdapter:
+          def __init__(self, inner: VkMcpClient) -> None:
+              self._inner = inner
+          def create_card(self, *, title: str, body: str, issue_url: str) -> str:
+              return self._inner.create_card(title=title, body=body, issue_url=issue_url)
+          def update_card(self, *, card_id: str, status: str) -> None:
+              self._inner.update_card(card_id=card_id, status=status)
+      ```
+      Match the existing client's method signatures. If they don't line
+      up cleanly, adjust the adapter (NOT the existing client).
+  - id: P1.T3.S2
+    text: |-
+      Replace main() body with vk.bridge.discover_plans + tick
+
+      ```python
+      from vk import bridge as vk_bridge
+      from vk.ghclient import GhClient
+
+      def main() -> int:
+          gh = GhClient()  # wraps subprocess gh cli
+          mcp = _McpAdapter(VkMcpClient(VK_ORG_ID, VK_DERIO_OPS_PROJECT))
+          total = vk_bridge.TickResult()
+          for repo in discover_repos():
+              plans = vk_bridge.discover_plans(repo, gh)
+              for plan in plans:
+                  r = vk_bridge.tick(plan, gh, mcp)
+                  total = TickResult(
+                      synced=total.synced + r.synced,
+                      errors=total.errors + r.errors,
+                      skipped=total.skipped + r.skipped,
+                      failures=total.failures + r.failures,
+                  )
+          push_metric(total)
+          return 0 if total.errors == 0 else 1
+      ```
+      Delete the now-unused `parse_issue_body`, `parse_dependencies`,
+      and the inline reconciliation loop — they're all in vk now.
+  - id: P1.T3.S3
+    text: |-
+      Re-run the characterisation tests
+
+      The tests from P1.T1 must still pass with the refactored bridge.
+      Any failure is a contract regression — fix the refactor, NOT the
+      test. Run:
+      ```
+      cd kali && python -m pytest tests/ -x
+      ```
+      Expect: green, same count as P1.T1.S1.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
