@@ -18,24 +18,53 @@ The sibling rework in superpowers-for-vk ships v2.1.0 with two changes:
    any v2 plan with cross-phase deps because phase number leaks
    through.)
 2. New `vk.bridge` sub-package exposing `discover_plans()` and
-   `tick()`. The bridge becomes a thin wrapper.
+   `tick()`. The bridge gains a new path for v2-plan Issues that
+   delegates to the library.
 
-This plan refactors the live bridge to consume the new library and
-ships the image bump that rolls the pod onto it.
+This plan integrates the live bridge with the new library and ships
+the image bump that rolls the pod onto it.
 
 ## Architecture
 
-### Phase 1 — Refactor
+### Phase 1 — Additive integration (scope revised after agent audit on Issue #61)
 
-The bridge currently does ~600 lines of GH-Issue parsing + state
-machine work. After this phase it's down to a `main()` that
-discovers plans per repo and calls `vk.bridge.tick()`. The MCP
-client stays where it is — only an adapter is needed because
-`vk.bridge.VkMcpClient` is a Protocol the existing client should
-satisfy structurally.
+The bridge actually does **873 LOC of application logic** — far more
+than the GH-Issue parsing + state machine the original plan estimated
+at ~600 lines. The full production surface includes:
+
+- workspace creation + linking (`start_workspace`, `link_workspace_issue`)
+- PR-status polling (In progress → In review → Done on merge)
+- orphan workspace reaping
+- lifecycle-transition shell hook
+- max-concurrency slot accounting + dedup-by-title
+- Pushgateway metrics / heartbeat
+- dynamic repo discovery + gh-error log-level classification
+
+This is locked in by **1621 LOC of tests (100 cases)** at
+`kali/tests/test_vk_issue_bridge.py`. `vk.bridge.tick` (v2.1.0) only
+covers observe → render → diff → apply → MCP `create_card` for phases
+labelled `vk-ready`. None of the application logic above lives in the
+library.
+
+**Decision (Option 1):** Phase 1 is an **additive** refactor. Wire
+`vk.bridge.tick` as the new card-creation path for v2-plan Issues
+while keeping the existing main loop, parsers, workspace pipeline,
+and metrics in place. Removing legacy logic is a follow-on rework
+once the new path is proven in production (Phase 3) — not in this
+plan.
+
+The MCP adapter is non-trivial.
+`vk.bridge.VkMcpClient.create_card(*, title, body, issue_url) -> str`
+does NOT map structurally to the existing
+`VkMcpClient.create_issue(project_id, title, **kwargs)`. The adapter's
+`create_card` performs the full sequence currently in `sync_issue`:
+create_issue → set status → list_repos → start_workspace →
+link_workspace_issue.
 
 Characterisation tests at the start of Phase 1 lock in the current
-behaviour. The refactor must preserve every behaviour they assert.
+behaviour. The new library-delegation tests cover the additive path;
+the existing 100 tests stay green throughout — those are the
+regression net.
 
 ### Phase 2 — Integration test
 

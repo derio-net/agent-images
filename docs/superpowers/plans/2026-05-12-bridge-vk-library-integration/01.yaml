@@ -1,7 +1,7 @@
 schema_version: 2
 phase:
   number: 1
-  title: Refactor vk-issue-bridge.py to import vk.bridge.tick
+  title: Additive integration of vk.bridge.tick (preserves all existing features)
   tag: agentic
   depends_on: []
   tracking_issue: null
@@ -11,125 +11,205 @@ tasks:
   steps:
   - id: P1.T1.S1
     text: |-
-      Capture today's bridge behaviour as the regression baseline
+      Capture today's bridge behaviour as the regression baseline.
 
-      Before refactoring, the existing `kali/tests/test_vk_issue_bridge.py`
-      must pass against the current bridge. Run:
+      Before any code change, the existing 100-case test suite at
+      `kali/tests/test_vk_issue_bridge.py` must pass:
+
       ```
       cd kali && python -m pytest tests/test_vk_issue_bridge.py -x
       ```
-      Expect: green. Record the pass count in commit body. These tests
-      are the safety net for the refactor.
-  - id: P1.T1.S2
-    text: |-
-      Add the missing end-to-end fixture
 
-      The existing tests stub `parse_issue_body` and `parse_dependencies`
-      directly. Add a new test that exercises the full main() loop
-      against fixture Issues + a stub VkMcpClient + a stub GhClient, and
-      asserts:
-        - One `vk-ready` Issue → one MCP card created + `vk-synced` label
-          applied
-        - A second Issue depending on the first (now closed) → also synced
-        - A third Issue depending on an OPEN predecessor → skipped, NOT
-          mistakenly synced
-
-      This is the contract the refactor must preserve. Run it against
-      the unrefactored bridge first — expect green.
+      Expect: 100 passed. Record the exact pass count in the commit
+      body. The full legacy suite is the safety net — the additive
+      refactor must not regress any case.
 - number: 2
-  title: Add vk 2.1.0 as a dependency
+  title: Pin vk 2.1.0 as a dependency
   steps:
   - id: P1.T2.S1
     text: |-
-      Pin vk in kali/scripts/pyproject.toml (or equivalent)
+      Pin `vk` in the bridge's dependency manifest.
 
-      Find where the bridge's dependencies are declared. If there's no
-      pyproject in kali/scripts/, add a minimal one with:
+      Find where the bridge's deps are declared (likely
+      `kali/scripts/pyproject.toml`). Add or update:
+
       ```
       dependencies = ["vk>=2.1.0,<3.0.0"]
       ```
-      Otherwise add the line to the existing manifest.
 
-      Verify: `pip install -e kali/scripts/` (or whichever path applies)
-      in a clean venv succeeds and `python -c "from vk import bridge"` works.
+      Verify in a clean venv: `pip install -e <bridge-package>` and
+      `python -c "from vk import bridge"` both succeed.
   - id: P1.T2.S2
     text: |-
-      Document the dep in the Kali Dockerfile
+      Document the dep in the Kali Dockerfile.
 
       Audit `kali/Dockerfile` for where `vk` (or `superpowers-for-vk`)
-      gets installed today. If the bridge currently picks up vk via the
-      agent-shell-base baseline, add an explicit pip install line in
-      kali so the bridge's dep is self-contained:
+      gets installed today. If picked up via the agent-shell-base
+      baseline, add an explicit pip install line in kali so the bridge's
+      dep is self-contained:
+
       ```
       RUN pip install --no-cache-dir 'vk>=2.1.0,<3.0.0'
       ```
-      Don't bump the FROM baseline yet — that's Phase 3 of this plan.
+
+      Don't bump the FROM baseline yet — that's Phase 3.
 - number: 3
-  title: Replace the hand-rolled loop with vk.bridge.tick
+  title: Build the MCP adapter (`_McpAdapter.create_card` does the full sync_issue sequence)
   steps:
   - id: P1.T3.S1
     text: |-
-      Build a VkMcpClient adapter around the existing vk_mcp_client
+      Build a VkMcpClient adapter around the existing vk_mcp_client.
 
-      In `kali/scripts/vk-issue-bridge.py`, add a small adapter class
-      that wraps the existing `VkMcpClient` (in `vk_mcp_client.py`) to
-      match the Protocol from `vk.bridge.VkMcpClient`:
+      `vk.bridge.VkMcpClient` is a Protocol:
+
+      ```python
+      class VkMcpClient(Protocol):
+          def create_card(self, *, title: str, body: str, issue_url: str) -> str: ...
+          def update_card(self, *, card_id: str, status: str) -> None: ...
+      ```
+
+      The existing client (`kali/scripts/vk_mcp_client.py`) has a
+      different shape — `create_issue(project_id, title, **kwargs)` —
+      and `sync_issue` does the full pipeline: create_issue → set status
+      → list_repos → start_workspace → link_workspace_issue. The
+      adapter's `create_card` must replicate that pipeline, returning
+      the card_id.
+
+      In `kali/scripts/vk-issue-bridge.py`, add:
+
       ```python
       class _McpAdapter:
-          def __init__(self, inner: VkMcpClient) -> None:
+          """Implements vk.bridge.VkMcpClient.
+
+          Glues the existing VkMcpClient + sync_issue's
+          create→status→repo→workspace→link pipeline behind a single
+          `create_card(*, title, body, issue_url)` call so
+          vk.bridge.tick can drive it.
+          """
+          def __init__(self, inner, *, project_id, org_id) -> None:
               self._inner = inner
+              self._project_id = project_id
+              self._org_id = org_id
           def create_card(self, *, title: str, body: str, issue_url: str) -> str:
-              return self._inner.create_card(title=title, body=body, issue_url=issue_url)
+              # Replicate sync_issue here against (title, body, issue_url):
+              #   1. card_id = self._inner.create_issue(project, title, body=body)
+              #   2. set status
+              #   3. list_repos / resolve target repo
+              #   4. start_workspace
+              #   5. link_workspace_issue(workspace_id, issue_url)
+              # Return card_id.
+              ...
           def update_card(self, *, card_id: str, status: str) -> None:
               self._inner.update_card(card_id=card_id, status=status)
       ```
-      Match the existing client's method signatures. If they don't line
-      up cleanly, adjust the adapter (NOT the existing client).
-  - id: P1.T3.S2
+
+      Capture whatever sync_issue currently needs (repo list, project
+      IDs, etc.) via the constructor — do NOT pass them through
+      `create_card` (the Protocol signature is fixed).
+
+      Add unit tests pinning the adapter's behaviour in
+      `kali/tests/test_vk_issue_bridge.py` (or a sibling file). Use
+      existing fakes for the inner client.
+- number: 4
+  title: Wire vk.bridge.discover_plans + tick as the v2-plan path (additive)
+  steps:
+  - id: P1.T4.S1
     text: |-
-      Replace main() body with vk.bridge.discover_plans + tick
+      Wire vk.bridge into main() ALONGSIDE the existing per-Issue loop.
+
+      In main(), after existing setup, add a new code path that
+      processes v2-plan Issues via `vk.bridge.discover_plans` +
+      `vk.bridge.tick`:
 
       ```python
       from vk import bridge as vk_bridge
       from vk.ghclient import GhClient
 
       def main() -> int:
-          gh = GhClient()  # wraps subprocess gh cli
-          mcp = _McpAdapter(VkMcpClient(VK_ORG_ID, VK_DERIO_OPS_PROJECT))
+          # ... existing setup, repo discovery, etc. ...
+          gh = GhClient()
+          mcp_inner = VkMcpClient(VK_ORG_ID, VK_DERIO_OPS_PROJECT)
+          mcp = _McpAdapter(mcp_inner, project_id=VK_DERIO_OPS_PROJECT, org_id=VK_ORG_ID)
+
           total = vk_bridge.TickResult()
           for repo in discover_repos():
               plans = vk_bridge.discover_plans(repo, gh)
               for plan in plans:
                   r = vk_bridge.tick(plan, gh, mcp)
-                  total = TickResult(
+                  total = vk_bridge.TickResult(
                       synced=total.synced + r.synced,
                       errors=total.errors + r.errors,
                       skipped=total.skipped + r.skipped,
                       failures=total.failures + r.failures,
                   )
-          push_metric(total)
+
+          # ... existing per-Issue main loop continues for non-v2 Issues ...
+          # ... existing workspace polling, reaping, metrics, etc. ...
+
+          push_metric(total)  # or fold into existing metric pipeline
           return 0 if total.errors == 0 else 1
       ```
-      Delete the now-unused `parse_issue_body`, `parse_dependencies`,
-      and the inline reconciliation loop — they're all in vk now.
-  - id: P1.T3.S3
-    text: |-
-      Re-run the characterisation tests
 
-      The tests from P1.T1 must still pass with the refactored bridge.
-      Any failure is a contract regression — fix the refactor, NOT the
-      test. Run:
+      **Delineation rule.** v2-plan Issues (those discovered via
+      `vk.bridge.discover_plans`) are processed ONLY by the new path.
+      If the existing per-Issue loop could re-process the same Issue
+      (e.g., because it iterates labels independently), have it skip
+      Issues already synced this tick — pick the simplest delineation
+      that works (e.g., a `set` of `(repo, issue_number)` populated by
+      the new path, consulted by the legacy loop). Document the
+      delineation choice in the commit body.
+
+      **Do NOT delete** `parse_issue_body`, `parse_dependencies`, the
+      per-Issue main loop, workspace creation, PR polling, reaping, or
+      max-concurrency accounting. The agent audit on Issue #61 noted
+      `parse_issue_body` is also consumed by GH-Webhook-driven dedup
+      paths. Removing legacy code is a separate audit, post-Phase-3.
+  - id: P1.T4.S2
+    text: |-
+      Add library-delegation tests.
+
+      In `kali/tests/test_vk_issue_bridge.py` (or a sibling
+      `test_vk_bridge_integration.py`), add tests for the new path:
+
+      - **Discovery.** Build a fixture repo with one v2-plan folder
+        containing a phase whose Issue is `vk-ready`. Assert
+        `vk_bridge.discover_plans(repo, fake_gh)` returns the plan.
+      - **Tick.** With the same fixture, call
+        `vk_bridge.tick(plan, fake_gh, fake_mcp_adapter)`. Assert the
+        Issue gets `vk-synced` and the adapter received a `create_card`
+        call with the expected (title, body, issue_url).
+      - **Adapter sequencing.** Either unit-test `_McpAdapter` in
+        isolation against mocked inner client + workspace helpers, OR
+        assert call order on the inner mocks via the full path. The
+        order create_issue → set status → list_repos → start_workspace
+        → link_workspace_issue must be preserved.
+      - **Delineation.** Build a fixture where one Issue is part of a
+        v2 plan and another isn't. Run main(). Assert the v2 Issue was
+        processed by the new path and NOT re-processed by the legacy
+        loop; the non-v2 Issue was processed by the legacy loop.
+- number: 5
+  title: Validate both code paths together
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Re-run the FULL test suite. Every previously-passing test must
+      stay green, plus the new T3 (adapter) and T4 (library
+      delegation + delineation) tests:
+
       ```
-      cd kali && python -m pytest tests/ -x
+      cd kali && python -m pytest tests/ -v
       ```
-      Expect: green, same count as P1.T1.S1.
+
+      Expect: 100 legacy passed, N new passed, 0 failed. Any legacy
+      test failure is a regression in the additive refactor — fix the
+      refactor, NOT the test. New tests landing red means the wiring
+      is incomplete.
+
+      Record the pass count split (legacy / new) in the phase
+      completion note.
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
-    P1.T1.S2:
       state: ' '
       ticked_at: null
       note: null
@@ -145,11 +225,15 @@ state:
       state: ' '
       ticked_at: null
       note: null
-    P1.T3.S2:
+    P1.T4.S1:
       state: ' '
       ticked_at: null
       note: null
-    P1.T3.S3:
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
       state: ' '
       ticked_at: null
       note: null
