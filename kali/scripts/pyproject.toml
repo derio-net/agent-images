@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Cron-driven bridge that syncs vk-ready GitHub Issues to VibeKanban via vk.bridge.tick."
 requires-python = ">=3.11"
 dependencies = [
-    "vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.0",
+    "vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4",
 ]
 
 [build-system]

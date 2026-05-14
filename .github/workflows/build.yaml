@@ -115,6 +115,11 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }}:latest
           build-args: ${{ matrix.image.build_args }}
+          # gh_token: read access to private derio-net/superpowers-for-vk for
+          # the kali Dockerfile's pip-install of `vk`. Other matrix entries
+          # ignore the secret (their Dockerfiles don't mount it).
+          secrets: |
+            gh_token=${{ secrets.DISPATCH_PAT }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
 
