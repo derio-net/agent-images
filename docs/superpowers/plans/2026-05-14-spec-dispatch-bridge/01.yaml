@@ -1,0 +1,350 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Bridge cron caller — spec dispatch loop
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Prerequisites — verify bridge has been migrated to vk library and v2.2.0
+    is installed
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Verify the bridge daemon at `kali/scripts/vk-issue-bridge.py`
+      imports from `vk` (specifically `vk.bridge.tick` and
+      `vk.bridge.discover_plans`). This work depends on the earlier
+      plan `2026-05-12-bridge-vk-library-integration` in this repo
+      having shipped — see `docs/superpowers/plans/2026-05-12-bridge-vk-library-integration/`.
+
+      ```
+      grep -n "from vk" kali/scripts/vk-issue-bridge.py
+      ```
+
+      Expected output (after the bridge-vk-library-integration plan
+      ships):
+
+      ```
+      from vk.bridge import discover_plans, tick
+      from vk.ghclient import GhClient
+      from vk.real_ghclient import RealGhClient
+      ```
+
+      If those imports are absent, STOP. The bridge-vk-library-integration
+      plan must complete first. Communicate this to the operator and
+      do not proceed with Plan 2's steps until the prerequisite ships.
+  - id: P1.T1.S2
+    text: |-
+      Verify `vk` 2.2.0 (or higher) is installed in the bridge's
+      Python environment.
+
+      ```
+      grep "vk" pyproject.toml || true
+      grep -n "vk[>=]" kali/scripts/*.py 2>/dev/null | head -5
+      ```
+
+      Look for the dependency declaration — likely in a Dockerfile
+      (search the existing bridge-vk-library-integration plan's
+      phases for the exact location). Edit that declaration to
+      require `vk>=2.2.0,<3.0.0` (was `>=2.1.0,<3.0.0` in the
+      sibling plan's phase 1).
+
+      Then exercise the imports:
+
+      ```
+      python -c "from vk.spec import dispatch, SpecValidationError; from vk.bridge import discover_specs; print('ok')"
+      ```
+
+      Expected: prints `ok`. Any ImportError means the install
+      didn't pick up 2.2.0 — re-run the install in the bridge env.
+- number: 2
+  title: Add spec dispatch loop to the bridge's main cron caller
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Locate the cron caller entry point in
+      `kali/scripts/vk-issue-bridge.py`. Look for:
+
+      ```
+      grep -n "def main\|discover_plans\|tick(plan" kali/scripts/vk-issue-bridge.py
+      ```
+
+      Identify the loop that processes plans per repo. After the
+      sibling plan's migration, this should look like:
+
+      ```python
+      for repo in discover_repos():
+          for plan in discover_plans(repo, gh):
+              result = tick(plan, gh, vk_mcp)
+              ...
+      ```
+
+      We will add a **spec** loop placed BEFORE the plans loop
+      within the same per-repo iteration, per spec §5.2.
+  - id: P1.T2.S2
+    text: |-
+      Write a failing test for the spec dispatch behaviour in
+      `kali/tests/test_vk_issue_bridge.py`.
+
+      Add a test `test_main_loop_runs_spec_dispatch_before_plan_tick`
+      that:
+
+      - Monkeypatches `discover_repos` to return `["repo-a"]`.
+      - Monkeypatches `vk.bridge.discover_specs("derio-net/repo-a")` to
+        return a single fixture `SpecMeta` (build with `parse_spec`
+        against a tmp_path fixture spec containing one root plan).
+      - Monkeypatches `vk.spec.dispatch` to record calls into a list
+        and return a `SpecDispatchResult` with `dispatched=1`.
+      - Monkeypatches `discover_plans` to return the freshly-dispatched
+        plan (simulating the same-tick handoff).
+      - Monkeypatches `tick` to record calls into a list.
+      - Calls `main()` (or the per-tick function it wraps).
+
+      Assertions:
+
+      - `dispatch` was called once, before any `tick` call.
+      - `tick` was called once with the dispatched plan.
+      - The call order: `dispatch` → `tick` for the same repo.
+
+      Run: `uv run pytest kali/tests/test_vk_issue_bridge.py -x -q`
+      Expect: red — the spec dispatch loop doesn't exist yet.
+  - id: P1.T2.S3
+    text: |-
+      Add the spec dispatch loop in
+      `kali/scripts/vk-issue-bridge.py::main()` (or whichever
+      function processes per-repo).
+
+      Import additions at the top of the file (after the existing
+      `from vk.bridge import discover_plans, tick`):
+
+      ```python
+      from vk.bridge import discover_specs
+      from vk.spec import dispatch as spec_dispatch, SpecValidationError
+      ```
+
+      Inside the per-repo loop, BEFORE the existing plan loop:
+
+      ```python
+      for spec_meta in discover_specs(f"derio-net/{repo_name}"):
+          try:
+              spec_result = spec_dispatch(
+                  spec_meta, gh,
+                  yes=True,
+                  repo_root=_repo_checkout_root(f"derio-net/{repo_name}"),
+              )
+              accumulate_spec(spec_result)
+          except SpecValidationError as e:
+              log(f"[warn] bridge: spec {spec_meta.path} validation: {e}")
+          except Exception as e:
+              log(f"[error] bridge: dispatch raised on {spec_meta.path}: {e}")
+              accumulate_spec_failure(str(spec_meta.path), str(e))
+      ```
+
+      `accumulate_spec` and `accumulate_spec_failure` are added in
+      the next task. For now, stub them as no-ops to make the test
+      from S2 pass.
+
+      Re-run the test. Expect: green.
+- number: 3
+  title: SpecDispatchSummary accumulator + structured logging
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Write a test for the per-tick summary aggregator.
+
+      Add `test_spec_dispatch_summary_accumulates` to
+      `kali/tests/test_vk_issue_bridge.py`:
+
+      ```python
+      def test_spec_dispatch_summary_accumulates():
+          from vk_issue_bridge import SpecDispatchSummary, accumulate_spec
+          summary = SpecDispatchSummary()
+          # Build two fake SpecDispatchResult objects with mixed
+          # outcomes (some dispatched, some blocked, some failures).
+          # Call accumulate_spec(summary, result_a); accumulate_spec(summary, result_b).
+          # Assert summary fields match the totals.
+          ...
+      ```
+
+      Run pytest. Expect: red — `SpecDispatchSummary` and
+      `accumulate_spec` don't exist.
+  - id: P1.T3.S2
+    text: |-
+      Add `SpecDispatchSummary` dataclass + accumulator function to
+      `kali/scripts/vk-issue-bridge.py`. Place near other dataclasses.
+
+      ```python
+      @dataclass
+      class SpecDispatchSummary:
+          specs_walked: int = 0
+          plans_dispatched: int = 0
+          plans_already_dispatched: int = 0
+          plans_blocked: int = 0
+          errors: int = 0
+          failures: list[str] = field(default_factory=list)
+
+
+      def accumulate_spec(summary: SpecDispatchSummary,
+                          result: "SpecDispatchResult") -> None:
+          summary.specs_walked += 1
+          summary.plans_dispatched += result.dispatched
+          summary.plans_already_dispatched += result.already_dispatched
+          summary.plans_blocked += result.blocked
+          summary.errors += result.errors
+          summary.failures.extend(result.failures)
+
+
+      def accumulate_spec_failure(summary: SpecDispatchSummary,
+                                  spec_path: str, err: str) -> None:
+          summary.specs_walked += 1
+          summary.errors += 1
+          summary.failures.append(f"{spec_path}: {err}")
+      ```
+
+      Replace the stub calls in the main loop (T2.S3) with the real
+      ones, threading a `summary = SpecDispatchSummary()` through
+      the per-tick scope.
+
+      At the end of each tick, log:
+
+      ```python
+      log(f"[bridge] spec dispatch: walked={summary.specs_walked} "
+          f"dispatched={summary.plans_dispatched} "
+          f"already={summary.plans_already_dispatched} "
+          f"blocked={summary.plans_blocked} errors={summary.errors}")
+      for f in summary.failures:
+          log(f"[bridge] spec dispatch failure: {f}")
+      ```
+
+      Re-run tests. Expect green.
+- number: 4
+  title: Same-tick spec→plan handoff integration test
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Build an end-to-end test that exercises the full same-tick
+      handoff: spec dispatch creates a plan's issues, the SAME
+      iteration's `discover_plans` picks the plan up, and `tick`
+      syncs it to the VK board.
+
+      Append `test_same_tick_handoff_spec_to_plan_to_vk` to
+      `kali/tests/test_vk_issue_bridge.py`:
+
+      Setup:
+
+      - Tmp dir with a fixture spec that declares one root plan
+        (same-repo, target_repo equals the test repo).
+      - A `FakeGhClient` from the vk library tests (or a local
+        fake) seeded with no existing issues for the plan's phases.
+      - A `FakeVkMcpClient` that records `create_card` calls.
+      - Monkeypatch `discover_repos` → `["repo-a"]`.
+      - Monkeypatch `_repo_checkout_root` → the tmp dir.
+      - Place the plan folder under
+        `<tmp>/docs/superpowers/plans/<slug>/` and the spec under
+        `<tmp>/docs/superpowers/specs/<spec>.md`.
+
+      Run one tick (call the per-repo function once).
+
+      Assertions:
+
+      - The `FakeGhClient.create_issue_calls` list contains issue
+        creates for every phase of the plan (means `vk.spec.dispatch`
+        successfully ran).
+      - The `FakeVkMcpClient.create_card_calls` list contains a
+        card for the same plan's phases (means `discover_plans`
+        picked the plan up post-dispatch and `tick` synced it
+        — i.e., the spec-loop-before-plan-loop order works).
+      - The summary log line shows `dispatched=1`.
+
+      Run: `uv run pytest kali/tests/test_vk_issue_bridge.py::test_same_tick_handoff_spec_to_plan_to_vk -x -q`
+      Expect: green (if the implementation from T2/T3 is correct).
+      If red, debug the order/integration issue surfaced.
+- number: 5
+  title: Quality gates + open PR
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Run the bridge test suite and any agent-images-wide gates:
+
+      ```
+      uv run pytest kali/tests/ -x -q
+      python -m py_compile kali/scripts/vk-issue-bridge.py
+      ```
+
+      Verify there's no regression in existing bridge tests
+      (`test_guardrails_hook.py`, `test_vk_mcp_client.py`,
+      `test_wrap_claude.py`). The cron caller change should be
+      additive.
+  - id: P1.T5.S2
+    text: |-
+      Open the PR for Phase C.
+
+      ```
+      git checkout -b feat/spec-dispatch-bridge
+      git add kali/scripts/vk-issue-bridge.py kali/tests/test_vk_issue_bridge.py \
+              <any Dockerfile/pyproject.toml touched for the vk dep bump>
+      git status
+      git commit -m "feat(bridge): spec-level dispatch loop in cron caller
+
+      Adds vk.bridge.discover_specs + vk.spec.dispatch invocation to
+      the cron caller's per-repo iteration, placed before the existing
+      plan-tick loop so same-tick spec→plan handoff works (see
+      superpowers-for-vk spec §5.2). Bumps vk dep to >=2.2.0,<3.0.0
+      in whichever environment file declares it.
+
+      Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+      git push -u origin feat/spec-dispatch-bridge
+      gh pr create --title "feat(bridge): spec-level dispatch loop (phase C)" \
+                   --body "Phase C of spec-dispatch (see superpowers-for-vk docs/superpowers/specs/2026-05-13-spec-dispatch-design.md §7.1 Phase C). Depends on superpowers-for-vk 2.2.0 being installed in the bridge env."
+      ```
+
+      Wait for CI green. After merge, the bridge starts
+      auto-advancing the DAG for every spec across all managed
+      repos.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
