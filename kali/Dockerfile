@@ -53,10 +53,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── vk library (consumed by /opt/scripts/vk-issue-bridge.py via `from vk import bridge`) ──
 # Pinned to a tag so image builds are reproducible; bumping vk = bumping this line.
-# --break-system-packages: Debian 12 marks the system Python externally-managed (PEP 668);
-# we accept that in this container because the bridge runs against the system interpreter.
-RUN pip install --no-cache-dir --break-system-packages \
-      'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4'
+# Installed into a dedicated venv so vk's deps (typer pulls a newer click)
+# don't collide with Debian's apt-managed python3-click (PEP 668).
+# The crontab invokes /opt/vk-bridge-venv/bin/python explicitly.
+RUN python3 -m venv /opt/vk-bridge-venv \
+    && /opt/vk-bridge-venv/bin/pip install --no-cache-dir \
+        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4'
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
