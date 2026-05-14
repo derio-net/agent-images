@@ -60,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # clone and is never written to an image layer.
 RUN --mount=type=secret,id=gh_token,required=true \
     pip install --no-cache-dir --break-system-packages \
-      "vk @ git+https://$(cat /run/secrets/gh_token)@github.com/derio-net/superpowers-for-vk@v2.1.0"
+      "vk @ git+https://$(cat /run/secrets/gh_token)@github.com/derio-net/superpowers-for-vk@v2.1.4"
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
