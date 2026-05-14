@@ -755,6 +755,19 @@ def sync_issue(
     return True
 
 
+_ISSUE_URL_RE = re.compile(
+    r"https?://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/issues/(?P<num>\d+)$"
+)
+
+
+def _parse_issue_url(url: str) -> tuple[str, int]:
+    """Extract (owner/repo, issue_number) from a GH Issue URL."""
+    m = _ISSUE_URL_RE.match(url)
+    if not m:
+        raise ValueError(f"not a github issue url: {url!r}")
+    return m.group("repo"), int(m.group("num"))
+
+
 class _McpAdapter:
     """Implements `vk.bridge.VkMcpClient` against the existing `VkMcpClient`.
 
@@ -771,11 +784,11 @@ class _McpAdapter:
         inner: VkMcpClient,
         *,
         project_id: str,
-        org_id: str,
+        org_id: str,  # reserved — Phase 2/3 may need org context for VK API calls
     ) -> None:
         self._inner = inner
         self._project_id = project_id
-        self._org_id = org_id
+        self._org_id = org_id  # noqa: F841 (see above)
 
     def create_card(self, *, title: str, body: str, issue_url: str) -> str:
         repo, issue_number = _parse_issue_url(issue_url)
@@ -859,22 +872,9 @@ class _McpAdapter:
         self._inner.update_issue(card_id, status=status)
 
 
-_ISSUE_URL_RE = re.compile(
-    r"https?://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/issues/(?P<num>\d+)"
-)
-
-
-def _parse_issue_url(url: str) -> tuple[str, int]:
-    """Extract (owner/repo, issue_number) from a GH Issue URL."""
-    m = _ISSUE_URL_RE.match(url)
-    if not m:
-        raise ValueError(f"not a github issue url: {url!r}")
-    return m.group("repo"), int(m.group("num"))
-
-
 def _run_lib_path(
     client: VkMcpClient,
-) -> tuple[set[tuple[str, int]], "vk_bridge.TickResult"]:
+) -> tuple[set[tuple[str, int]], vk_bridge.TickResult]:
     """Run the v2-plan path: discover plans + tick across local checkouts.
 
     Returns the set of (repo, issue_number) tuples claimed by v2 plans (so
@@ -882,6 +882,12 @@ def _run_lib_path(
 
     Set `VK_BRIDGE_SKIP_LIB_PATH=1` to short-circuit — legacy tests do
     this so they don't have to mock the filesystem + gh CLI.
+
+    Note: this path does not apply the MAX_CONCURRENT slot limit. The slot
+    count is computed in main() before this call, and any workspaces created
+    here are not reflected in `active_ws`. Phase 1 accepts this: v2-plan
+    phases are few, and the slot guard is an operational throttle, not a
+    strict cap. Phase 3 can add cross-path accounting if needed.
     """
     v2_owned: set[tuple[str, int]] = set()
     v2_total = vk_bridge.TickResult()
