@@ -49,18 +49,21 @@ tasks:
 state:
   steps:
     P2.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T21:07:43+00:00'
+      note: 'Created tests/fixtures/two-phase-cross-dep/ with 2-phase plan: Phase
+        1 (depends_on: [], tracking_issue #99) + Phase 2 (depends_on: [1], no tracking_issue).'
     P2.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T21:07:49+00:00'
+      note: 'Extended _FakeGh to capture create_issue calls; rendered Phase 2 body
+        asserted to contain ''- Blocked by #99'' and NOT ''- Blocked by #1''.'
     P2.T2.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T21:07:52+00:00'
+      note: 'test_bridge_dispatches_v2_plan_with_correct_issue_deps added in test_vk_bridge_integration.py;
+        full suite green: 132 passed (100 legacy + 18 integration + 14 mcp_client).'
   completion:
-    at: null
+    at: '2026-05-14T21:08:05+00:00'
     note: null
     observed_prs: []

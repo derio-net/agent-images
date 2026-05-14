@@ -1,0 +1,24 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Phase 2 — blocked by phase 1
+  tag: agentic
+  depends_on: [1]
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Single task
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Do the thing
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

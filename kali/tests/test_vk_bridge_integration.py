@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import sys
 import tempfile
 import textwrap
@@ -293,6 +294,7 @@ class _FakeGh:
     def __init__(self, view_responses: dict[tuple[str, int], dict]):
         self._view = view_responses
         self.label_edits: list[tuple[str, int, frozenset, frozenset]] = []
+        self.created_issues: list[dict] = []
 
     def view_issue(self, repo, number):
         return self._view.get((repo, number), {"state": "OPEN", "labels": []})
@@ -310,7 +312,10 @@ class _FakeGh:
         pass
 
     def create_issue(self, repo, *, title, body, labels):
-        return f"https://github.com/{repo}/issues/0"
+        self.created_issues.append(
+            {"repo": repo, "title": title, "body": body, "labels": list(labels)}
+        )
+        return f"https://github.com/{repo}/issues/{100 + len(self.created_issues)}"
 
     def ensure_labels(self, repo, labels):
         pass
@@ -466,4 +471,67 @@ def test_main_delineates_v2_plan_issues_from_legacy_path(monkeypatch):
     assert tick_calls == [fake_plan], "v2 plan must be ticked exactly once"
     assert [i.number for i in sync_calls] == [42], (
         "legacy sync_issue must be called for #42 only (not the v2-owned #61)"
+    )
+
+
+# ---------- cross-phase dependency rendering (v2.1.0 regression guard) ----------
+
+
+def _copy_fixture_plan(tmp_path: Path, fixture_name: str) -> Path:
+    """Copy a static plan fixture into a tmp checkout that VK_REPOS_DIR can scan."""
+    src = Path(__file__).parent / "fixtures" / fixture_name
+    dst = tmp_path / "agent-images" / "docs" / "superpowers" / "plans" / fixture_name
+    shutil.copytree(src, dst)
+    return dst
+
+
+def test_bridge_dispatches_v2_plan_with_correct_issue_deps(tmp_path, monkeypatch):
+    """End-to-end regression test for v2.1.0's renderer fix.
+
+    Phase 1's tracking Issue (#99) exists and is `vk-ready`. Phase 2 has no
+    tracking Issue yet — `tick` → `apply` must CREATE it, and the rendered
+    body must reference Phase 1's tracking-Issue number (`- Blocked by #99`),
+    NOT the raw phase number (`- Blocked by #1`). The latter was the v2.0.0
+    bug that v2.1.0 fixed; this test pins the fix all the way through the
+    bridge's library-delegation path.
+    """
+    from vk import bridge as vk_bridge
+
+    _copy_fixture_plan(tmp_path, "two-phase-cross-dep")
+    monkeypatch.setenv("VK_REPOS_DIR", str(tmp_path))
+
+    fake_gh = _FakeGh({
+        ("derio-net/agent-images", 99): {
+            "state": "OPEN",
+            "labels": ["vk-ready", "phase:1"],
+        }
+    })
+    mock_mcp = MagicMock()
+    mock_mcp.create_card.return_value = "card-uuid"
+
+    [plan] = vk_bridge.discover_plans("derio-net/agent-images", fake_gh)
+    assert [p.phase.number for p in plan.phases] == [1, 2]
+    assert tuple(plan.phases[1].phase.depends_on) == (1,)
+    assert plan.phases[1].phase.tracking_issue is None
+
+    result = vk_bridge.tick(plan, fake_gh, mock_mcp)
+
+    assert result.errors == 0, result.failures
+    assert result.synced == 1, "Phase 1 (vk-ready) should sync to VK"
+
+    phase2_creates = [
+        c for c in fake_gh.created_issues if "Phase 2/2" in c["title"]
+    ]
+    assert len(phase2_creates) == 1, (
+        f"expected exactly one create_issue for Phase 2, got "
+        f"{[c['title'] for c in fake_gh.created_issues]}"
+    )
+    phase2_body = phase2_creates[0]["body"]
+    assert "- Blocked by #99" in phase2_body, (
+        f"Phase 2 body must reference Phase 1's tracking Issue number (#99), "
+        f"got body:\n{phase2_body}"
+    )
+    assert "- Blocked by #1" not in phase2_body, (
+        f"Renderer leaked phase number into dep ref (v2.0.0 bug regressed); "
+        f"body:\n{phase2_body}"
     )
