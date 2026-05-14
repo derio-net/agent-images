@@ -308,6 +308,8 @@ state:
       ticked_at: null
       note: null
   completion:
-    at: null
-    note: null
+    at: '2026-05-13T06:58:40+00:00'
+    note: Superseded by v2.0.0 single-state-machine rebuild. Bridge audit work shipped
+      through subsequent vk-bridge plans; this audit plan archived as its findings
+      rolled into the v2 rebuild design.
     observed_prs: []
