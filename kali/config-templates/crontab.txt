@@ -23,7 +23,9 @@ PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
 0 14 * * 0,1,5,6 /opt/scripts/exercise-cron.sh standing; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
 
 # VK Issue Bridge — sync vk-ready GitHub Issues to VK workspaces (every 2 min)
-*/2 * * * * /opt/scripts/vk-issue-bridge.py >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
+# Use the dedicated venv's interpreter so `from vk import bridge` resolves
+# without colliding with Debian's apt-managed Python packages.
+*/2 * * * * /opt/vk-bridge-venv/bin/python /opt/scripts/vk-issue-bridge.py >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
 
 # Log rotation (hourly)
 7 * * * * /opt/scripts/rotate-logs.sh >> __AGENT_HOME__/.willikins-agent/logrotate.log 2>&1
