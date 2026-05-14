@@ -210,34 +210,50 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: '100 legacy tests pass against the unrefactored bridge (baseline).'
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: 'kali/scripts/pyproject.toml created; vk @ git+…@v2.1.0; verified `from vk import bridge` in clean venv.'
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: 'kali/Dockerfile: pip install --break-system-packages of vk @ v2.1.0 (Debian 12 PEP 668).'
     P1.T3.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: '_McpAdapter added; create_card runs create_issue → set status → list_repos → start_workspace → link_workspace_issue. 13 adapter unit tests pass.'
     P1.T4.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: 'main() invokes vk.bridge.discover_plans + tick before the legacy loop; v2-claimed (repo, issue#) tuples cause the legacy loop to skip — VK_BRIDGE_SKIP_LIB_PATH=1 is the legacy-test seam.'
     P1.T4.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: 'test_vk_bridge_integration.py: discover_plans (2), tick e2e (1), delineation (1) — all green.'
     P1.T5.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T00:00:00Z'
+      note: '136 passed (100 legacy unchanged, 17 new vk.bridge, 19 unrelated kali tests).'
   completion:
-    at: null
-    note: null
+    at: '2026-05-14T00:00:00Z'
+    note: |
+      Additive integration of vk.bridge.tick complete. main() now runs the
+      v2-plan path (discover_plans + tick via _McpAdapter) before the legacy
+      per-Issue loop; a (repo, issue#) ownership set delineates the two so no
+      Issue is double-processed. Every legacy behaviour stays intact —
+      workspace lifecycle, PR polling, reaping, metrics, max-concurrency,
+      parse_issue_body / parse_dependencies all preserved.
+
+      Verification:
+        - 100 legacy tests pass unchanged (kali/tests/test_vk_issue_bridge.py)
+        - 17 new tests in kali/tests/test_vk_bridge_integration.py:
+            • 2 _parse_issue_url
+            • 11 _McpAdapter pipeline + error paths
+            • 2 vk.bridge.discover_plans against fake gh fixture
+            • 1 vk.bridge.tick e2e (asserts vk-synced add)
+            • 1 main() delineation (v2 Issue → tick; non-v2 Issue → legacy sync_issue)
+        - Total: 136 passed.
     observed_prs: []

@@ -21,6 +21,16 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vk_mcp_client import VkMcpClient, VkMcpError
 
+from vk import bridge as vk_bridge
+from vk.real_ghclient import RealGhClient
+
+# Module-level handles so tests can stub the v2-plan path without monkey-
+# patching the underlying `vk.bridge` module (which is shared with the
+# library's own test suite).
+_DISCOVER_PLANS = vk_bridge.discover_plans
+_TICK = vk_bridge.tick
+_REAL_GH_CLIENT = RealGhClient
+
 # --- Config (env-overridable) ---
 VK_ORG_ID            = os.environ["VK_ORG_ID"]
 VK_DERIO_OPS_PROJECT = os.environ["VK_DERIO_OPS_PROJECT_ID"]
@@ -745,6 +755,187 @@ def sync_issue(
     return True
 
 
+class _McpAdapter:
+    """Implements `vk.bridge.VkMcpClient` against the existing `VkMcpClient`.
+
+    `vk.bridge.tick` calls `create_card(*, title, body, issue_url) -> card_id`
+    once per `vk-ready` phase. We replicate `sync_issue`'s pipeline
+    (create_issue → set status → list_repos → start_workspace →
+    link_workspace_issue) so the new path produces the same VK side-effects
+    as the legacy per-Issue loop. The Protocol signature is fixed, so the
+    per-tick state (project / org ids) is captured at construction.
+    """
+
+    def __init__(
+        self,
+        inner: VkMcpClient,
+        *,
+        project_id: str,
+        org_id: str,
+    ) -> None:
+        self._inner = inner
+        self._project_id = project_id
+        self._org_id = org_id
+
+    def create_card(self, *, title: str, body: str, issue_url: str) -> str:
+        repo, issue_number = _parse_issue_url(issue_url)
+        parsed = parse_issue_body(body)
+        if parsed.parse_error:
+            raise VkMcpError(
+                f"adapter: cannot build workspace prompt — {parsed.parse_error}"
+            )
+        try:
+            deps = parse_dependencies(body)
+        except ValueError:
+            # vk.bridge.tick already gates via the renderer; if deps parsing
+            # fails here we still proceed (no preamble).
+            deps = []
+
+        card = self._inner.create_issue(
+            self._project_id,
+            f"gh#{issue_number}: {title}",
+            description=issue_url,
+        )
+        card_id = card.get("id") or card.get("issue_id")
+        if not card_id:
+            raise VkMcpError(f"card creation returned no id: {card}")
+        simple_id = card.get("simple_id", "?")
+        if simple_id == "?":
+            try:
+                detail = self._inner.get_issue(card_id)
+                if isinstance(detail, dict) and "issue" in detail:
+                    detail = detail["issue"]
+                simple_id = detail.get("simple_id", "?")
+            except VkMcpError:
+                pass
+
+        try:
+            self._inner.update_issue(card_id, status="In progress")
+        except VkMcpError as e:
+            log(f"  ! adapter {repo}#{issue_number}: status transition failed (non-fatal): {e}")
+
+        repo_name = parsed.repos[0]
+        resp = self._inner.list_repos()
+        repos = resp.get("repos", resp) if isinstance(resp, dict) else resp
+        repo_uuid = next(
+            (r["id"] for r in repos if isinstance(r, dict) and r.get("name") == repo_name),
+            None,
+        )
+        if not repo_uuid:
+            raise VkMcpError(f"vk repo '{repo_name}' not found")
+
+        issue = GhIssue(
+            number=issue_number,
+            title=title,
+            body=body,
+            html_url=issue_url,
+            repo=repo,
+        )
+        ws_resp = self._inner.start_workspace(
+            name=f"{simple_id} -> gh#{issue_number}",
+            executor="CLAUDE_CODE",
+            repositories=[{"repo_id": repo_uuid, "branch": "main"}],
+            prompt=build_prompt(issue, parsed, deps=deps),
+            issue_id=card_id,
+        )
+        ws_id = (
+            (ws_resp.get("id") or ws_resp.get("workspace_id") or "?")
+            if isinstance(ws_resp, dict) else "?"
+        )
+
+        try:
+            self._inner.link_workspace_issue(ws_id, card_id)
+        except VkMcpError as e:
+            log(f"  ! adapter {repo}#{issue_number}: workspace-card link failed (non-fatal): {e}")
+
+        ws_short = ws_id[:8] if isinstance(ws_id, str) and len(ws_id) > 8 else ws_id
+        log(
+            f"  v adapter {repo}#{issue_number}: synced via vk.bridge "
+            f"(card={simple_id}, ws={ws_short})"
+        )
+        return str(card_id)
+
+    def update_card(self, *, card_id: str, status: str) -> None:
+        self._inner.update_issue(card_id, status=status)
+
+
+_ISSUE_URL_RE = re.compile(
+    r"https?://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/issues/(?P<num>\d+)"
+)
+
+
+def _parse_issue_url(url: str) -> tuple[str, int]:
+    """Extract (owner/repo, issue_number) from a GH Issue URL."""
+    m = _ISSUE_URL_RE.match(url)
+    if not m:
+        raise ValueError(f"not a github issue url: {url!r}")
+    return m.group("repo"), int(m.group("num"))
+
+
+def _run_lib_path(
+    client: VkMcpClient,
+) -> tuple[set[tuple[str, int]], "vk_bridge.TickResult"]:
+    """Run the v2-plan path: discover plans + tick across local checkouts.
+
+    Returns the set of (repo, issue_number) tuples claimed by v2 plans (so
+    the legacy loop skips them) and an aggregate TickResult.
+
+    Set `VK_BRIDGE_SKIP_LIB_PATH=1` to short-circuit — legacy tests do
+    this so they don't have to mock the filesystem + gh CLI.
+    """
+    v2_owned: set[tuple[str, int]] = set()
+    v2_total = vk_bridge.TickResult()
+    if os.environ.get("VK_BRIDGE_SKIP_LIB_PATH"):
+        return v2_owned, v2_total
+
+    gh_lib = _REAL_GH_CLIENT()
+    mcp_adapter = _McpAdapter(
+        client, project_id=VK_DERIO_OPS_PROJECT, org_id=VK_ORG_ID,
+    )
+    for repo_name in discover_repos():
+        repo = f"derio-net/{repo_name}"
+        try:
+            plans = _DISCOVER_PLANS(repo, gh_lib)
+        except Exception as e:  # noqa: BLE001 — bridge keeps running
+            log(f"[warn] discover_plans failed for {repo}: {e}")
+            continue
+        for plan in plans:
+            for phase in plan.phases:
+                url = phase.phase.tracking_issue
+                if not url:
+                    continue
+                try:
+                    v2_owned.add(_parse_issue_url(url))
+                except ValueError:
+                    pass
+            if DRY_RUN:
+                log(f"  > v2 plan ({repo}): WOULD TICK")
+                continue
+            try:
+                r = _TICK(plan, gh_lib, mcp_adapter)
+            except Exception as e:  # noqa: BLE001 — bridge keeps running
+                log(f"[warn] vk.bridge.tick failed for plan in {repo}: {e}")
+                push_failure_metric(repo_name, "vk_bridge_tick_failed")
+                continue
+            v2_total = vk_bridge.TickResult(
+                synced=v2_total.synced + r.synced,
+                errors=v2_total.errors + r.errors,
+                skipped=v2_total.skipped + r.skipped,
+                failures=v2_total.failures + r.failures,
+            )
+            for f in r.failures:
+                log(f"  x v2 plan ({repo}): {f}")
+                push_failure_metric(repo_name, "vk_bridge_tick")
+            for _ in range(r.synced):
+                push_success_metric()
+    log(
+        f"[bridge] vk.bridge path: synced={v2_total.synced} "
+        f"errors={v2_total.errors} skipped={v2_total.skipped} "
+        f"owned_issues={len(v2_owned)}"
+    )
+    return v2_owned, v2_total
+
+
 def main() -> int:
     log(f"[bridge] starting — dry_run={DRY_RUN}")
 
@@ -767,14 +958,33 @@ def main() -> int:
         slots = max(0, MAX_CONCURRENT - active_ws)
         log(f"[bridge] active workspaces: {active_ws}, max: {MAX_CONCURRENT}, slots available: {slots}")
 
+        # ── v2-plan path: vk.bridge.discover_plans + tick ────────────────────
+        #
+        # Runs BEFORE the legacy per-Issue loop so any tracking_issue claimed
+        # by a v2 plan can be filtered out below. Delineation rule: an Issue
+        # is "owned by the new path" iff it appears as a phase
+        # `tracking_issue` in a plan returned by discover_plans for that
+        # repo. The legacy loop skips those entirely.
+        #
+        # `VK_BRIDGE_SKIP_LIB_PATH=1` is the legacy-test seam — those tests
+        # mock the per-Issue I/O but were never wired to mock the new
+        # path's filesystem + gh.cli calls.
+        v2_owned, v2_total = _run_lib_path(client)
+
         issues = gh_list_ready_issues()
         log(f"[bridge] found {len(issues)} unsynced vk-ready issues")
 
-        synced = 0
+        synced = v2_total.synced
         skipped = 0
-        failed = 0
+        failed = v2_total.errors
         deferred = 0
         for i in issues:
+            if (i.repo, i.number) in v2_owned:
+                # Owned by the v2-plan path above; never re-processed by the
+                # legacy per-Issue loop, even if tick() did not sync this
+                # tick (renderer may have projected it non-ready).
+                log(f"  = {i.repo}#{i.number}: claimed by vk.bridge path, skipping legacy")
+                continue
             parsed = parse_issue_body(i.body)
             if parsed.parse_error:
                 log(f"  x {i.repo}#{i.number}: PARSE ERROR — {parsed.parse_error}")
