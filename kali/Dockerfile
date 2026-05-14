@@ -55,8 +55,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pinned to a tag so image builds are reproducible; bumping vk = bumping this line.
 # --break-system-packages: Debian 12 marks the system Python externally-managed (PEP 668);
 # we accept that in this container because the bridge runs against the system interpreter.
-RUN pip install --no-cache-dir --break-system-packages \
-      'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.0'
+# gh_token: BuildKit secret with read access to derio-net/superpowers-for-vk (private).
+# Passed by .github/workflows/build.yaml; the token is consumed only for the git
+# clone and is never written to an image layer.
+RUN --mount=type=secret,id=gh_token,required=true \
+    pip install --no-cache-dir --break-system-packages \
+      "vk @ git+https://$(cat /run/secrets/gh_token)@github.com/derio-net/superpowers-for-vk@v2.1.0"
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
