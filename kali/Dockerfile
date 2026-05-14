@@ -51,6 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       kali-tools-top10 nmap netcat-traditional logrotate \
     && rm -rf /var/lib/apt/lists/*
 
+# ── vk library (consumed by /opt/scripts/vk-issue-bridge.py via `from vk import bridge`) ──
+# Pinned to a tag so image builds are reproducible; bumping vk = bumping this line.
+# --break-system-packages: Debian 12 marks the system Python externally-managed (PEP 668);
+# we accept that in this container because the bridge runs against the system interpreter.
+RUN pip install --no-cache-dir --break-system-packages \
+      'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.0'
+
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
