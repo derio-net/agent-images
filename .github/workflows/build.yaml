@@ -18,6 +18,36 @@ env:
   OWNER: derio-net
 
 jobs:
+  test-kali:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # vk_mcp_client reads these at import time. Tests don't talk to VK,
+      # but the import path fails if they're unset.
+      VK_ORG_ID: fake-org
+      VK_DERIO_OPS_PROJECT_ID: fake-project
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Sync Python deps
+        run: uv sync --group dev
+      - name: Run kali shell tests
+        run: |
+          fail=0
+          for t in kali/tests/test_*.sh; do
+            echo "::group::$t"
+            bash "$t" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+      - name: Run kali Python tests
+        working-directory: kali
+        run: uv run pytest tests/ -v
+
   build-base:
     runs-on: ubuntu-latest
     outputs:
@@ -406,6 +436,7 @@ jobs:
 
   dispatch-frank:
     needs:
+      - test-kali
       - build-children
       - smoke-test-vk-local
       - smoke-test-secure-agent-kali
