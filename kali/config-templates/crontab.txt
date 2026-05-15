@@ -1,5 +1,10 @@
 # crontab.txt — Secure agent pod scheduled tasks
-# Seeded to ~/.crontab on first boot. Scripts at /opt/scripts/ (image-baked, immutable).
+# Seeded to ~/.crontab on first boot. On every subsequent boot the init
+# script (etc/cont-init.d/50-seed-config) re-renders only the block
+# between the sentinels below — anything outside the sentinels is
+# preserved across pod rolls (chorebot block, operator one-shots, etc.).
+
+# >>> agent-images managed (regenerated on every boot — do not edit) >>>
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin:__AGENT_HOME__/.local/bin
 PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
@@ -44,3 +49,4 @@ PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
 # gone (e.g. wiped from /var/tmp on pod restart). Heap residue per stale
 # worktree was ~17 MiB in the 2026-04-22 memprofile.
 30 4 * * * /opt/scripts/worktree-prune.sh >> __AGENT_HOME__/.willikins-agent/worktree-prune.log 2>&1
+# <<< agent-images managed <<<
