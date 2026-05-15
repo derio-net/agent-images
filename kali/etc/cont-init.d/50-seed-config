@@ -1,11 +1,52 @@
 #!/command/with-contenv bash
 # 50-seed-config — Seed kali config templates to PVC on first boot.
 # Idempotent: only copies when the target file is absent.
+#
+# Crontab is the exception: on every boot we re-render the block between
+# the `# >>> agent-images managed` sentinels in ~/.crontab so image-side
+# changes propagate without clobbering user-added lines (chorebot block,
+# operator one-shots, etc.). Pods born before the managed-block scheme
+# (no sentinels in ~/.crontab) are left alone — operators add the
+# sentinels manually once, then auto-rerender kicks in.
 set -e
 HOME="${AGENT_HOME:-$HOME}"
-# Substitute __AGENT_HOME__ placeholder in crontab (PATH line, log redirections).
-[ -f "$HOME/.crontab" ]              || sed "s|__AGENT_HOME__|${HOME}|g" /opt/crontab > "$HOME/.crontab"
-[ -f "$HOME/.load-env.sh" ]          || cp /opt/load-env.sh "$HOME/.load-env.sh"
-[ -f "$HOME/.bashrc" ]               || cp /opt/bashrc "$HOME/.bashrc"
-[ -f "$HOME/.claude/settings.json" ] || { mkdir -p "$HOME/.claude"; cp /opt/settings.json "$HOME/.claude/settings.json"; }
-[ -f "$HOME/.gitconfig" ]            || cp /opt/gitconfig "$HOME/.gitconfig"
+# OPT_DIR points at the seeded image config — overridable from tests so
+# they can drive this script against a temp tree instead of real /opt.
+OPT_DIR="${OPT_DIR:-/opt}"
+
+render_crontab() {
+    local target="$HOME/.crontab"
+    local tmpl
+    tmpl="$(sed "s|__AGENT_HOME__|${HOME}|g" "${OPT_DIR}/crontab")"
+    if [ ! -f "$target" ]; then
+        printf '%s\n' "$tmpl" > "$target"
+        return
+    fi
+    if ! grep -q '^# >>> agent-images managed' "$target"; then
+        return  # legacy file, no sentinels — leave for operator to migrate
+    fi
+    printf '%s\n' "$tmpl" > "$target.tmpl.$$"
+    awk -v tmpl="$target.tmpl.$$" '
+        /^# >>> agent-images managed/ {
+            emit = 0
+            while ((getline line < tmpl) > 0) {
+                if (line ~ /^# >>> agent-images managed/) emit = 1
+                if (emit) print line
+                if (line ~ /^# <<< agent-images managed/) { emit = 0; break }
+            }
+            close(tmpl)
+            in_block = 1
+            next
+        }
+        /^# <<< agent-images managed/ { in_block = 0; next }
+        !in_block { print }
+    ' "$target" > "$target.new.$$"
+    mv "$target.new.$$" "$target"
+    rm -f "$target.tmpl.$$"
+}
+
+render_crontab
+[ -f "$HOME/.load-env.sh" ]          || cp "${OPT_DIR}/load-env.sh" "$HOME/.load-env.sh"
+[ -f "$HOME/.bashrc" ]               || cp "${OPT_DIR}/bashrc" "$HOME/.bashrc"
+[ -f "$HOME/.claude/settings.json" ] || { mkdir -p "$HOME/.claude"; cp "${OPT_DIR}/settings.json" "$HOME/.claude/settings.json"; }
+[ -f "$HOME/.gitconfig" ]            || cp "${OPT_DIR}/gitconfig" "$HOME/.gitconfig"
