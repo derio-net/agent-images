@@ -59,18 +59,40 @@ tasks:
 state:
   steps:
     P3.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-14T22:15:06+00:00'
+      note: 'CI build of secure-agent-kali succeeded for SHA 959b040 (run 25888353109).
+        Smoke test green. Image pushed: ghcr.io/derio-net/secure-agent-kali:959b040e8636d2a383afee604afdb1ad823b3e85
+        and :latest. Took 4 PRs total to unblock — #69 (private repo auth, since reverted),
+        #70 (cleanup after repo went public), #71 (venv fix for click/PEP 668 collision).'
     P3.T2.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-15T05:32:02+00:00'
+      note: 'Pod rolled to image ghcr.io/derio-net/secure-agent-kali:959b040 via frank
+        manifest bump (user). ArgoCD synced. Required follow-up patch: ~/.crontab
+        was rendered May 5 by init script''s render-once guard and pinned a stale
+        bridge invocation pointing at the home-PV checkout; live-patched the bridge
+        line in ~/.crontab to use /opt/vk-bridge-venv/bin/python /opt/scripts/vk-issue-bridge.py,
+        then SIGHUP''d supercronic (s6 respawned it with new PID, reread crontab).'
     P3.T3.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-15T05:32:06+00:00'
+      note: 'Production smoke: TickResult(synced=1, errors=25, skipped=5, owned_issues=21).
+        End-to-end success — derio-net/superpowers-for-vk#130 synced via vk.bridge
+        (card=FFE-138, ws=e23a64fc); delineation held (legacy loop did NOT re-process
+        #130). The 25 errors are pre-existing data drift: orphaned ''plan:YYYY-MM-DD-...''
+        label references on old Issues whose VK cards no longer match the renderer''s
+        projected labels. Separate cleanup, not a regression.'
   completion:
-    at: null
-    note: null
+    at: '2026-05-15T05:34:59+00:00'
+    note: 'Phase 3 complete. Image bump (T1), pod roll (T2), production smoke check
+      (T3) all green. Bridge now runs vk.bridge.tick + legacy per-Issue path side-by-side
+      with delineation working (vk-synced labeling + v2_owned set both confirmed).
+      First end-to-end success: derio-net/superpowers-for-vk#130 → VK card FFE-138
+      → workspace e23a64fc. Caveats / follow-ups: (1) ~/.crontab init render-once
+      guard pinned a stale May-5 invocation across pod rolls — live-patched on this
+      pod, need a managed-block init pattern so future rolls don''t re-stale. (2)
+      v2 path surfaces 25 errors per tick from orphaned ''plan:YYYY-MM-DD'' label
+      refs on Issues whose VK cards no longer match the renderer''s projected labels
+      — separate cleanup; not a Phase 3 regression.'
     observed_prs: []
