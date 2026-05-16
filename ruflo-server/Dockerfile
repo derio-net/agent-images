@@ -10,11 +10,31 @@ ARG RUFLO_GIT_REF=ca0a6fa5cb1678b5c57c9289bc09a036f7308c61
 #     node:24 ships git, so we don't need a separate alpine/git stage.
 FROM node:24 AS source
 ARG RUFLO_GIT_REF
+# Pinned URL of the last commit where ruflo/src/ruvocal/.env was tracked.
+# Upstream removed `.env` from the index on 2026-05-05 in ruvnet/ruflo@f8f4cd4
+# ("security: untrack .env files + broaden .gitignore to block .env.*") because
+# the file historically contained admin tokens. Their commit message states
+# "Files remain on disk for local development; only removed from the index" —
+# i.e. the file is still load-bearing at build time, just not distributed via
+# the repo. Their own Dockerfile still `COPY .env /app/.env`s it; cloudbuild
+# provides it out-of-band. We mirror that pattern by pulling the content from
+# the parent commit `0fd61e3e5b20` (f8f4cd4^), which is the last SHA where it
+# was tracked. The 8047-byte payload is chat-ui defaults only — feature flags,
+# OIDC scopes, MCP toggles, `MODELS=`, `TASK_MODEL=`, rate-limit thresholds.
+# All sensitive values (OPENAI_API_KEY, DATABASE_URL, etc.) are injected at
+# runtime via the Kubernetes Deployment's envFrom secretRef + envVar blocks;
+# nothing secret rides on this defaults file.
+ARG RUFLO_ENV_FALLBACK_SHA=0fd61e3e5b203282e018258fa8a80e56f30db295
 WORKDIR /src/ruflo
 RUN git init \
  && git remote add origin https://github.com/ruvnet/ruflo.git \
  && git fetch --depth 1 origin "${RUFLO_GIT_REF}" \
- && git checkout FETCH_HEAD
+ && git checkout FETCH_HEAD \
+ && if [ ! -s ruflo/src/ruvocal/.env ]; then \
+      curl -fsSL "https://raw.githubusercontent.com/ruvnet/ruflo/${RUFLO_ENV_FALLBACK_SHA}/ruflo/src/ruvocal/.env" \
+        -o ruflo/src/ruvocal/.env \
+      && test -s ruflo/src/ruvocal/.env; \
+    fi
 # Upstream's tree has the actual sveltekit app at `ruflo/src/ruvocal/`
 # (note the extra leading `ruflo/` — the repo's top-level dir mirrors the
 # org name). The plan's Deployment Notes flagged this as a path correction;
