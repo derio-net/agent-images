@@ -13,51 +13,60 @@ tasks:
   - id: P1.T1.S1
     text: |-
       Verify the bridge daemon at `kali/scripts/vk-issue-bridge.py`
-      imports from `vk` (specifically `vk.bridge.tick` and
-      `vk.bridge.discover_plans`). This work depends on the earlier
-      plan `2026-05-12-bridge-vk-library-integration` in this repo
-      having shipped — see `docs/superpowers/plans/2026-05-12-bridge-vk-library-integration/`.
+      imports from `vk`. This work depends on the earlier plan
+      `2026-05-12-bridge-vk-library-integration` having shipped — and
+      it has (closed 2026-05-15 in commit `dbcbc70`).
 
       ```
-      grep -n "from vk" kali/scripts/vk-issue-bridge.py
+      grep -n "from vk\|vk_bridge" kali/scripts/vk-issue-bridge.py
       ```
 
-      Expected output (after the bridge-vk-library-integration plan
-      ships):
+      Expected (the migrated bridge uses an aliased module import plus
+      module-level aliases for the two functions it calls):
 
       ```
-      from vk.bridge import discover_plans, tick
-      from vk.ghclient import GhClient
+      from vk import bridge as vk_bridge
       from vk.real_ghclient import RealGhClient
+      _DISCOVER_PLANS = vk_bridge.discover_plans
+      _TICK = vk_bridge.tick
       ```
 
       If those imports are absent, STOP. The bridge-vk-library-integration
-      plan must complete first. Communicate this to the operator and
-      do not proceed with Plan 2's steps until the prerequisite ships.
+      plan must complete first. Communicate this to the operator and do
+      not proceed with Plan 2's steps until the prerequisite ships.
   - id: P1.T1.S2
     text: |-
       Verify `vk` 2.2.0 (or higher) is installed in the bridge's
       Python environment.
 
-      ```
-      grep "vk" pyproject.toml || true
-      grep -n "vk[>=]" kali/scripts/*.py 2>/dev/null | head -5
-      ```
-
-      Look for the dependency declaration — likely in a Dockerfile
-      (search the existing bridge-vk-library-integration plan's
-      phases for the exact location). Edit that declaration to
-      require `vk>=2.2.0,<3.0.0` (was `>=2.1.0,<3.0.0` in the
-      sibling plan's phase 1).
-
-      Then exercise the imports:
+      The bridge installs vk via a git-tag-pinned `pip install` in
+      `base/Dockerfile`. Locate the line:
 
       ```
-      python -c "from vk.spec import dispatch, SpecValidationError; from vk.bridge import discover_specs; print('ok')"
+      grep -n "superpowers-for-vk@v" base/Dockerfile
       ```
 
-      Expected: prints `ok`. Any ImportError means the install
-      didn't pick up 2.2.0 — re-run the install in the bridge env.
+      Expected (pre-bump):
+
+      ```
+      'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4'
+      ```
+
+      Bump the tag from `@v2.1.4` to `@v2.2.0`. Use the Edit tool to
+      modify just that one git-tag suffix in `base/Dockerfile`. Do not
+      change the install mechanics (venv path, no-cache-dir, etc.) —
+      only the tag.
+
+      To verify the bumped install works inside the rebuilt image,
+      exercise the new imports:
+
+      ```
+      /opt/vk-bridge-venv/bin/python -c "from vk.spec import dispatch, SpecValidationError; from vk import bridge as vk_bridge; print(vk_bridge.discover_specs)"
+      ```
+
+      Expected: prints `<function discover_specs at 0x…>`. Any
+      ImportError means the install didn't pick up 2.2.0 — rebuild the
+      base image or re-run the venv install.
 - number: 2
   title: Add spec dispatch loop to the bridge's main cron caller
   steps:
@@ -115,35 +124,45 @@ tasks:
       `kali/scripts/vk-issue-bridge.py::main()` (or whichever
       function processes per-repo).
 
-      Import additions at the top of the file (after the existing
-      `from vk.bridge import discover_plans, tick`):
+      The bridge already imports `vk` aliased (line 24:
+      `from vk import bridge as vk_bridge`) and pre-binds the two
+      functions it uses (lines 30-31: `_DISCOVER_PLANS = vk_bridge.discover_plans`,
+      `_TICK = vk_bridge.tick`). **Match this style.** Add one new
+      module-level binding plus the spec import near those existing
+      lines:
 
       ```python
-      from vk.bridge import discover_specs
-      from vk.spec import dispatch as spec_dispatch, SpecValidationError
+      from vk import spec as vk_spec    # new: paired with `from vk import bridge as vk_bridge`
+      _DISCOVER_SPECS = vk_bridge.discover_specs
+      _SPEC_DISPATCH = vk_spec.dispatch
+      _SPEC_VALIDATION_ERROR = vk_spec.SpecValidationError
       ```
 
       Inside the per-repo loop, BEFORE the existing plan loop:
 
       ```python
-      for spec_meta in discover_specs(f"derio-net/{repo_name}"):
+      for spec_meta in _DISCOVER_SPECS(f"derio-net/{repo_name}"):
           try:
-              spec_result = spec_dispatch(
+              spec_result = _SPEC_DISPATCH(
                   spec_meta, gh,
                   yes=True,
                   repo_root=_repo_checkout_root(f"derio-net/{repo_name}"),
               )
-              accumulate_spec(spec_result)
-          except SpecValidationError as e:
+              accumulate_spec(summary, spec_result)
+          except _SPEC_VALIDATION_ERROR as e:
               log(f"[warn] bridge: spec {spec_meta.path} validation: {e}")
-          except Exception as e:
+          except Exception as e:  # noqa: BLE001 — bridge keeps running
               log(f"[error] bridge: dispatch raised on {spec_meta.path}: {e}")
-              accumulate_spec_failure(str(spec_meta.path), str(e))
+              accumulate_spec_failure(summary, str(spec_meta.path), str(e))
       ```
 
       `accumulate_spec` and `accumulate_spec_failure` are added in
-      the next task. For now, stub them as no-ops to make the test
-      from S2 pass.
+      the next task with `summary` as their first positional arg. For
+      now stub them as `def accumulate_spec(s, r): pass` etc. so the
+      test from S2 passes.
+
+      `_repo_checkout_root` already exists in the bridge module from
+      the earlier vk-library integration — reuse it.
 
       Re-run the test. Expect: green.
 - number: 3

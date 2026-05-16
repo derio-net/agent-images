@@ -31,24 +31,25 @@ After this plan ships:
 - Existing bridge behaviour (per-plan tick, vk-ready → vk-synced
   projection, MCP card sync) is unchanged.
 
-## Prerequisites (load-bearing)
+## Prerequisites
 
 This plan **depends on two upstream artifacts** that are not in this
 spec's table because they live elsewhere:
 
-1. **`2026-05-12-bridge-vk-library-integration` plan** (this repo,
-   `docs/superpowers/plans/2026-05-12-bridge-vk-library-integration/`).
-   Migrates the bridge daemon to use `vk.bridge.tick` and
-   `vk.bridge.discover_plans`. Today the bridge imports nothing from
-   the `vk` package — it does its own gh subprocess wrapping. The first
-   task in this plan (`P1.T1`) explicitly checks the migration has
-   happened; if not, the agent STOPS and reports to the operator.
+1. **`2026-05-12-bridge-vk-library-integration` plan** (this repo).
+   ✅ **Shipped** — Phase 3 closed 2026-05-15 in commit `dbcbc70`.
+   The bridge daemon now imports `from vk import bridge as vk_bridge`
+   and pre-binds `_DISCOVER_PLANS`/`_TICK` at module scope (see
+   `kali/scripts/vk-issue-bridge.py:24-31`). `P1.T1.S1` of this plan
+   re-greps to confirm before proceeding.
 
-2. **superpowers-for-vk v2.2.0 installed in the bridge env.** The
-   sibling plan `2026-05-14-spec-dispatch` releases v2.2.0 with the
-   new `vk.spec.dispatch`, `vk.bridge.discover_specs`, and
-   `GhClient.read_repo_file` surfaces this plan uses. The spec
-   table's `Depends on` column for this plan therefore lists
+2. **superpowers-for-vk v2.2.0 installed in the bridge env.**
+   ⏳ **Pending** — sibling plan `2026-05-14-spec-dispatch` (in
+   `derio-net/superpowers-for-vk`) ships v2.2.0 with `vk.spec.dispatch`,
+   `vk.bridge.discover_specs`, and `GhClient.read_repo_file`. The
+   bridge env's current `vk` install is `git+...@v2.1.4` per
+   `base/Dockerfile`; `P1.T1.S2` bumps the tag to `@v2.2.0`. The spec
+   table's `Depends on` column for this plan lists
    `2026-05-14-spec-dispatch`.
 
 Both prerequisites must be live before any code work in this plan
