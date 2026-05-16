@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Pinned to ruvnet/ruflo SHA — bump deliberately when re-vendoring.
-ARG RUFLO_GIT_REF=9b169814849b75bdee4b75e7d3d85a0db567802d
+ARG RUFLO_GIT_REF=ca0a6fa5cb1678b5c57c9289bc09a036f7308c61
 
 # --- source: shallow-clone the upstream repo at the pinned SHA. Single source
 #     of truth for both the builder and runtime stages so we never drift.
@@ -21,18 +21,28 @@ RUN git init \
 # this Dockerfile honours it: every COPY below uses
 # /src/ruflo/ruflo/src/ruvocal/... not /src/ruflo/src/ruvocal/...
 #
-# Patch upstream's ChatWindow.svelte: the pinned SHA introduces a
-# `let x = $derived<T>(() => { ... }())` IIFE that vite-plugin-svelte's
-# parser rejects with `js_parse_error` (the `<T>(()=>{...}())` shape
-# confuses generic-vs-comparison disambiguation). Convert to the
-# semantically-equivalent `$derived.by<T>(() => { ... })` form. Tracked
-# upstream as ruvnet/ruflo (no issue filed — apply locally for now).
+# Patch upstream's URL safety guard to accept the browser-local WASM MCP.
+#
+# Upstream `isValidUrl()` only allows http/https against safe hostnames,
+# which is correct for HTTP MCP servers (SSRF prevention). But ruvocal also
+# ships an in-browser WASM MCP server ("RVAgent Local") whose URL is
+# `wasm://local` — the server never reaches this URL, the browser hosts the
+# WebAssembly agent itself. Rejecting it at the server-side safety guard
+# leaves users with autopilot ON + only-WASM-MCP selected unable to chat:
+# `runMcpFlow` strips the rejected server, sees zero valid tools, and the
+# chat-ui SPA silently refuses to submit. Allow `wasm:` early-return so the
+# guard treats it as out-of-scope rather than unsafe.
+#
+# Symptom verified live on derio-net/frank ruflo deployment 2026-05-16:
+# with autopilot ON, the SPA silently refused to submit; toggling autopilot
+# OFF (which bypasses the MCP/tools code path entirely) allowed chat to
+# proceed against local LiteLLM models. This patch removes the autopilot
+# precondition for fresh deployments that don't ship server-side MCP_SERVERS.
+# Filed against upstream as ruvnet/ruflo#TBD; apply locally for now.
 RUN sed -i \
-      -e 's/let lastAssistantToolNames = \$derived<string\[\]>(() => {/let lastAssistantToolNames = \$derived.by<string[]>(() => {/' \
-      -e '0,/^\t}());$/{s/^\t}());$/\t});/}' \
-      ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte \
- && grep -q '\$derived.by<string\[\]>' ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte \
- && ! grep -q '^\t}());$' ruflo/src/ruvocal/src/lib/components/chat/ChatWindow.svelte
+      -e 's|const hostname = url\.hostname\.toLowerCase();|if (url.protocol === "wasm:") return true;\n\t\tconst hostname = url.hostname.toLowerCase();|' \
+      ruflo/src/ruvocal/src/lib/server/urlSafety.ts \
+ && grep -q 'protocol === "wasm:"' ruflo/src/ruvocal/src/lib/server/urlSafety.ts
 
 # --- builder: mirrors upstream `builder` stage in src/ruvocal/Dockerfile.
 #     Full node:24 (not slim) for the Svelte build's native deps.
