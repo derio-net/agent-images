@@ -1,3 +1,19 @@
+# ⚠️ ARCHIVED 2026-05-17 — see issue [derio-net/superpowers-for-vk#147](https://github.com/derio-net/superpowers-for-vk/issues/147)
+
+This plan was the agent-images half (the bridge cron caller) of the
+spec-dispatch design that lived in `superpowers-for-vk`. Never executed.
+Archived because the 2026-05-17 bridge audit found that spec-dispatch
+was patching around a more fundamental gap: v2 was supposed to deliver
+a thin bridge but the bridge stayed fat (1089 lines, in this very
+repo's `kali/scripts/vk-issue-bridge.py`). The real fix is the v2
+bridge rebuild tracked in superpowers-for-vk#147.
+
+Sibling spec + plan in superpowers-for-vk were archived in PR #148.
+
+Original content preserved below.
+
+---
+
 # Plan — spec-dispatch-bridge (agent-images)
 
 ## What this plan delivers
