@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The crontab invokes /opt/vk-bridge-venv/bin/python explicitly.
 RUN python3 -m venv /opt/vk-bridge-venv \
     && /opt/vk-bridge-venv/bin/pip install --no-cache-dir \
-        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4'
+        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.7'
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
