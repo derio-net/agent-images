@@ -22,11 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      # vk_mcp_client reads these at import time. Tests don't talk to VK,
-      # but the import path fails if they're unset.
-      VK_ORG_ID: fake-org
-      VK_DERIO_OPS_PROJECT_ID: fake-project
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -220,16 +215,28 @@ jobs:
           for i in $(seq 1 30); do
             if docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
               echo "✓ s6-overlay started, sshd is up"
-              docker logs kali-smoke
-              docker rm -f kali-smoke
-              exit 0
+              break
             fi
             sleep 1
           done
-          echo "✗ s6-overlay did not bring sshd up within 30s"
+          if ! docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ s6-overlay did not bring sshd up within 30s"
+            docker logs kali-smoke
+            docker rm -f kali-smoke
+            exit 1
+          fi
+
+          # Bridge wrapper smoke (v2.2.0+): cron invokes /opt/vk-bridge/run.sh.
+          # Must exit 0 in --dry-run mode and emit the version banner (spec G5)
+          # plus the "dry-run complete" line that proves the entry point is
+          # `python -m vk.bridge` and not the deleted vk-issue-bridge.py script.
+          out=$(docker exec kali-smoke /opt/vk-bridge/run.sh --dry-run)
+          echo "$out"
+          echo "$out" | head -1 | grep -qE '^\[bridge\] - v2\.2\.0 - '
+          echo "$out" | grep -q 'vk.bridge: dry-run complete'
+
           docker logs kali-smoke
           docker rm -f kali-smoke
-          exit 1
 
   smoke-test-paperclip-shell:
     needs: build-children

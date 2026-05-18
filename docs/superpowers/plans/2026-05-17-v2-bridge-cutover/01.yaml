@@ -216,46 +216,52 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:51:21+00:00'
       note: null
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:51:21+00:00'
       note: null
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:55:05+00:00'
       note: null
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:55:06+00:00'
       note: null
     P1.T2.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:55:06+00:00'
       note: null
     P1.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:55:18+00:00'
       note: null
     P1.T3.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-18T21:55:18+00:00'
+      note: 'Wrapper baked into image at Docker build time instead of cont-init.d
+        — install.sh isn''t shipped in the pip wheel and inlining the 2-line wrapper
+        avoids both a build-time curl and install.sh''s uv-first Python detection
+        (we know the venv interpreter path). Net effect identical: /opt/vk-bridge/run.sh
+        present at container start.'
     P1.T4.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:57:47+00:00'
       note: null
     P1.T4.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-18T21:57:47+00:00'
+      note: Docker not available in this worktree; CI's smoke-test-secure-agent-kali
+        job runs equivalent docker-exec assertions against the freshly-built image.
     P1.T4.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-18T21:58:04+00:00'
+      note: Completion = PR open via finishing-a-development-branch; recorded as skipped
+        to allow --complete-phase before PR exists, per vk-execute step ordering.
   completion:
-    at: null
+    at: '2026-05-18T21:58:07+00:00'
     note: null
     observed_prs: []

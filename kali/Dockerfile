@@ -51,14 +51,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       kali-tools-top10 nmap netcat-traditional logrotate \
     && rm -rf /var/lib/apt/lists/*
 
-# ── vk library (consumed by /opt/scripts/vk-issue-bridge.py via `from vk import bridge`) ──
+# ── vk library — bridge entry point is `python -m vk.bridge` (v2.2.0+) ──
 # Pinned to a tag so image builds are reproducible; bumping vk = bumping this line.
 # Installed into a dedicated venv so vk's deps (typer pulls a newer click)
 # don't collide with Debian's apt-managed python3-click (PEP 668).
-# The crontab invokes /opt/vk-bridge-venv/bin/python explicitly.
+# The cron wrapper at /opt/vk-bridge/run.sh exec's this venv's interpreter.
 RUN python3 -m venv /opt/vk-bridge-venv \
     && /opt/vk-bridge-venv/bin/pip install --no-cache-dir \
-        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.7'
+        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.2.0'
+
+# ── Bridge cron wrapper ──
+# v2.2.0 ships the bridge as `python -m vk.bridge`; the cron line invokes the
+# wrapper below rather than the venv's python directly so the dependency
+# direction stays one-way (superpowers-for-vk owns the entry point format).
+# Equivalent to `install.sh --install-bridge`, but inlined: install.sh isn't
+# packaged in the pip wheel, and inlining avoids a build-time network fetch
+# + the script's uv-first Python detection (we know our interpreter path).
+RUN mkdir -p /opt/vk-bridge \
+    && printf '#!/bin/bash\nexec /opt/vk-bridge-venv/bin/python -m vk.bridge "$@"\n' > /opt/vk-bridge/run.sh \
+    && chmod +x /opt/vk-bridge/run.sh
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
