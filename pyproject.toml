@@ -7,8 +7,11 @@ requires-python = ">=3.11"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    # vk is needed by kali/tests/test_vk_bridge_integration.py — pin to the
-    # same tag as kali/Dockerfile + kali/scripts/pyproject.toml so CI tests
-    # exercise the bridge against the version that ships in the image.
-    "vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: container smoke tests requiring a freshly-built image (gated; run with `-m smoke`)",
+]
+# Default test run excludes smoke tests — they need a built docker image.
+addopts = "-m 'not smoke'"

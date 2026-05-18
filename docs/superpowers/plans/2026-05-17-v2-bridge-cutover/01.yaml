@@ -216,41 +216,45 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:43:10+00:00'
       note: null
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:43:10+00:00'
       note: null
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:45:06+00:00'
       note: null
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:45:07+00:00'
       note: null
     P1.T2.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:45:07+00:00'
       note: null
     P1.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:47:10+00:00'
       note: null
     P1.T3.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-18T21:47:10+00:00'
+      note: install.sh auto-discovery picks uv/python3, not /opt/vk-bridge-venv; wrapper
+        written inline in Dockerfile RUN (same content install.sh produces). No boot-time
+        install needed — wrapper lives in image-baked /opt.
     P1.T4.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:50:40+00:00'
       note: null
     P1.T4.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-18T21:50:40+00:00'
+      note: 'Docker not available in worktree exec env; CI runs the smoke step (build.yaml:
+        smoke-test-secure-agent-kali → ''vk.bridge --dry-run (F3)''). Local unit/shell
+        tests all green.'
     P1.T4.S3:
       state: ' '
       ticked_at: null

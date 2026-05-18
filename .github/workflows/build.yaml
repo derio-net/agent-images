@@ -22,11 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      # vk_mcp_client reads these at import time. Tests don't talk to VK,
-      # but the import path fails if they're unset.
-      VK_ORG_ID: fake-org
-      VK_DERIO_OPS_PROJECT_ID: fake-project
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -230,6 +225,22 @@ jobs:
           docker logs kali-smoke
           docker rm -f kali-smoke
           exit 1
+      - name: Smoke test — vk.bridge --dry-run (F3)
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Run the bridge dry-run via the cron wrapper installed in the
+          # image. v2.2.0+ banner must appear on stdout line 1.
+          out=$(docker run --rm "${KALI_IMAGE}:${IMAGE_SHA}" /opt/vk-bridge/run.sh --dry-run)
+          echo "$out"
+          echo "$out" | grep -q 'vk.bridge: dry-run complete' \
+            || { echo "✗ dry-run did not complete"; exit 1; }
+          first=$(echo "$out" | head -n1)
+          case "$first" in
+            "[bridge] - v2.2.0 - "*) echo "✓ banner matches v2.2.0" ;;
+            *) echo "✗ unexpected banner line: $first"; exit 1 ;;
+          esac
 
   smoke-test-paperclip-shell:
     needs: build-children
