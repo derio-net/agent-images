@@ -4,7 +4,7 @@ phase:
   title: Cutover — delete fat bridge, bump pin, point cron at wrapper, smoke test
   tag: agentic
   depends_on: []
-  tracking_issue: null
+  tracking_issue: https://github.com/derio-net/agent-images/issues/82
 tasks:
 - number: 1
   title: Pre-flight — confirm v2.2.0 is published
