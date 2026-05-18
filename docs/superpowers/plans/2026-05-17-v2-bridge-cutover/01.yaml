@@ -256,10 +256,10 @@ state:
         smoke-test-secure-agent-kali → ''vk.bridge --dry-run (F3)''). Local unit/shell
         tests all green.'
     P1.T4.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-18T21:52:03+00:00'
       note: null
   completion:
-    at: null
+    at: '2026-05-18T21:52:03+00:00'
     note: null
     observed_prs: []
