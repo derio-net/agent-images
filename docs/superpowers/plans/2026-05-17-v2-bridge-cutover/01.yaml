@@ -1,0 +1,261 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Cutover — delete fat bridge, bump pin, point cron at wrapper, smoke test
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Pre-flight — confirm v2.2.0 is published
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Confirm `derio-net/superpowers-for-vk` has tagged v2.2.0:
+      ```
+      git ls-remote --tags https://github.com/derio-net/superpowers-for-vk.git \
+        | grep -E 'refs/tags/v2\.2\.0'
+      ```
+      If empty, STOP. Do not proceed. The cross-repo plan
+      (`2026-05-17-v2-bridge-rebuild`) must merge its Phase 6 first.
+
+      If present, capture the SHA for the commit message later:
+      ```
+      VK_VERSION_TAG=v2.2.0
+      VK_VERSION_SHA=$(git ls-remote --tags https://github.com/derio-net/superpowers-for-vk.git $VK_VERSION_TAG | awk '{print $1}')
+      echo "$VK_VERSION_SHA"
+      ```
+  - id: P1.T1.S2
+    text: |-
+      Smoke-test the wrapper logic locally before touching the image.
+
+      In a throwaway venv:
+      ```
+      python3 -m venv /tmp/vk-test
+      /tmp/vk-test/bin/pip install --no-cache-dir \
+          'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.2.0'
+      /tmp/vk-test/bin/python -m vk.bridge --dry-run
+      ```
+
+      Expected output:
+      ```
+      [bridge] - v2.2.0 - YYYY-MM-DD HH:MM:SS UTC - tick
+      vk.bridge: dry-run complete
+      ```
+
+      Exit 0. If anything else happens, file an issue against
+      `derio-net/superpowers-for-vk` and STOP.
+
+      Clean up: `rm -rf /tmp/vk-test`.
+- number: 2
+  title: Bump Dockerfile pin + remove legacy bridge files
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Edit `kali/Dockerfile`. Find the venv install line (around line 55-60):
+      ```dockerfile
+      RUN python3 -m venv /opt/vk-bridge-venv \
+          && /opt/vk-bridge-venv/bin/pip install --no-cache-dir \
+              'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.1.4'
+      ```
+
+      Change the pin from `v2.1.4` → `v2.2.0`.
+
+      If the Dockerfile has a `COPY scripts/vk-issue-bridge.py` line, delete
+      it.
+      If it has a `COPY scripts/vk_mcp_client.py` line, delete it.
+
+      Check via:
+      ```
+      grep -nE 'vk-issue-bridge|vk_mcp_client' kali/Dockerfile
+      ```
+      Expect no matches after the edit.
+  - id: P1.T2.S2
+    text: |-
+      Delete the legacy bridge scripts:
+      ```
+      git rm kali/scripts/vk-issue-bridge.py
+      git rm kali/scripts/vk_mcp_client.py
+      ```
+
+      If `kali/scripts/__pycache__/` contains compiled artifacts for these
+      files, delete them too — but they should be `.gitignore`d already;
+      check `git status` to confirm nothing unexpected is staged.
+  - id: P1.T2.S3
+    text: |-
+      Relocate the meaningful bridge tests.
+
+      Audit `kali/tests/`:
+      ```
+      ls kali/tests/test_vk_issue_bridge* kali/tests/test_vk_bridge_* 2>/dev/null
+      ```
+
+      For each such file, decide:
+      - If the test is a UNIT test of bridge logic (parsing, dispatch
+        sequencing, label transitions): **delete it from agent-images**;
+        the equivalent assertion was already ported to
+        `superpowers-for-vk/tests/unit/test_bridge_*.py` during the
+        cross-repo rebuild (Phases 2-5).
+      - If the test is genuinely about CONTAINER behavior (Dockerfile
+        layout, file presence, environment): KEEP and refit to test the
+        new layout.
+
+      Result: probably 1-2 files kept (container-specific), the rest
+      deleted with `git rm`.
+- number: 3
+  title: Point cron at the wrapper installed by install.sh --install-bridge
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Edit `kali/config-templates/crontab.txt`. Find the current bridge
+      line:
+      ```
+      */2 * * * * /opt/vk-bridge-venv/bin/python /opt/scripts/vk-issue-bridge.py >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
+      ```
+
+      Replace with:
+      ```
+      */2 * * * * /opt/vk-bridge/run.sh >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
+      ```
+
+      Tick frequency stays `*/2 * * * *` — unchanged from current.
+      Supercronic supports a sixth field for sub-minute scheduling if
+      ever needed later; the spec leaves cadence alone.
+  - id: P1.T3.S2
+    text: |-
+      Wire `install.sh --install-bridge` into container init.
+
+      Find the container-init script that runs at startup (likely under
+      `kali/etc/cont-init.d/` or wherever supercronic / supervisord is
+      configured). Add an idempotent invocation:
+
+      ```bash
+      # Install the vk-bridge wrapper if missing or outdated.
+      if [ ! -x /opt/vk-bridge/run.sh ]; then
+          /opt/vk-bridge-venv/bin/vk-install --install-bridge \
+              || curl -sSL https://raw.githubusercontent.com/derio-net/superpowers-for-vk/v2.2.0/scripts/install.sh \
+                 | bash -s -- --install-bridge
+      fi
+      ```
+
+      (Exact invocation depends on what `install.sh` exposes — read the
+      v2.2.0 source if in doubt.)
+
+      Verify by grepping init scripts for the existing crontab seeding
+      line; the wrapper install belongs in the same script, before the
+      crontab line is copied.
+- number: 4
+  title: F3 smoke test + version-bump-equivalent + PR
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Add `kali/tests/test_bridge_smoke.py`:
+      ```python
+      """Phase 6 / F3 — Kali container smoke test for the rebuilt bridge."""
+      import subprocess
+      import pytest
+
+      IMAGE = "ghcr.io/derio-net/agent-images-kali:dev"  # adjust to your CI tag
+
+
+      @pytest.mark.smoke
+      def test_python_m_vk_bridge_dry_run_in_container():
+          """
+          GIVEN the kali Docker image just built
+          WHEN  invoking `docker run --rm <kali-image> python -m vk.bridge --dry-run`
+          THEN  the process exits 0
+          AND   stdout contains 'vk.bridge: dry-run complete'
+          """
+          result = subprocess.run(
+              ["docker", "run", "--rm", IMAGE,
+               "/opt/vk-bridge-venv/bin/python", "-m", "vk.bridge", "--dry-run"],
+              capture_output=True, text=True, timeout=60,
+          )
+          assert result.returncode == 0, f"stderr: {result.stderr}"
+          assert "vk.bridge: dry-run complete" in result.stdout
+          # First log line must be the version banner per spec G5.
+          first_line = result.stdout.splitlines()[0]
+          assert first_line.startswith("[bridge] - v2.2.0 - ")
+      ```
+
+      If the CI doesn't run smoke tests by default (marker-gated), confirm
+      the CI workflow runs `pytest -m smoke` against the freshly-built
+      image. If not, add a workflow step.
+  - id: P1.T4.S2
+    text: |-
+      Build the image locally (or trigger CI):
+      ```
+      docker build -t agent-images-kali:dev kali/
+      pytest kali/tests/test_bridge_smoke.py -m smoke -v
+      ```
+
+      Expect: GREEN. If red, debug — common causes:
+      - Wrapper missing → `install.sh --install-bridge` never ran in init
+      - Pin mismatch → the venv has an old vk
+      - `npx`/`vibe-kanban-mcp` missing — Dockerfile must install Node;
+        verify the existing Node install step is still in the image
+
+      Once green, commit + push.
+  - id: P1.T4.S3
+    text: |-
+      Open PR: `feat(kali): cut over to v2.2.0 bridge — delete fat
+      scripts, bump pin, smoke test (cross-repo cutover for
+      derio-net/superpowers-for-vk#147)`.
+
+      Body must include:
+      - Reference: `derio-net/superpowers-for-vk#147` (tracking) and
+        `derio-net/superpowers-for-vk#150` (spec PR).
+      - Reference: `derio-net/superpowers-for-vk@v2.2.0` (the tag this
+        Dockerfile pin now points at).
+      - Note that this PR completes the cross-repo cutover; from this
+        point on, all bridge changes happen in `derio-net/superpowers-
+        for-vk` only.
+      - Lists deleted files: `kali/scripts/vk-issue-bridge.py` (1089 LOC),
+        `kali/scripts/vk_mcp_client.py` (194 LOC), and any unit tests
+        that moved to `superpowers-for-vk/tests/`.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
