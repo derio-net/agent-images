@@ -51,25 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       kali-tools-top10 nmap netcat-traditional logrotate \
     && rm -rf /var/lib/apt/lists/*
 
-# ── vk library — bridge entry point is `python -m vk.bridge` (v2.2.0+) ──
-# Pinned to a tag so image builds are reproducible; bumping vk = bumping this line.
-# Installed into a dedicated venv so vk's deps (typer pulls a newer click)
-# don't collide with Debian's apt-managed python3-click (PEP 668).
-# The cron wrapper at /opt/vk-bridge/run.sh exec's this venv's interpreter.
-RUN python3 -m venv /opt/vk-bridge-venv \
-    && /opt/vk-bridge-venv/bin/pip install --no-cache-dir \
-        'vk @ git+https://github.com/derio-net/superpowers-for-vk@v2.2.0'
-
-# ── Bridge cron wrapper ──
-# v2.2.0 ships the bridge as `python -m vk.bridge`; the cron line invokes the
-# wrapper below rather than the venv's python directly so the dependency
-# direction stays one-way (superpowers-for-vk owns the entry point format).
-# Equivalent to `install.sh --install-bridge`, but inlined: install.sh isn't
-# packaged in the pip wheel, and inlining avoids a build-time network fetch
-# + the script's uv-first Python detection (we know our interpreter path).
-RUN mkdir -p /opt/vk-bridge \
-    && printf '#!/bin/bash\nexec /opt/vk-bridge-venv/bin/python -m vk.bridge "$@"\n' > /opt/vk-bridge/run.sh \
-    && chmod +x /opt/vk-bridge/run.sh
+# ── vk bridge — PVC-resident install, not image-baked ──
+# vk lives in $HOME/.local/share/uv/tools/vk/ on the shared agent-home PVC,
+# installed by etc/cont-init.d/55-install-vk-bridge on first boot via
+# `uv tool install`. This makes bridge bumps a one-liner inside the running
+# pod (`uv tool install --force --from 'vk @ git+...@<tag>' vk`) rather
+# than a Dockerfile change + image rebuild + redeploy. The default pin is
+# tracked in the init script's VK_BRIDGE_PIN below.
+#
+# Pre-2026-05-18 layout (now retired): vk lived at /opt/vk-bridge-venv in
+# the image, wrapper at /opt/vk-bridge/run.sh. See PR #85 history if you
+# need the rationale for the move.
 
 # mosh requires a UTF-8 locale on both client and server
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8

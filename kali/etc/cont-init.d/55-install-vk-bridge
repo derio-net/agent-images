@@ -1,0 +1,50 @@
+#!/command/with-contenv bash
+# 55-install-vk-bridge — install vk to the shared agent-home PVC on first
+# boot and write the cron wrapper at $HOME/.local/bin/vk-bridge.
+#
+# The bridge no longer ships in the image. vk lives in
+# $HOME/.local/share/uv/tools/vk/ (PVC-resident), so bumps don't require an
+# image rebuild — they can be applied from inside the running pod with:
+#
+#     uv tool install --force --from "vk @ git+...@<tag>" vk
+#
+# This script is idempotent: it skips reinstall when the installed version
+# already matches VK_BRIDGE_PIN, and the wrapper write is content-addressed
+# so an in-place upgrade fixes drift without leaking the previous wrapper.
+set -e
+
+# VK_BRIDGE_PIN is the version the image SHIPS pointing at. The init only
+# (re)installs when the current PVC install diverges from this pin — so a
+# manual `uv tool install --force` in the pod keeps sticking until the
+# image's pin bumps past it.
+VK_BRIDGE_PIN="${VK_BRIDGE_PIN:-v2.2.11}"
+
+HOME="${AGENT_HOME:-$HOME}"
+export HOME
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+WRAPPER="$HOME/.local/bin/vk-bridge"
+target_version="${VK_BRIDGE_PIN#v}"
+
+installed_version() {
+    local uv_tool_dir
+    uv_tool_dir="$(uv tool dir 2>/dev/null || true)"
+    [ -n "$uv_tool_dir" ] || return 0
+    local py="$uv_tool_dir/vk/bin/python"
+    [ -x "$py" ] || return 0
+    "$py" -c "from importlib.metadata import version; print(version('vk'))" 2>/dev/null || true
+}
+
+if [ "$(installed_version)" != "$target_version" ]; then
+    uv tool install --force \
+        --from "vk @ git+https://github.com/derio-net/superpowers-for-vk@${VK_BRIDGE_PIN}" \
+        vk
+fi
+
+vk_python="$(uv tool dir)/vk/bin/python"
+mkdir -p "$(dirname "$WRAPPER")"
+cat > "$WRAPPER" <<EOF
+#!/bin/bash
+exec "$vk_python" -m vk.bridge "\$@"
+EOF
+chmod +x "$WRAPPER"

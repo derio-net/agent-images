@@ -8,8 +8,3 @@ requires-python = ">=3.11"
 dev = [
     "pytest>=8.0",
 ]
-
-[tool.pytest.ini_options]
-markers = [
-    "smoke: opt-in tests that exercise a built container image (need KALI_IMAGE / docker)",
-]

@@ -225,8 +225,12 @@ state:
       note: null
     P1.T2.S1:
       state: x
-      ticked_at: '2026-05-18T21:55:05+00:00'
-      note: null
+      ticked_at: '2026-05-19T03:45:47+00:00'
+      note: Bridge install moved out of the Dockerfile entirely. The /opt/vk-bridge-venv
+        RUN + the /opt/vk-bridge/run.sh wrapper RUN are both gone; vk is installed
+        at first-boot by cont-init.d/55-install-vk-bridge via 'uv tool install' to
+        the agent-home PVC. Image's recommended pin lives in the init script as VK_BRIDGE_PIN
+        (currently v2.2.11 — picks up all bridge bug fixes shipped since v2.2.0).
     P1.T2.S2:
       state: x
       ticked_at: '2026-05-18T21:55:06+00:00'
@@ -240,17 +244,23 @@ state:
       ticked_at: '2026-05-18T21:55:18+00:00'
       note: null
     P1.T3.S2:
-      state: '-'
-      ticked_at: '2026-05-18T21:55:18+00:00'
-      note: 'Wrapper baked into image at Docker build time instead of cont-init.d
-        — install.sh isn''t shipped in the pip wheel and inlining the 2-line wrapper
-        avoids both a build-time curl and install.sh''s uv-first Python detection
-        (we know the venv interpreter path). Net effect identical: /opt/vk-bridge/run.sh
-        present at container start.'
-    P1.T4.S1:
       state: x
-      ticked_at: '2026-05-18T21:57:47+00:00'
-      note: null
+      ticked_at: '2026-05-19T03:45:37+00:00'
+      note: 'Wired into cont-init.d via 55-install-vk-bridge: idempotent uv tool install
+        of vk to the PVC (/home/claude/.local/share/uv/tools/vk/) keyed on VK_BRIDGE_PIN,
+        then writes the wrapper to /home/claude/.local/bin/vk-bridge. install.sh isn''t
+        shipped in the pip wheel, so the wrapper is materialized inline (byte-equivalent
+        to install.sh''s output). This is the agent-images side of the move to PVC-resident
+        bridge — bumps now happen via ''uv tool install --force'' in the pod without
+        rebuilding the image.'
+    P1.T4.S1:
+      state: '-'
+      ticked_at: '2026-05-19T03:45:50+00:00'
+      note: Pytest companion (test_bridge_smoke.py) removed in the redesign — the
+        new init-script bootstrap means the wrapper only exists after s6 cont-init.d
+        has run, which 'docker run --rm <image> <cmd>' bypasses. CI's smoke-test-secure-agent-kali
+        job uses the right shape (docker run -d, wait for sshd-up = init complete,
+        docker exec the wrapper) and stays the single authoritative smoke.
     P1.T4.S2:
       state: '-'
       ticked_at: '2026-05-18T21:57:47+00:00'
@@ -262,6 +272,13 @@ state:
       note: Completion = PR open via finishing-a-development-branch; recorded as skipped
         to allow --complete-phase before PR exists, per vk-execute step ordering.
   completion:
-    at: '2026-05-18T21:58:07+00:00'
-    note: null
+    at: '2026-05-19T03:46:02+00:00'
+    note: 'Initial cutover (commit 33f8fc0) baked vk + wrapper into the image at /opt.
+      After review with the user we redesigned per superpowers-for-vk''s v2.2.1 install.sh
+      change: bridge lives on the agent-home PVC at $HOME/.local/bin/vk-bridge, installed
+      by cont-init.d/55-install-vk-bridge via ''uv tool install''. Net effect: bumping
+      the bridge no longer requires an image rebuild — ''uv tool install --force''
+      inside the running pod is enough, and the image''s recommended pin (VK_BRIDGE_PIN
+      in the init script) only controls the first-boot version + drift-correction
+      baseline.'
     observed_prs: []

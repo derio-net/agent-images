@@ -43,7 +43,7 @@ test -f "$H1/.crontab"                              || { echo "case1: ~/.crontab
 grep -q '^# >>> agent-images managed' "$H1/.crontab" || { echo "case1: begin sentinel missing"; exit 1; }
 grep -q '^# <<< agent-images managed' "$H1/.crontab" || { echo "case1: end sentinel missing"; exit 1; }
 grep -q "$H1/.local/bin"               "$H1/.crontab" || { echo "case1: __AGENT_HOME__ not substituted"; exit 1; }
-grep -q '/opt/vk-bridge/run.sh'           "$H1/.crontab" || { echo "case1: bridge line missing"; exit 1; }
+grep -q '/.local/bin/vk-bridge'           "$H1/.crontab" || { echo "case1: bridge line missing"; exit 1; }
 echo "case1: first-boot render OK"
 
 # ---- Case 2: re-render with sentinels + preserved user content ----
@@ -69,7 +69,7 @@ grep -q '^# user header — preserved'          "$H2/.crontab" || { echo "case2:
 grep -q '^STALE_VAR=old-value'                 "$H2/.crontab" || { echo "case2: pre-sentinel env override lost"; exit 1; }
 ! grep -q '/opt/scripts/STALE.sh'              "$H2/.crontab" || { echo "case2: stale managed line not replaced"; exit 1; }
 ! grep -q '^PATH=/old/path'                    "$H2/.crontab" || { echo "case2: stale managed env not replaced"; exit 1; }
-grep -q '/opt/vk-bridge/run.sh'                   "$H2/.crontab" || { echo "case2: fresh managed bridge line missing"; exit 1; }
+grep -q '/.local/bin/vk-bridge'                   "$H2/.crontab" || { echo "case2: fresh managed bridge line missing"; exit 1; }
 grep -q "$H2/.local/bin"                       "$H2/.crontab" || { echo "case2: __AGENT_HOME__ not substituted in re-render"; exit 1; }
 grep -q '^# >>> chorebot'                      "$H2/.crontab" || { echo "case2: chorebot block lost"; exit 1; }
 grep -q 'one-shot.sh'                          "$H2/.crontab" || { echo "case2: operator one-shot lost"; exit 1; }

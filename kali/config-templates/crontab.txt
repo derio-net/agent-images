@@ -28,10 +28,10 @@ PUSHGATEWAY_URL=http://pushgateway.monitoring.svc.cluster.local:9091
 0 14 * * 0,1,5,6 /opt/scripts/exercise-cron.sh standing; /opt/scripts/push-next-expected.sh exercise_reminder exercise-cron.sh 2>/dev/null
 
 # VK Issue Bridge — sync vk-ready GitHub Issues to VK workspaces (every 2 min)
-# Wrapper at /opt/vk-bridge/run.sh exec's the venv interpreter + `python -m
-# vk.bridge`; the wrapper format is owned by derio-net/superpowers-for-vk so
-# bridge changes ship via the pinned tag in this Dockerfile.
-*/2 * * * * /opt/vk-bridge/run.sh >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
+# Wrapper lives on the agent-home PVC (written by etc/cont-init.d/55-install-
+# vk-bridge); bumps to vk happen via `uv tool install --force` inside the
+# pod, without an image rebuild. The wrapper exec's `python -m vk.bridge`.
+*/2 * * * * __AGENT_HOME__/.local/bin/vk-bridge >> __AGENT_HOME__/.willikins-agent/vk-bridge.log 2>&1
 
 # Log rotation (hourly)
 7 * * * * /opt/scripts/rotate-logs.sh >> __AGENT_HOME__/.willikins-agent/logrotate.log 2>&1
