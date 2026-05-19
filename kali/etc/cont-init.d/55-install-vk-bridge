@@ -8,15 +8,17 @@
 #
 #     uv tool install --force --from "vk @ git+...@<tag>" vk
 #
-# This script is idempotent: it skips reinstall when the installed version
-# already matches VK_BRIDGE_PIN, and the wrapper write is content-addressed
-# so an in-place upgrade fixes drift without leaking the previous wrapper.
+# Reconcile semantics (install-if-older, not exact-match): the script
+# installs only when the current PVC install is MISSING or STRICTLY OLDER
+# than VK_BRIDGE_PIN. An operator hotfix to a newer-than-pin version
+# (typical incident-response shape) sticks across pod restarts — the
+# image's pin acts as a floor, not a fixed point. The image-side pin
+# bump still drags old PVCs forward when the image rolls.
 set -e
 
-# VK_BRIDGE_PIN is the version the image SHIPS pointing at. The init only
-# (re)installs when the current PVC install diverges from this pin — so a
-# manual `uv tool install --force` in the pod keeps sticking until the
-# image's pin bumps past it.
+# VK_BRIDGE_PIN is the floor version the image guarantees. Manual upgrades
+# in the pod to versions ≥ pin survive restarts; only PVCs strictly older
+# than pin get reconciled forward.
 VK_BRIDGE_PIN="${VK_BRIDGE_PIN:-v2.2.11}"
 
 HOME="${AGENT_HOME:-$HOME}"
@@ -35,7 +37,22 @@ installed_version() {
     "$py" -c "from importlib.metadata import version; print(version('vk'))" 2>/dev/null || true
 }
 
-if [ "$(installed_version)" != "$target_version" ]; then
+# Install when current is missing or strictly older than target. `sort -V`
+# (version-sort) is the comparator — its `head -1` yields the older of
+# the two; we install only when that older one is the current install
+# AND current ≠ target (i.e., target is strictly newer).
+current_version="$(installed_version)"
+needs_install=0
+if [ -z "$current_version" ]; then
+    needs_install=1
+elif [ "$current_version" != "$target_version" ]; then
+    oldest="$(printf '%s\n%s\n' "$target_version" "$current_version" | sort -V | head -1)"
+    if [ "$oldest" = "$current_version" ]; then
+        needs_install=1
+    fi
+fi
+
+if [ "$needs_install" = "1" ]; then
     uv tool install --force \
         --from "vk @ git+https://github.com/derio-net/superpowers-for-vk@${VK_BRIDGE_PIN}" \
         vk

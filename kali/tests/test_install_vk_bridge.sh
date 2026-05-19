@@ -132,4 +132,19 @@ run_init "$H4" v1.2.3
 assert_grep 'v1.2.3' "$H4/uv.log"
 echo "case4: env-pin override OK"
 
+# ---- Case 5: operator hotfix — install ≥ pin survives restarts ----
+# Seed an install at v2.2.15 (newer than the v2.2.11 default pin), then
+# re-run with the default pin. The script must NOT downgrade.
+H5="$TMP/case5"
+mkdir -p "$H5"
+install_fake_uv "$H5"
+run_init "$H5" v2.2.15
+test "$(cat "$H5/.local/share/uv/tools/vk/bin/python" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" = "2.2.15" \
+    || { echo "case5: seed install did not register 2.2.15"; exit 1; }
+> "$H5/uv.log"
+run_init "$H5" v2.2.11
+installs="$(count_lines 'tool install' "$H5/uv.log")"
+[ "$installs" = "0" ] || { echo "case5: pin=2.2.11 must NOT downgrade an existing 2.2.15 install (saw $installs install call/s)"; cat "$H5/uv.log"; exit 1; }
+echo "case5: operator-hotfix-newer-than-pin sticks OK"
+
 echo "all tests passed"
