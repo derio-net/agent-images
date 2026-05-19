@@ -22,11 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      # vk_mcp_client reads these at import time. Tests don't talk to VK,
-      # but the import path fails if they're unset.
-      VK_ORG_ID: fake-org
-      VK_DERIO_OPS_PROJECT_ID: fake-project
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -213,23 +208,40 @@ jobs:
             --security-opt=no-new-privileges \
             -v /tmp/kali-home:/home/claude \
             "${KALI_IMAGE}:${IMAGE_SHA}"
-          # /init must reach stage 2 (services up). 30s is plenty for the
-          # shell-base startup; CrashLoopBackOff would surface inside ~3s.
+          # /init must reach stage 2 (services up). Budget bumped to 90s
+          # because cont-init.d/55-install-vk-bridge now does a `uv tool
+          # install` from a git tag on first boot — pulls the vk source +
+          # transitive deps from PyPI before sshd starts. Steady-state
+          # boots are still ~3s once vk is on the PVC; the 90s budget is
+          # for the first run against an empty volume (CI is always first).
           # s6-overlay v3 installs binaries under /command/ — the agent-base
           # PATH does not include it, so we must call s6-svstat by full path.
-          for i in $(seq 1 30); do
+          for i in $(seq 1 90); do
             if docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
               echo "✓ s6-overlay started, sshd is up"
-              docker logs kali-smoke
-              docker rm -f kali-smoke
-              exit 0
+              break
             fi
             sleep 1
           done
-          echo "✗ s6-overlay did not bring sshd up within 30s"
+          if ! docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ s6-overlay did not bring sshd up within 90s"
+            docker logs kali-smoke
+            docker rm -f kali-smoke
+            exit 1
+          fi
+
+          # Bridge wrapper smoke: cron invokes $HOME/.local/bin/vk-bridge
+          # (the wrapper written by cont-init.d/55-install-vk-bridge). The
+          # banner version must match the image's VK_BRIDGE_PIN — this is
+          # what proves the init script reconciled to the pinned tag rather
+          # than silently keeping a stale PVC install.
+          out=$(docker exec kali-smoke /home/claude/.local/bin/vk-bridge --dry-run)
+          echo "$out"
+          echo "$out" | head -1 | grep -qE '^\[bridge\] - v[0-9]+\.[0-9]+\.[0-9]+ - '
+          echo "$out" | grep -q 'vk.bridge: dry-run complete'
+
           docker logs kali-smoke
           docker rm -f kali-smoke
-          exit 1
 
   smoke-test-paperclip-shell:
     needs: build-children
