@@ -75,6 +75,14 @@ preserved (`set -e` is intentionally off; script always `exit 0`).
 regardless of inventory contents and lets `python@3.x` activate as a normal
 operator runtime without breaking the script's own parsing.
 
+### Implementation note for ruflo-shell
+
+Mirror the *exact* if/else + unconditional-activation shape and the `/usr/bin/python3`
+pin into ruflo's copy. Do **not** also "upgrade" ruflo's older `run()` (it lacks
+paperclip's rc-capture comment and uses an `else` branch instead of post-`if` rc
+capture) — that hardening is unrelated to issue #56 and would inflate the diff. Keep
+the two scripts converging only on the bug being fixed here.
+
 ## Test — live docker e2e (node arm)
 
 Extend the existing `smoke-test-paperclip-shell` and `smoke-test-ruflo-shell` jobs
@@ -93,42 +101,90 @@ The `…-reconcile` command is a bare symlink to `install-inventory.sh` (Dockerf
 `ln -sf`), and the script reads `INVENTORY="${INVENTORY:-…}"` from env, so an
 `INVENTORY` override passes through transparently — no wrapper to swallow it.
 
-Added step (per shell, paths/names adjusted for ruflo):
+### Inventory choice is load-bearing (do not change casually)
+
+The test inventory must force the *failing* paths, or it silently proves nothing:
+
+- **npm package must NOT be baked into the image.** `base/Dockerfile:40` installs
+  `@anthropic-ai/claude-code` via *system* npm into the root-owned global prefix
+  (`/usr/lib/node_modules`), baked into the layer. The npm-global loop guards with
+  `npm ls -g "$pkg" --depth=0 && continue` (`install-inventory.sh:112`): a baked
+  package reports present even via `/usr/bin/npm`, so the loop short-circuits to
+  `already` and **never runs `npm install -g`** — the EACCES path under repair is
+  never reached, and the test passes green with the bug intact. We use a small
+  package guaranteed absent from the image (`is-odd`) so the install actually
+  executes against the active npm's prefix. The issue's repro used `@openai/codex`
+  for the same reason; `is-odd` is the same idea, tiny and dependency-light.
+
+- **inventory must include a `python@` mise entry.** Arm 2's regression only fires
+  *after* a mise Python is active (it then shadows `/usr/bin/python3` for the
+  script's own bare `python3` calls). With no `python@` in the inventory, the
+  `! grep "No module named 'yaml'"` assertion is vacuous — it passes whether or not
+  arm 2 is applied. Adding `python@3.12` makes the mise section activate Python
+  *before* the npm-global section re-parses the inventory via `yaml_list`, which is
+  exactly when unpinned code would error and silently return an empty package list.
+
+### Added step (per shell, paths/names adjusted for ruflo)
 
 ```bash
-# Two-arm regression guard (issue #56): a populated inventory on a fresh PV
-# must reconcile clean. Pre-fix this produced npm EACCES (shim fell through to
-# /usr/bin/npm) and could regress YAML parsing once python@ activated.
+# Two-arm regression guard (issue #56): a populated inventory on a fresh PV must
+# reconcile clean. Pre-fix, arm 1 produced npm EACCES (mise shim fell through to
+# /usr/bin/npm against the root-owned /usr prefix); arm 2 regressed once python@
+# activated and the script's bare `python3` resolved to mise's PyYAML-less Python.
+# Package choices are deliberate — see "Inventory choice is load-bearing".
 docker exec paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
 mise:
   - node@20
+  - python@3.12
 npm-global:
-  - "@anthropic-ai/claude-code"
-pipx:
-  - tldr
+  - is-odd
 YAML
 out=$(docker exec -e INVENTORY=/tmp/inv.yaml paperclip-shell-smoke \
-        /usr/local/bin/paperclip-shell-reconcile)
+        /usr/local/bin/paperclip-shell-reconcile 2>&1)
 echo "$out"
-echo "$out" | grep -q 'failed=0'                       # arm 1: shim dispatches, no EACCES
-! echo "$out" | grep -qi "No module named 'yaml'"      # arm 2: parsing stayed on system python
+# Arm 1 + arm 2 in one positive assertion: a ✓ install line proves (a) yaml
+# parsing found the package — arm 2 didn't silently empty the list — AND (b) the
+# active npm dispatched to a writable prefix without EACCES. Pre-fix this line is
+# either `✗ npm i -g is-odd (rc=…)` (arm 1 broken) or absent entirely (arm 2 broke
+# the parse, so the npm-global loop iterated zero times).
+echo "$out" | grep -q '✓ npm i -g is-odd'
+echo "$out" | grep -q 'failed=0'                       # overall clean reconcile
+! echo "$out" | grep -qi "No module named 'yaml'"      # arm 2: no PyYAML traceback on stderr
 ```
 
-**Live-arm scope:** node@20 + an npm global (the issue's exact reproduction) + a
-pipx package. Rust/cargo is excluded to avoid multi-minute toolchain pulls + crate
-compiles on every push — the cargo loop shares the identical fall-through cause as
-npm, so the node arm proves the mechanism. A hermetic stub test covering the cargo
-path without CI cost is a possible follow-up, not built here.
+`2>&1` on the `docker exec` is required: the arm-2 traceback and `mise`'s own
+diagnostics go to stderr, and the script's `exec > >(tee -a "$LOG") 2>&1` already
+merges them into the log — capturing stderr here keeps the captured `out` faithful
+to what an operator sees. (If the `tee` subshell ever races process exit and
+truncates the tail under `docker exec`, fall back to grepping the persisted log:
+`docker exec … cat /var/log/cont-init.d/40-shell-inventory.log`.)
+
+**Live-arm scope:** node@20 + python@3.12 (both prebuilt mise downloads, not
+compiles) + one not-baked npm global. Rust/cargo is excluded to avoid multi-minute
+toolchain pulls + crate compiles on every push — the cargo loop shares the
+identical fall-through cause as npm, so the node arm proves the mechanism. A
+hermetic stub test covering the cargo path without CI cost is a possible follow-up,
+not built here.
 
 ## Acceptance
 
-- [ ] Clean reconcile on a fresh PV with a populated inventory produces `failed=0`,
-      for both paperclip-shell and ruflo-shell.
-- [ ] No `ModuleNotFoundError: No module named 'yaml'` regression.
-- [ ] CI smoke test (the extended docker jobs) exercises the activate + npm-global
-      + YAML-parse path end-to-end, on both shells.
+- [ ] Clean reconcile on a fresh PV with the test inventory above produces
+      `failed=0` and a `✓ npm i -g is-odd` line (the install path actually ran and
+      succeeded against a writable prefix), for both paperclip-shell and ruflo-shell.
+- [ ] No `ModuleNotFoundError: No module named 'yaml'` regression, with `python@3.12`
+      active in the inventory.
+- [ ] CI smoke test (the extended docker jobs) exercises activate → npm-global
+      install → YAML-parse-after-python-activation end-to-end, on both shells.
+
+## Known limitations
+
+- Unconditional `mise use -g "$tool"` makes the **last** entry win when an inventory
+  lists two versions of the same plugin (e.g. `node@20` and `node@22`) — global
+  activation is single-version per plugin. Current inventories list one version per
+  plugin, so this isn't hit; documented here rather than discovered in production.
 
 ## Out of scope
 
 - Deduplicating the two `install-inventory.sh` copies into one source of truth.
 - Live cargo/rust coverage in CI (cost); optional hermetic stub follow-up.
+- Hardening ruflo's older `run()` to match paperclip's (unrelated to #56).
