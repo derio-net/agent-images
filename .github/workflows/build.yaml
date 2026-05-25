@@ -335,13 +335,16 @@ jobs:
           # A ✓ install line proves BOTH arms: yaml parsing found the package
           # (arm 2 didn't silently empty the list) AND the active npm dispatched to
           # a writable prefix without EACCES (arm 1). Pre-fix this is `✗ … (rc=…)`
-          # or absent entirely.
-          echo "$out" | grep -q '✓ npm i -g is-odd'
-          echo "$out" | grep -q 'failed=0'
-          ! echo "$out" | grep -qi "No module named 'yaml'"
+          # or absent entirely. Defer the verdict until after cleanup so a failing
+          # assertion names itself and does not leak the smoke container.
+          guard_ok=1
+          echo "$out" | grep -q '✓ npm i -g is-odd' || { echo "✗ #56 arm1: no '✓ npm i -g is-odd' (EACCES fall-through, or arm-2 emptied the parse)"; guard_ok=0; }
+          echo "$out" | grep -q 'failed=0'           || { echo "✗ #56: reconcile reported failed>0"; guard_ok=0; }
+          echo "$out" | grep -qi "No module named 'yaml'" && { echo "✗ #56 arm2: PyYAML regression after python@ activation"; guard_ok=0; }
 
           docker logs paperclip-shell-smoke
           docker rm -f paperclip-shell-smoke
+          [ "$guard_ok" -eq 1 ] || exit 1
 
   smoke-test-ruflo-shell:
     needs: build-children
@@ -437,13 +440,16 @@ jobs:
           # A ✓ install line proves BOTH arms: yaml parsing found the package
           # (arm 2 didn't silently empty the list) AND the active npm dispatched to
           # a writable prefix without EACCES (arm 1). Pre-fix this is `✗ … (rc=…)`
-          # or absent entirely.
-          echo "$out" | grep -q '✓ npm i -g is-odd'
-          echo "$out" | grep -q 'failed=0'
-          ! echo "$out" | grep -qi "No module named 'yaml'"
+          # or absent entirely. Defer the verdict until after cleanup so a failing
+          # assertion names itself and does not leak the smoke container.
+          guard_ok=1
+          echo "$out" | grep -q '✓ npm i -g is-odd' || { echo "✗ #56 arm1: no '✓ npm i -g is-odd' (EACCES fall-through, or arm-2 emptied the parse)"; guard_ok=0; }
+          echo "$out" | grep -q 'failed=0'           || { echo "✗ #56: reconcile reported failed>0"; guard_ok=0; }
+          echo "$out" | grep -qi "No module named 'yaml'" && { echo "✗ #56 arm2: PyYAML regression after python@ activation"; guard_ok=0; }
 
           docker logs ruflo-shell-smoke
           docker rm -f ruflo-shell-smoke
+          [ "$guard_ok" -eq 1 ] || exit 1
 
   smoke-test-ruflo-server:
     needs: build-children
