@@ -235,7 +235,12 @@ jobs:
           # banner version must match the image's VK_BRIDGE_PIN — this is
           # what proves the init script reconciled to the pinned tag rather
           # than silently keeping a stale PVC install.
-          out=$(docker exec kali-smoke /home/claude/.local/bin/vk-bridge --dry-run)
+          # Capture stderr (2>&1): the v2 bridge (vk.bridge module) emits its
+          # banner + "dry-run complete" via logging, which goes to STDERR, not
+          # stdout. Without 2>&1 `out` is empty and the assertions below fail —
+          # this is what kept secure-agent-kali red on every build after the
+          # 2026-05-19 v2-bridge cutover.
+          out=$(docker exec kali-smoke /home/claude/.local/bin/vk-bridge --dry-run 2>&1)
           echo "$out"
           echo "$out" | head -1 | grep -qE '^\[bridge\] - v[0-9]+\.[0-9]+\.[0-9]+ - '
           echo "$out" | grep -q 'vk.bridge: dry-run complete'
