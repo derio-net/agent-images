@@ -1,6 +1,6 @@
 schema_version: 2
 plan: 2026-04-22-silent-reconnect-phantoms
 spec: docs/superpowers/specs/2026-04-22-silent-reconnect-phantoms-design.md
-target_repo: derio-net/superpowers-for-vk
-vk_version: '>=1.0.0,<3.0.0'
+target_repo: derio-net/agent-images
+vk_version: '>=2.0.0,<3.0.0'
 created: '2026-04-22'
