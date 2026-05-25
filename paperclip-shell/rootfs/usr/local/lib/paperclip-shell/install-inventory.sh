@@ -59,7 +59,7 @@ run() {
 
 # Read a top-level list from inventory.yaml. Returns one item per line.
 yaml_list() {
-    python3 -c "
+    /usr/bin/python3 -c "
 import sys, yaml
 d = yaml.safe_load(open('$INVENTORY')) or {}
 for x in (d.get('$1') or []):
@@ -69,7 +69,7 @@ for x in (d.get('$1') or []):
 
 # Read a list under 'removed.<key>'. Returns one item per line.
 yaml_removed_list() {
-    python3 -c "
+    /usr/bin/python3 -c "
 import sys, yaml
 d = yaml.safe_load(open('$INVENTORY')) or {}
 for x in ((d.get('removed') or {}).get('$1') or []):
@@ -94,9 +94,14 @@ if assert_manager mise; then
         if mise where "$tool" >/dev/null 2>&1; then
             already+=1
             echo "= mise $tool"
-            continue
+        else
+            run "mise install $tool" mise install "$tool" && installed+=1
         fi
-        run "mise install $tool" mise install "$tool" && installed+=1
+        # Activate globally so the shim dispatches to this runtime; without it
+        # npm/cargo fall through to the root-owned system prefix → EACCES.
+        # Unconditional + idempotent: also heals PVs left unactivated by older
+        # versions of this script. (#56)
+        run "mise use -g $tool" mise use -g "$tool"
     done < <(yaml_list mise)
 
     while IFS= read -r tool; do

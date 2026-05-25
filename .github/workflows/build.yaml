@@ -314,8 +314,37 @@ jobs:
           # MOTD drop-in must have been written and contain a recognizable summary.
           docker exec paperclip-shell-smoke cat /var/lib/paperclip-shell/last-reconcile.motd
 
+          # Two-arm regression guard (issue #56): a populated inventory on a fresh
+          # PV must reconcile clean. Pre-fix, arm 1 produced npm EACCES (mise shim
+          # fell through to /usr/bin/npm against the root-owned /usr prefix); arm 2
+          # regressed once python@ activated and the script's bare `python3`
+          # resolved to mise's PyYAML-less Python. Package choices are deliberate:
+          # is-odd is NOT baked into the image (claude-code is, and would short-
+          # circuit to `already`), and python@3.12 forces arm 2's path. The write
+          # needs `docker exec -i` to attach the heredoc on stdin.
+          docker exec -i paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+          mise:
+            - node@20
+            - python@3.12
+          npm-global:
+            - is-odd
+          YAML
+          out=$(docker exec -e INVENTORY=/tmp/inv.yaml paperclip-shell-smoke \
+                  /usr/local/bin/paperclip-shell-reconcile 2>&1)
+          echo "$out"
+          # A ✓ install line proves BOTH arms: yaml parsing found the package
+          # (arm 2 didn't silently empty the list) AND the active npm dispatched to
+          # a writable prefix without EACCES (arm 1). Pre-fix this is `✗ … (rc=…)`
+          # or absent entirely. Defer the verdict until after cleanup so a failing
+          # assertion names itself and does not leak the smoke container.
+          guard_ok=1
+          echo "$out" | grep -q '✓ npm i -g is-odd' || { echo "✗ #56 arm1: no '✓ npm i -g is-odd' (EACCES fall-through, or arm-2 emptied the parse)"; guard_ok=0; }
+          echo "$out" | grep -q 'failed=0'           || { echo "✗ #56: reconcile reported failed>0"; guard_ok=0; }
+          echo "$out" | grep -qi "No module named 'yaml'" && { echo "✗ #56 arm2: PyYAML regression after python@ activation"; guard_ok=0; }
+
           docker logs paperclip-shell-smoke
           docker rm -f paperclip-shell-smoke
+          [ "$guard_ok" -eq 1 ] || exit 1
 
   smoke-test-ruflo-shell:
     needs: build-children
@@ -390,8 +419,37 @@ jobs:
           # SSH login; we only assert the file is in place and runnable here).
           docker exec ruflo-shell-smoke test -x /etc/profile.d/60-ruflo-shell-banner.sh
 
+          # Two-arm regression guard (issue #56): a populated inventory on a fresh
+          # PV must reconcile clean. Pre-fix, arm 1 produced npm EACCES (mise shim
+          # fell through to /usr/bin/npm against the root-owned /usr prefix); arm 2
+          # regressed once python@ activated and the script's bare `python3`
+          # resolved to mise's PyYAML-less Python. Package choices are deliberate:
+          # is-odd is NOT baked into the image (claude-code is, and would short-
+          # circuit to `already`), and python@3.12 forces arm 2's path. The write
+          # needs `docker exec -i` to attach the heredoc on stdin.
+          docker exec -i ruflo-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+          mise:
+            - node@20
+            - python@3.12
+          npm-global:
+            - is-odd
+          YAML
+          out=$(docker exec -e INVENTORY=/tmp/inv.yaml ruflo-shell-smoke \
+                  /usr/local/bin/ruflo-shell-reconcile 2>&1)
+          echo "$out"
+          # A ✓ install line proves BOTH arms: yaml parsing found the package
+          # (arm 2 didn't silently empty the list) AND the active npm dispatched to
+          # a writable prefix without EACCES (arm 1). Pre-fix this is `✗ … (rc=…)`
+          # or absent entirely. Defer the verdict until after cleanup so a failing
+          # assertion names itself and does not leak the smoke container.
+          guard_ok=1
+          echo "$out" | grep -q '✓ npm i -g is-odd' || { echo "✗ #56 arm1: no '✓ npm i -g is-odd' (EACCES fall-through, or arm-2 emptied the parse)"; guard_ok=0; }
+          echo "$out" | grep -q 'failed=0'           || { echo "✗ #56: reconcile reported failed>0"; guard_ok=0; }
+          echo "$out" | grep -qi "No module named 'yaml'" && { echo "✗ #56 arm2: PyYAML regression after python@ activation"; guard_ok=0; }
+
           docker logs ruflo-shell-smoke
           docker rm -f ruflo-shell-smoke
+          [ "$guard_ok" -eq 1 ] || exit 1
 
   smoke-test-ruflo-server:
     needs: build-children
