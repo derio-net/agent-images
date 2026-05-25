@@ -19,7 +19,7 @@ set -e
 # VK_BRIDGE_PIN is the floor version the image guarantees. Manual upgrades
 # in the pod to versions ≥ pin survive restarts; only PVCs strictly older
 # than pin get reconciled forward.
-VK_BRIDGE_PIN="${VK_BRIDGE_PIN:-v2.2.11}"
+VK_BRIDGE_PIN="${VK_BRIDGE_PIN:-v2.2.13}"
 
 HOME="${AGENT_HOME:-$HOME}"
 export HOME
