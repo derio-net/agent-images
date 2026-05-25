@@ -44,7 +44,7 @@ tasks:
         paperclip-shell:bug
       # wait for sshd, then exec the populated reconcile
       sleep 5
-      docker exec pc-bug sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      docker exec -i pc-bug sh -c 'cat >/tmp/inv.yaml' <<'YAML'
       mise:
         - node@20
         - python@3.12
@@ -122,7 +122,7 @@ tasks:
         -v /tmp/pc-inv:/etc/paperclip-shell:ro \
         paperclip-shell:fix
       sleep 5
-      docker exec pc-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      docker exec -i pc-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
       mise:
         - node@20
         - python@3.12
@@ -168,7 +168,7 @@ tasks:
       docker run -d --name ru-fix --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges \
         -v /tmp/ru-home:/home/agent -v /tmp/ru-inv:/etc/ruflo-shell:ro ruflo-shell:fix
       sleep 5
-      docker exec ru-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      docker exec -i ru-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
       mise:
         - node@20
         - python@3.12
@@ -196,7 +196,7 @@ tasks:
                 # `python3` resolved to mise's PyYAML-less Python. Package choices are
                 # deliberate: is-odd is NOT baked into the image (claude-code is, and
                 # would short-circuit to `already`), and python@3.12 forces arm 2's path.
-                docker exec paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+                docker exec -i paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
                 mise:
                   - node@20
                   - python@3.12
@@ -270,41 +270,50 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:21:57+00:00'
+      note: Branched from local main (carries spec+plan commits) rather than origin/main,
+        so all three land in one PR.
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:21:58+00:00'
+      note: 'RED confirmed: EACCES mkdir /usr/lib/node_modules/is-odd, failed=1. Found
+        bug: docker exec needs -i to attach heredoc stdin (0-byte file without it);
+        sudo chown skipped locally (macOS, no passwordless sudo; bind mount writable
+        anyway).'
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-25T19:24:52+00:00'
       note: null
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-25T19:24:53+00:00'
       note: null
     P1.T2.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:24:55+00:00'
+      note: 'GREEN: ✓ mise use -g node@20 + python@3.12, ✓ npm i -g is-odd, failed=0.
+        Local run used image-internal /home/agent (no bind mount) to sidestep macOS
+        sudo.'
     P1.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-05-25T19:27:37+00:00'
       note: null
     P1.T3.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:27:41+00:00'
+      note: 'ruflo GREEN: ✓ mise use -g + ✓ npm i -g is-odd, failed=0. run() left
+        untouched.'
     P1.T4.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:29:52+00:00'
+      note: Added docker exec -i (heredoc stdin fix). Advisory workflow-security hook
+        fired (no untrusted github.event input used; static bash).
     P1.T4.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:29:56+00:00'
+      note: yaml ok; extracted run-scripts pass bash -n (heredoc terminator lands
+        at col 0 after de-indent).
     P1.T5.S1:
       state: ' '
       ticked_at: null
