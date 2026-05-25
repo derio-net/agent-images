@@ -1,0 +1,323 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Activate mise runtimes after install (both shells) + CI regression guard
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Reproduce RED — build the buggy paperclip-shell and watch the test fail
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Create the working branch from an up-to-date main:
+      ```
+      git fetch origin && git switch -c fix/56-mise-activation origin/main
+      ```
+      Build paperclip-shell from the CURRENT (unfixed) tree. `BASE_SHA`
+      defaults to `latest`, pulling the prebuilt agent-shell-base layer
+      from ghcr — only the thin paperclip layer (carrying the buggy
+      `install-inventory.sh`) is built locally:
+      ```
+      docker build -t paperclip-shell:bug paperclip-shell
+      ```
+      Expected: build succeeds. If the ghcr pull is unauthorized, run
+      `docker login ghcr.io` first, then rebuild.
+  - id: P1.T1.S2
+    text: |-
+      Boot the buggy image with an empty inventory (matches the CI smoke
+      posture), then run a populated reconcile by hand. The inventory uses
+      `is-odd` (NOT baked into the image — `@anthropic-ai/claude-code` is,
+      so it would short-circuit to `already` and prove nothing) and
+      `python@3.12` (forces arm 2's PyYAML path):
+      ```
+      mkdir -p /tmp/pc-home /tmp/pc-inv
+      sudo chown 1000:1000 /tmp/pc-home /tmp/pc-inv
+      echo '{}' | sudo tee /tmp/pc-inv/inventory.yaml >/dev/null
+      sudo chown 1000:1000 /tmp/pc-inv/inventory.yaml
+      docker rm -f pc-bug 2>/dev/null
+      docker run -d --name pc-bug --user 1000:1000 \
+        --cap-drop=ALL --security-opt=no-new-privileges \
+        -v /tmp/pc-home:/home/agent \
+        -v /tmp/pc-inv:/etc/paperclip-shell:ro \
+        paperclip-shell:bug
+      # wait for sshd, then exec the populated reconcile
+      sleep 5
+      docker exec pc-bug sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      mise:
+        - node@20
+        - python@3.12
+      npm-global:
+        - is-odd
+      YAML
+      docker exec -e INVENTORY=/tmp/inv.yaml pc-bug \
+        /usr/local/bin/paperclip-shell-reconcile 2>&1 | tee /tmp/pc-bug.out
+      ```
+      EXPECTED RED: the output contains `✗ npm i -g is-odd (rc=` with an
+      `EACCES` / `mkdir` / `/usr/lib/node_modules` error, OR (arm 2) a
+      `No module named 'yaml'` traceback after python activates and the
+      summary shows `failed` > 0. Confirm with:
+      ```
+      grep -q '✓ npm i -g is-odd' /tmp/pc-bug.out && echo "UNEXPECTED GREEN — stop" || echo "RED confirmed"
+      ```
+      Must print `RED confirmed`. Clean up: `docker rm -f pc-bug`.
+- number: 2
+  title: Fix paperclip-shell (arm 1 + arm 2) and confirm GREEN
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Arm 1 — activate after install. Edit
+      `paperclip-shell/rootfs/usr/local/lib/paperclip-shell/install-inventory.sh`.
+      Replace the mise install loop body so activation runs unconditionally:
+
+      OLD:
+      ```
+              if mise where "$tool" >/dev/null 2>&1; then
+                  already+=1
+                  echo "= mise $tool"
+                  continue
+              fi
+              run "mise install $tool" mise install "$tool" && installed+=1
+      ```
+      NEW:
+      ```
+              if mise where "$tool" >/dev/null 2>&1; then
+                  already+=1
+                  echo "= mise $tool"
+              else
+                  run "mise install $tool" mise install "$tool" && installed+=1
+              fi
+              # Activate globally so the shim dispatches to this runtime;
+              # without it npm/cargo fall through to the root-owned system
+              # prefix → EACCES. Unconditional + idempotent: also heals PVs
+              # left unactivated by older versions of this script. (#56)
+              run "mise use -g $tool" mise use -g "$tool"
+      ```
+      The dropped `continue` is intentional — both paths must reach the
+      activation line.
+  - id: P1.T2.S2
+    text: |-
+      Arm 2 — pin YAML parsing to system Python. In the same file, change
+      the interpreter in BOTH `yaml_list` and `yaml_removed_list` from the
+      bare `python3 -c "` to `/usr/bin/python3 -c "`. This honors the
+      file's own header comment and keeps parsing working after `python@`
+      activates mise's (PyYAML-less) Python. Verify exactly two call sites
+      changed and none remain bare:
+      ```
+      grep -n '/usr/bin/python3 -c' paperclip-shell/rootfs/usr/local/lib/paperclip-shell/install-inventory.sh   # expect 2
+      grep -n '^[[:space:]]*python3 -c' paperclip-shell/rootfs/usr/local/lib/paperclip-shell/install-inventory.sh # expect 0
+      ```
+  - id: P1.T2.S3
+    text: |-
+      Rebuild and re-run the exact reconcile from P1.T1.S2 (same inventory,
+      fresh home volume) against the fixed image:
+      ```
+      docker build -t paperclip-shell:fix paperclip-shell
+      rm -rf /tmp/pc-home && mkdir -p /tmp/pc-home && sudo chown 1000:1000 /tmp/pc-home
+      docker rm -f pc-fix 2>/dev/null
+      docker run -d --name pc-fix --user 1000:1000 \
+        --cap-drop=ALL --security-opt=no-new-privileges \
+        -v /tmp/pc-home:/home/agent \
+        -v /tmp/pc-inv:/etc/paperclip-shell:ro \
+        paperclip-shell:fix
+      sleep 5
+      docker exec pc-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      mise:
+        - node@20
+        - python@3.12
+      npm-global:
+        - is-odd
+      YAML
+      out=$(docker exec -e INVENTORY=/tmp/inv.yaml pc-fix /usr/local/bin/paperclip-shell-reconcile 2>&1)
+      echo "$out"
+      echo "$out" | grep -q '✓ npm i -g is-odd'        && echo "arm1 OK"
+      echo "$out" | grep -q 'failed=0'                  && echo "clean OK"
+      echo "$out" | grep -qi "No module named 'yaml'"   && echo "arm2 FAIL" || echo "arm2 OK"
+      ```
+      EXPECTED GREEN: prints `arm1 OK`, `clean OK`, `arm2 OK`. Clean up:
+      `docker rm -f pc-fix`.
+- number: 3
+  title: Mirror the fix into ruflo-shell and green-verify
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Apply the identical arm 1 + arm 2 edits to
+      `ruflo-shell/rootfs/usr/local/lib/ruflo-shell/install-inventory.sh`.
+      The mise loop has the same shape; insert the same unconditional
+      `run "mise use -g $tool" mise use -g "$tool"` after the if/else, and
+      pin both yaml helpers to `/usr/bin/python3`.
+      Do NOT touch ruflo's older `run()` (it uses an `else` branch instead
+      of paperclip's post-`if` rc capture) — that hardening is unrelated to
+      #56 and would inflate the diff. Verify:
+      ```
+      grep -n 'mise use -g' ruflo-shell/rootfs/usr/local/lib/ruflo-shell/install-inventory.sh   # expect 1
+      grep -n '/usr/bin/python3 -c' ruflo-shell/rootfs/usr/local/lib/ruflo-shell/install-inventory.sh # expect 2
+      ```
+  - id: P1.T3.S2
+    text: |-
+      Green-verify ruflo locally (the RED mechanism is identical to
+      paperclip and already demonstrated, so a green check suffices). Note
+      the ruflo paths: home is `/home/agent`, configmap mount is
+      `/etc/ruflo-shell`, command is `ruflo-shell-reconcile`:
+      ```
+      docker build -t ruflo-shell:fix ruflo-shell
+      mkdir -p /tmp/ru-home /tmp/ru-inv && sudo chown 1000:1000 /tmp/ru-home /tmp/ru-inv
+      echo '{}' | sudo tee /tmp/ru-inv/inventory.yaml >/dev/null && sudo chown 1000:1000 /tmp/ru-inv/inventory.yaml
+      docker rm -f ru-fix 2>/dev/null
+      docker run -d --name ru-fix --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges \
+        -v /tmp/ru-home:/home/agent -v /tmp/ru-inv:/etc/ruflo-shell:ro ruflo-shell:fix
+      sleep 5
+      docker exec ru-fix sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+      mise:
+        - node@20
+        - python@3.12
+      npm-global:
+        - is-odd
+      YAML
+      out=$(docker exec -e INVENTORY=/tmp/inv.yaml ru-fix /usr/local/bin/ruflo-shell-reconcile 2>&1)
+      echo "$out" | grep -q '✓ npm i -g is-odd' && echo "$out" | grep -q 'failed=0' \
+        && ! echo "$out" | grep -qi "No module named 'yaml'" && echo "ruflo GREEN" || echo "ruflo FAIL"
+      ```
+      EXPECTED: `ruflo GREEN`. Clean up: `docker rm -f ru-fix`.
+- number: 4
+  title: Encode the regression guard into both CI smoke jobs
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Edit `.github/workflows/build.yaml`. In the
+      `smoke-test-paperclip-shell` job, immediately BEFORE the final
+      `docker logs paperclip-shell-smoke` line, insert the two-arm guard:
+      ```
+                # Two-arm regression guard (issue #56): a populated inventory on a
+                # fresh PV must reconcile clean. Pre-fix, arm 1 produced npm EACCES
+                # (mise shim fell through to /usr/bin/npm against the root-owned /usr
+                # prefix); arm 2 regressed once python@ activated and the script's bare
+                # `python3` resolved to mise's PyYAML-less Python. Package choices are
+                # deliberate: is-odd is NOT baked into the image (claude-code is, and
+                # would short-circuit to `already`), and python@3.12 forces arm 2's path.
+                docker exec paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+                mise:
+                  - node@20
+                  - python@3.12
+                npm-global:
+                  - is-odd
+                YAML
+                out=$(docker exec -e INVENTORY=/tmp/inv.yaml paperclip-shell-smoke \
+                        /usr/local/bin/paperclip-shell-reconcile 2>&1)
+                echo "$out"
+                echo "$out" | grep -q '✓ npm i -g is-odd'
+                echo "$out" | grep -q 'failed=0'
+                ! echo "$out" | grep -qi "No module named 'yaml'"
+      ```
+      Match the existing job's indentation (the `run: |` block is indented
+      10 spaces under `steps`).
+  - id: P1.T4.S2
+    text: |-
+      Apply the mirrored block to the `smoke-test-ruflo-shell` job, before
+      its final `docker logs ruflo-shell-smoke`. Substitute the ruflo
+      names: container `ruflo-shell-smoke`, command
+      `/usr/local/bin/ruflo-shell-reconcile`. The inventory and assertions
+      are identical. Validate the workflow YAML parses:
+      ```
+      python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/build.yaml')); print('yaml ok')"
+      ```
+      Expect `yaml ok`.
+- number: 5
+  title: Commit, push, open PR, and confirm CI green
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Stage and commit the three changed files with a conventional message:
+      ```
+      git add paperclip-shell/rootfs/usr/local/lib/paperclip-shell/install-inventory.sh \
+              ruflo-shell/rootfs/usr/local/lib/ruflo-shell/install-inventory.sh \
+              .github/workflows/build.yaml
+      git commit -m "fix(shell): activate mise runtimes after install (#56)
+
+      install-inventory.sh ran 'mise install' but never 'mise use -g', so
+      the shims fell through to system npm/cargo (EACCES on the root-owned
+      /usr prefix). Activate each tool globally (unconditionally — heals
+      half-configured PVs) and pin the YAML helpers to /usr/bin/python3 so
+      activating python@ does not break PyYAML parsing. Mirrored into both
+      paperclip-shell and ruflo-shell. CI smoke jobs gain a populated-
+      inventory reconcile guarding both arms (is-odd + python@3.12).
+
+      Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+      ```
+  - id: P1.T5.S2
+    text: |-
+      Push the branch and open the PR against main, referencing #56:
+      ```
+      git push -u origin fix/56-mise-activation
+      gh pr create --base main --fill \
+        --title "fix(shell): activate mise runtimes after install (#56)" \
+        --body "Closes #56. Two-arm fix (mise use -g activation + /usr/bin/python3 YAML pin) mirrored into paperclip-shell and ruflo-shell, with a CI regression guard exercising the node/npm + python@ paths on both shells. Verified locally red→green per the plan.
+
+      🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+      ```
+  - id: P1.T5.S3
+    text: |-
+      Watch CI and confirm both smoke jobs pass with the new assertions:
+      ```
+      gh pr checks --watch
+      ```
+      Both `smoke-test-paperclip-shell` and `smoke-test-ruflo-shell` must
+      be green. If either fails, read its log for the reconcile output —
+      a missing `✓ npm i -g is-odd` means activation regressed; a
+      `No module named 'yaml'` means the python3 pin was missed in that
+      shell's copy. Do not merge until green.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

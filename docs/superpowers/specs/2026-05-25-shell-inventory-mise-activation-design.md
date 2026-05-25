@@ -183,6 +183,12 @@ not built here.
   activation is single-version per plugin. Current inventories list one version per
   plugin, so this isn't hit; documented here rather than discovered in production.
 
+## Implementation Plans
+
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| 2026-05-25-shell-inventory-mise-activation | `derio-net/agent-images` | `docs/superpowers/plans/2026-05-25-shell-inventory-mise-activation/` | — |
+
 ## Out of scope
 
 - Deduplicating the two `install-inventory.sh` copies into one source of truth.
