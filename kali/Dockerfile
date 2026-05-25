@@ -36,11 +36,17 @@ RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
     && grep -q "${AGENT_HOME}" /opt/sshd_config
 
 # ── Kali archive + dist-upgrade (resolve bookworm→kali-rolling version conflicts) ──
+# Mirror: pin the official Cloudflare-backed CDN (kali.download), NOT the
+# http.kali.org redirector. http.kali.org round-robins to community mirrors
+# whose pool/ can lag their Packages index during fast rolling transitions
+# (e.g. the GCC-16 churn of 2026-05): the index advertises gcc-16-base
+# 16-20260322-1 but the .deb 404s, failing dist-upgrade. kali.download keeps
+# index↔pool consistent. See docs/runbooks/frank-gotchas (kali mirror skew).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       lsb-release wget gnupg \
     && wget -qO - https://archive.kali.org/archive-key.asc \
       | gpg --dearmor -o /usr/share/keyrings/kali-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://http.kali.org/kali kali-rolling main non-free contrib" \
+    && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://kali.download/kali kali-rolling main non-free contrib" \
       > /etc/apt/sources.list.d/kali.list \
     && apt-get update \
     && apt-get dist-upgrade -y \
