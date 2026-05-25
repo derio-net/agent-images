@@ -132,7 +132,7 @@ The test inventory must force the *failing* paths, or it silently proves nothing
 # /usr/bin/npm against the root-owned /usr prefix); arm 2 regressed once python@
 # activated and the script's bare `python3` resolved to mise's PyYAML-less Python.
 # Package choices are deliberate — see "Inventory choice is load-bearing".
-docker exec paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+docker exec -i paperclip-shell-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
 mise:
   - node@20
   - python@3.12

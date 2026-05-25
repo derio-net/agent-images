@@ -315,18 +315,22 @@ state:
       note: yaml ok; extracted run-scripts pass bash -n (heredoc terminator lands
         at col 0 after de-indent).
     P1.T5.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:32:39+00:00'
+      note: Code fix committed 3432d1a.
     P1.T5.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-25T19:32:45+00:00'
+      note: 'Pushed; PR #91 opened. Branched off local main so spec+plan+fix travel
+        together.'
     P1.T5.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-05-25T19:32:51+00:00'
+      note: build.yaml has no pull_request trigger — CI runs only on push to main
+        (also pushes :latest + dispatches frank). Did NOT workflow_dispatch from the
+        branch to avoid prod side effects. Pre-merge proof = local red→green on both
+        shells; CI smoke validates on merge.
   completion:
-    at: null
+    at: '2026-05-25T19:32:55+00:00'
     note: null
     observed_prs: []
