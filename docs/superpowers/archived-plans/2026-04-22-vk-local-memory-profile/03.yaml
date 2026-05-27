@@ -166,10 +166,11 @@ state:
       ticked_at: null
       note: null
     P3.T3.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:11:31+00:00'
+      note: 'findings merged #21; decision A+B tracked frank#140; plan marked Complete
+        2026-04-30'
   completion:
-    at: null
-    note: null
+    at: '2026-05-27T19:11:42+00:00'
+    note: 'investigation complete; findings #21, follow-up frank#140'
     observed_prs: []

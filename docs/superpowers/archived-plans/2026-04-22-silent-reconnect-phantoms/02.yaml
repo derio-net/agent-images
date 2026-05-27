@@ -140,42 +140,42 @@ tasks:
 state:
   steps:
     P2.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:12:51+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:13:06+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T1.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:13:20+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T2.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:13:34+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T2.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:13:51+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T2.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:14:09+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T3.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:14:25+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T3.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:14:40+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
     P2.T3.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-05-27T19:14:57+00:00'
+      note: 'Phase 2 soak closed via #58 (atomic envs write)'
   completion:
-    at: null
-    note: null
+    at: '2026-05-27T19:15:43+00:00'
+    note: '48h soak completed and closed via #58'
     observed_prs: []
