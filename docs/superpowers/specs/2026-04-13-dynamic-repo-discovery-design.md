@@ -1,7 +1,24 @@
 # Dynamic Repo Discovery for vk-issue-bridge
 
 **Date:** 2026-04-13
-**Status:** Approved
+**Status:** Superseded — implemented by the v2 bridge rewrite (2026-05-27)
+
+> **Superseded.** This design predates the v2 bridge rewrite. The flat
+> `scripts/vk-issue-bridge.py` (and its hardcoded `KNOWN_REPOS` list) was
+> deleted from this repo in the bridge cutover (PR #85,
+> `2026-05-17-v2-bridge-cutover`). Dynamic repo discovery is now implemented
+> in the `vk.bridge` library in `derio-net/superpowers-for-vk`:
+>
+> - **Discovery:** `src/vk/bridge/cli.py` `_configured_repos()` scans
+>   `~/repos` for directories containing `.git` (sorted), with a
+>   `VK_BRIDGE_REPOS` env override for non-default checkout layouts.
+> - **Test:** `tests/unit/test_vk_bridge_discover.py`.
+> - **Observability:** `cli.py` logs `[bridge] configured repos: N found at …`
+>   each tick.
+>
+> All three deliverables below (discovery function, unit test, log line) are
+> satisfied, and the bridge is now PVC-resident (`uv tool install`), so adding
+> a repo never requires an image rebuild. No agent-images plan is needed.
 
 ## Problem
 
