@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Pinned to ruvnet/ruflo SHA — bump deliberately when re-vendoring.
-ARG RUFLO_GIT_REF=ca0a6fa5cb1678b5c57c9289bc09a036f7308c61
+ARG RUFLO_GIT_REF=a6dd4ab3d527fbba3e7202741c9479315cc56a0b
 
 # --- source: shallow-clone the upstream repo at the pinned SHA. Single source
 #     of truth for both the builder and runtime stages so we never drift.
@@ -63,6 +63,30 @@ RUN sed -i \
       -e 's|const hostname = url\.hostname\.toLowerCase();|if (url.protocol === "wasm:") return true;\n\t\tconst hostname = url.hostname.toLowerCase();|' \
       ruflo/src/ruvocal/src/lib/server/urlSafety.ts \
  && grep -q 'protocol === "wasm:"' ruflo/src/ruvocal/src/lib/server/urlSafety.ts
+
+# Repair the RvfGridFSBucket GridFS shim so file upload/download/copy work
+# against the RVF backend.
+#
+# ruvocal is hardcoded to the RVF storage backend, whose RvfGridFSBucket only
+# *mimics* MongoDB's GridFSBucket API — incompletely. The Mongo-era chat-ui
+# callers expect real streams/cursors:
+#   - uploadFile.ts  : upload.once("finish"/"error", …)  → needs a Writable
+#                      (and passes an ArrayBuffer, which a default Writable
+#                      rejects — the objectMode shim coerces it)
+#   - downloadFile.ts: openDownloadStream(...).on("data"/"end"/"error")  → needs
+#                      a Readable; bucket.find(...).next()  → needs a sync cursor
+#   - conversation.ts: openDownloadStream(...).pipe(uploadStream)  → needs both
+# The upstream shim returns plain objects, so every file upload 500s with
+# `TypeError: upload.once is not a function` and reads/copies fail too. The patch
+# makes the shim faithfully honor the GridFS contract (real Writable via
+# objectMode, real Readable via Readable.from, sync find cursor). Verified to
+# apply cleanly at this pinned RUFLO_GIT_REF; the grep guards fail the build if
+# the patch silently no-ops after a future bump. Filed upstream as ruvnet/ruflo#TBD.
+COPY patches/rvf-gridfs-parity.patch /tmp/rvf-gridfs-parity.patch
+RUN git apply /tmp/rvf-gridfs-parity.patch \
+ && grep -q 'new Writable'  ruflo/src/ruvocal/src/lib/server/database/rvf.ts \
+ && grep -q 'Readable.from' ruflo/src/ruvocal/src/lib/server/database/rvf.ts \
+ && grep -q 'next: async'   ruflo/src/ruvocal/src/lib/server/database/rvf.ts
 
 # --- builder: mirrors upstream `builder` stage in src/ruvocal/Dockerfile.
 #     Full node:24 (not slim) for the Svelte build's native deps.
