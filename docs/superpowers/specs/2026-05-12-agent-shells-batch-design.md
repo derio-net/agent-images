@@ -272,3 +272,9 @@ Tracked here so the plan author has the complete list:
   images; ESO mappings; removal of `secure-agent-kali`; the actual list of
   MCP servers and skills the operator pre-loads; cross-harness skill
   unification.
+
+## Implementation Plans
+
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| 2026-06-01-agent-shells-batch | `derio-net/agent-images` | `docs/superpowers/plans/2026-06-01-agent-shells-batch/` | — |
