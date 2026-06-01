@@ -1,0 +1,214 @@
+schema_version: 2
+phase:
+  number: 2
+  title: hermes-agent-shell — independent leaf off agent-shell-base
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Resolve hermes upstream + scaffold image dir
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Confirm hermes upstream details. The spec records these
+      as deferred-to-impl — resolve them here once before
+      writing the Dockerfile:
+
+      - Upstream repo URL (canonical hermes source).
+      - Install method (npm package, pip package, or git
+        + build).
+      - Initial `HERMES_GIT_REF` SHA or tag (pin in Dockerfile).
+      - Whether hermes runs interactively or exposes a service
+        port.
+
+      Record findings in the implementing PR's body.
+  - id: P2.T1.S2
+    text: |-
+      Scaffold the image dir mirroring multi-agent-shell's
+      shape (but smaller — single-harness, sparse inventory).
+
+      ```bash
+      cd $(git rev-parse --show-toplevel)
+      mkdir -p hermes-agent-shell/rootfs/etc/{cont-init.d,profile.d} \
+               hermes-agent-shell/rootfs/usr/local/lib/hermes-agent-shell
+      # Copy multi-agent-shell scaffolding, renamed
+      for f in install-base-runtimes.sh install-inventory.sh lib.sh \
+               notify-telegram.sh; do
+        cp multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/$f \
+           hermes-agent-shell/rootfs/usr/local/lib/hermes-agent-shell/$f
+      done
+      cp multi-agent-shell/rootfs/etc/cont-init.d/40-shell-inventory \
+         hermes-agent-shell/rootfs/etc/cont-init.d/40-shell-inventory
+      grep -rl 'multi-agent-shell\|MULTI_AGENT_SHELL' \
+           hermes-agent-shell/rootfs | xargs sed -i.bak \
+           -e 's/multi-agent-shell/hermes-agent-shell/g' \
+           -e 's/MULTI_AGENT_SHELL/HERMES_AGENT_SHELL/g'
+      find hermes-agent-shell/rootfs -name '*.bak' -delete
+      ```
+  - id: P2.T1.S3
+    text: |-
+      Adapt the hermes-specific MOTD drop-in. Hermes is BYOK
+      (no subscription/OAuth) per the standard's exception,
+      so the auth row shows `(BYOK — no login flow)` rather
+      than ✓/✗.
+
+      Create
+      `hermes-agent-shell/rootfs/etc/profile.d/50-hermes-agent-shell-motd.sh`:
+
+      ```bash
+      #!/bin/sh
+      echo "Harness auth status:"
+      echo "  ~ hermes     (BYOK — no login flow)"
+      if [ -z "$OPENAI_BASE_URL" ]; then
+        echo "    note: OPENAI_BASE_URL not set; hermes won't reach LiteLLM"
+      fi
+      ```
+
+      Make executable. Spec requires the env vars be set by
+      Frank (ESO-sourced); we surface a hint, not an error.
+- number: 2
+  title: Dockerfile — install hermes per resolved upstream
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Author `hermes-agent-shell/Dockerfile` based on
+      multi-agent-shell's:
+
+      ```dockerfile
+      ARG BASE_SHA=latest
+      FROM ghcr.io/derio-net/agent-shell-base:${BASE_SHA}
+
+      ARG HERMES_GIT_REF=<PIN-FROM-P2.T1.S1>
+
+      # Install hermes per the upstream's chosen method
+      # (npm | pip | git+make — substitute the right one):
+      RUN <install command using HERMES_GIT_REF>
+
+      COPY rootfs/ /
+      RUN ln -sf /usr/local/lib/hermes-agent-shell/install-inventory.sh \
+                 /usr/local/bin/hermes-agent-shell-reconcile
+      ```
+
+      Keep the COPY + reconcile-symlink shape consistent with
+      multi-agent-shell and paperclip-shell.
+  - id: P2.T2.S2
+    text: |-
+      Build locally and verify hermes responds.
+
+      ```bash
+      docker build -t hermes-agent-shell:test \
+          --build-arg BASE_SHA=$(git rev-parse HEAD:agent-shell-base) \
+          hermes-agent-shell/
+      docker run --rm --user 1000 hermes-agent-shell:test \
+          hermes --version
+      ```
+
+      Expected: hermes prints its version cleanly, exit 0.
+  - id: P2.T2.S3
+    text: |-
+      Sparse inventory smoke — empty inventory exits 0 and
+      the BYOK MOTD prints.
+
+      ```bash
+      cd hermes-agent-shell
+      tmp=$(mktemp -d) && HOME=$tmp bash \
+          rootfs/usr/local/lib/hermes-agent-shell/install-inventory.sh \
+          <(echo '{}') && echo OK
+      bash rootfs/etc/profile.d/50-hermes-agent-shell-motd.sh
+      ```
+
+      Expected: `OK` then `~ hermes  (BYOK — no login flow)`.
+- number: 3
+  title: CI matrix entry + smoke + dispatch-frank
+  steps:
+  - id: P2.T3.S1
+    text: |-
+      Add to `.github/workflows/build.yaml`:
+
+      ```yaml
+      - name: hermes-agent-shell
+        context: hermes-agent-shell
+        build_args: |
+          BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+      ```
+
+      And a `smoke-test-hermes-agent-shell` job mirroring the
+      Phase 1 smoke shape, with the manifest asserting only
+      `hermes --version` and the BYOK MOTD.
+
+      Add the new smoke job to `dispatch-frank.needs`.
+  - id: P2.T3.S2
+    text: |-
+      Validate the workflow + run the bats tests (the inventory
+      installer is the same as multi-agent-shell's; only the
+      per-image namespace differs).
+
+      ```bash
+      yamllint -d relaxed .github/workflows/build.yaml || true
+      cd hermes-agent-shell && bats tests/ 2>&1 | tail
+      ```
+
+      Expected: no structural yaml errors; tests pass.
+- number: 4
+  title: README + open PR
+  steps:
+  - id: P2.T4.S1
+    text: |-
+      Write `hermes-agent-shell/README.md` per the standard's
+      checklist. Single-harness manifest row; explicit BYOK
+      section explaining the OPENAI_BASE_URL / OPENAI_API_KEY
+      contract sourced from Frank+ESO. Top-level README
+      Images table gains one row.
+  - id: P2.T4.S2
+    text: |-
+      Commit, push, PR with title
+      `[derio-net/agent-images] 2026-06-01-agent-shells-batch · Phase 2/3 · hermes-agent-shell`.
+      Body starts with the tracking block from the Issue.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

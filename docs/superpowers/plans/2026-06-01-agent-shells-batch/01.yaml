@@ -1,0 +1,629 @@
+schema_version: 2
+phase:
+  number: 1
+  title: multi-agent-shell + standard impl + CI intermediate
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Scaffold image dir mirroring paperclip-shell
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Create the image directory tree.
+
+      ```bash
+      cd $(git rev-parse --show-toplevel)
+      mkdir -p multi-agent-shell/rootfs/etc/{cont-init.d,profile.d} \
+               multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell
+      ```
+
+      Expected: tree created. `ls multi-agent-shell/rootfs` shows
+      `etc/  usr/`.
+  - id: P1.T1.S2
+    text: |-
+      Adapt the Dockerfile from paperclip-shell.
+
+      Start from a verbatim copy, then rename per-image paths
+      (`paperclip-shell` → `multi-agent-shell`) and rewrite the FROM
+      line to take a `BASE_SHA` build arg pointing at `agent-shell-base`:
+
+      ```bash
+      cp paperclip-shell/Dockerfile multi-agent-shell/Dockerfile
+      sed -i.bak 's/paperclip-shell/multi-agent-shell/g' \
+          multi-agent-shell/Dockerfile
+      rm multi-agent-shell/Dockerfile.bak
+      head -10 multi-agent-shell/Dockerfile
+      ```
+
+      Expected: top of file shows
+      `ARG BASE_SHA=latest` and
+      `FROM ghcr.io/derio-net/agent-shell-base:${BASE_SHA}`
+      (no harness installs yet — added in T4).
+  - id: P1.T1.S3
+    text: |-
+      Copy the inventory + reconcile scaffolding from paperclip-shell
+      with renamed namespaces. These files get extended in T2/T3 —
+      here we just establish the byte-similar baseline.
+
+      ```bash
+      for f in install-base-runtimes.sh install-inventory.sh lib.sh \
+               notify-telegram.sh; do
+        cp paperclip-shell/rootfs/usr/local/lib/paperclip-shell/$f \
+           multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/$f
+      done
+      cp paperclip-shell/rootfs/etc/cont-init.d/40-shell-inventory \
+         multi-agent-shell/rootfs/etc/cont-init.d/40-shell-inventory
+      cp paperclip-shell/rootfs/etc/profile.d/40-paperclip-shell-paths.sh \
+         multi-agent-shell/rootfs/etc/profile.d/40-multi-agent-shell-paths.sh
+      # Rename namespace references — paths, env-var names, log prefixes
+      grep -rl 'paperclip-shell\|PAPERCLIP_SHELL' \
+           multi-agent-shell/rootfs | xargs sed -i.bak \
+           -e 's/paperclip-shell/multi-agent-shell/g' \
+           -e 's/PAPERCLIP_SHELL/MULTI_AGENT_SHELL/g'
+      find multi-agent-shell/rootfs -name '*.bak' -delete
+      grep -rE 'paperclip|PAPERCLIP' multi-agent-shell/rootfs || \
+          echo "OK: no leftover paperclip references"
+      ```
+
+      Expected: final line prints `OK: no leftover paperclip references`.
+- number: 2
+  title: Auth-MOTD detector (TDD)
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Write a failing bats test for the MOTD detector.
+
+      Create `multi-agent-shell/tests/test_motd.bats`:
+
+      ```bash
+      #!/usr/bin/env bats
+      # Tests the auth-status MOTD drop-in for multi-agent-shell.
+      # The detector reads only the credential file paths declared
+      # in the harness manifest; presence-only, no validity check.
+
+      setup() {
+        export TMP_HOME="$(mktemp -d)"
+        export HOME="$TMP_HOME"
+        MOTD="$(realpath rootfs/etc/profile.d/50-multi-agent-shell-motd.sh)"
+      }
+
+      teardown() { rm -rf "$TMP_HOME"; }
+
+      @test "no creds: all harnesses show ✗ not logged in" {
+        run bash "$MOTD"
+        [[ "$status" -eq 0 ]]
+        [[ "$output" == *"✗ claude"* ]]
+        [[ "$output" == *"✗ codex"* ]]
+        [[ "$output" == *"✗ gemini"* ]]
+        [[ "$output" == *"✗ opencode"* ]]
+      }
+
+      @test "claude creds present: shows ✓ for claude only" {
+        mkdir -p "$TMP_HOME/.claude"
+        echo '{}' > "$TMP_HOME/.claude/credentials.json"
+        run bash "$MOTD"
+        [[ "$output" == *"✓ claude"* ]]
+        [[ "$output" == *"✗ codex"* ]]
+      }
+      ```
+  - id: P1.T2.S2
+    text: |-
+      Run the failing test to confirm RED.
+
+      ```bash
+      cd multi-agent-shell
+      bats tests/test_motd.bats
+      ```
+
+      Expected: both tests FAIL — the MOTD script doesn't exist yet.
+      `not ok 1 ... No such file or directory`.
+  - id: P1.T2.S3
+    text: |-
+      Implement the MOTD drop-in at
+      `multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh`:
+
+      ```bash
+      #!/bin/sh
+      # multi-agent-shell auth-status MOTD — printed on SSH login.
+      # Presence-only check on each harness's credential file
+      # (declared in the image's harness manifest, README.md).
+
+      echo "Harness auth status:"
+
+      check() {
+        # $1=name $2=path (relative to $HOME)
+        if [ -e "$HOME/$2" ]; then
+          # Compute age in days via mtime delta
+          age_days=$(( ( $(date +%s) - $(stat -c %Y "$HOME/$2") ) / 86400 ))
+          echo "  ✓ $1     (~/$2, age ${age_days}d)"
+        else
+          echo "  ✗ $1     not logged in — run: $1 login"
+        fi
+      }
+
+      check claude   .claude/credentials.json
+      check codex    .config/codex/auth.json
+      check gemini   .config/gemini/auth.json
+      check opencode .local/share/opencode/auth.json
+      ```
+
+      Make it executable: `chmod +x multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh`.
+
+      Note: opencode credential path is a placeholder pending T4
+      upstream lookup; revisit after pinning the package.
+  - id: P1.T2.S4
+    text: |-
+      Re-run the bats tests — GREEN.
+
+      ```bash
+      cd multi-agent-shell
+      bats tests/test_motd.bats
+      ```
+
+      Expected: both tests pass.
+      ```
+      ok 1 no creds: all harnesses show ✗ not logged in
+      ok 2 claude creds present: shows ✓ for claude only
+      ```
+- number: 3
+  title: Inventory schema extension — harnesses/mcp-servers/skills (TDD)
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Write failing bats tests for the three new inventory keys.
+
+      Create `multi-agent-shell/tests/test_install_inventory.bats`:
+
+      ```bash
+      #!/usr/bin/env bats
+      setup() {
+        export TMP_HOME=$(mktemp -d)
+        export HOME=$TMP_HOME
+        mkdir -p "$HOME/.claude"
+        INSTALLER="$(realpath rootfs/usr/local/lib/multi-agent-shell/install-inventory.sh)"
+      }
+      teardown() { rm -rf "$TMP_HOME"; }
+
+      @test "harnesses: latest invokes update command" {
+        cat > "$HOME/inventory.yaml" <<'YAML'
+      harnesses:
+        claude: latest
+      YAML
+        # Stub `claude update` to record invocation
+        mkdir -p "$HOME/.local/bin"
+        cat > "$HOME/.local/bin/claude" <<'STUB'
+      #!/bin/sh
+      echo "claude $*" >> "$HOME/claude.log"
+      STUB
+        chmod +x "$HOME/.local/bin/claude"
+        PATH="$HOME/.local/bin:$PATH" bash "$INSTALLER" "$HOME/inventory.yaml"
+        grep -q 'claude update' "$HOME/claude.log"
+      }
+
+      @test "mcp-servers: appends to per-harness mcp.json idempotently" {
+        cat > "$HOME/inventory.yaml" <<'YAML'
+      mcp-servers:
+        claude:
+          - name: context7
+            command: npx
+            args: ["-y", "@upstash/context7-mcp"]
+      YAML
+        bash "$INSTALLER" "$HOME/inventory.yaml"
+        bash "$INSTALLER" "$HOME/inventory.yaml"   # idempotency
+        # Two runs must produce exactly one entry
+        [ "$(jq '.mcpServers | length' "$HOME/.claude/mcp.json")" = "1" ]
+      }
+
+      @test "skills: clones git source into per-harness skills dir" {
+        # Use a local bare repo as the source so we don't touch network
+        tmp_remote=$(mktemp -d)
+        git init -q --bare "$tmp_remote/superpowers.git"
+        cat > "$HOME/inventory.yaml" <<YAML
+      skills:
+        claude:
+          - name: superpowers
+            source: git+file://$tmp_remote/superpowers.git
+            ref: HEAD
+      YAML
+        bash "$INSTALLER" "$HOME/inventory.yaml" || true
+        [ -d "$HOME/.claude/skills/superpowers" ]
+      }
+
+      @test "fail-open: broken harness pin logs but exits 0" {
+        cat > "$HOME/inventory.yaml" <<'YAML'
+      harnesses:
+        nonexistent: latest
+      YAML
+        run bash "$INSTALLER" "$HOME/inventory.yaml"
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"warn"* ]] || [[ "$output" == *"skip"* ]]
+      }
+      ```
+  - id: P1.T3.S2
+    text: |-
+      Run the failing tests — RED.
+
+      ```bash
+      cd multi-agent-shell
+      bats tests/test_install_inventory.bats
+      ```
+
+      Expected: 4 tests fail. The current install-inventory.sh
+      (copied from paperclip-shell) doesn't know about the
+      three new keys.
+  - id: P1.T3.S3
+    text: |-
+      Extend `install-inventory.sh` with three new handlers,
+      inserted after the existing key loops (mise/npm-global/pipx/cargo)
+      and before the `removed:` block.
+
+      Sketch (full code in the implementing PR):
+
+      ```bash
+      # --- New: harnesses ---
+      if has_key "$INVENTORY" 'harnesses'; then
+        for harness in $(yq -r '.harnesses | keys[]' "$INVENTORY"); do
+          pin=$(yq -r ".harnesses.\"$harness\"" "$INVENTORY")
+          run_or_log "$harness" "$harness update" || warn \
+            "harness $harness: update failed (pin=$pin), continuing"
+        done
+      fi
+
+      # --- New: mcp-servers ---
+      if has_key "$INVENTORY" 'mcp-servers'; then
+        for harness in $(yq -r '."mcp-servers" | keys[]' "$INVENTORY"); do
+          mcp_path="$HOME/.${harness}/mcp.json"
+          # Idempotent merge — replace by .name, not append.
+          tmp=$(mktemp)
+          yq -o=json ".\"mcp-servers\".\"$harness\"" "$INVENTORY" | \
+            jq --arg path "$mcp_path" '
+              reduce .[] as $entry (
+                (try (input | fromjson) catch {mcpServers: {}}) ;
+                .mcpServers[$entry.name] = ($entry | del(.name))
+              )' < "$mcp_path" > "$tmp" && mv "$tmp" "$mcp_path"
+        done
+      fi
+
+      # --- New: skills ---
+      if has_key "$INVENTORY" 'skills'; then
+        for harness in $(yq -r '.skills | keys[]' "$INVENTORY"); do
+          skills_dir="$HOME/.${harness}/skills"
+          mkdir -p "$skills_dir"
+          yq -o=json ".skills.\"$harness\"" "$INVENTORY" | \
+            jq -c '.[]' | while read -r entry; do
+              name=$(echo "$entry" | jq -r .name)
+              source=$(echo "$entry" | jq -r .source)
+              ref=$(echo "$entry" | jq -r '.ref // "HEAD"')
+              target="$skills_dir/$name"
+              if [ -d "$target/.git" ]; then
+                git -C "$target" fetch -q && \
+                  git -C "$target" checkout -q "$ref" || \
+                  warn "skill $name: checkout $ref failed"
+              else
+                git clone -q "${source#git+}" "$target" || \
+                  warn "skill $name: clone failed"
+              fi
+            done
+        done
+      fi
+      ```
+
+      Fail-open per standard: every warn returns 0; final exit
+      is 0 even if individual installs failed.
+  - id: P1.T3.S4
+    text: |-
+      Re-run the bats tests — GREEN.
+
+      ```bash
+      cd multi-agent-shell
+      bats tests/test_install_inventory.bats
+      ```
+
+      Expected: all 4 tests pass. If `jq`-pipe in mcp-servers is
+      ambiguous, refactor: read the existing file first, then
+      jq-merge, then write — same behaviour, less clever pipe.
+  - id: P1.T3.S5
+    text: |-
+      Empty-inventory smoke (matches the standard's CI requirement).
+
+      ```bash
+      cd multi-agent-shell
+      tmp=$(mktemp -d) && HOME=$tmp bash \
+          rootfs/usr/local/lib/multi-agent-shell/install-inventory.sh \
+          <(echo '{}') && echo OK
+      ```
+
+      Expected: prints `OK` and exits 0. No harness updates ran,
+      no errors.
+- number: 4
+  title: Bake harness bootstrap shims (claude inherited + codex/gemini/opencode)
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      Look up upstream npm package names for the three new
+      harnesses. Inspect each project's README + npm registry
+      to confirm the published package id and a known-good
+      version.
+
+      ```bash
+      # Reference candidates (verify before pinning):
+      npm view @openai/codex version           # codex
+      npm view @google/gemini-cli version       # gemini
+      npm view opencode-ai version              # opencode (or 'sst-opencode' — verify)
+      ```
+
+      Record the chosen package + version in the implementing
+      PR's body so reviewers can audit the pin. If any package
+      id is wrong (404 on `npm view`), follow upstream's install
+      instructions and adjust both the Dockerfile and the
+      harness manifest in the README.
+  - id: P1.T4.S2
+    text: |-
+      Add the three `npm install -g` lines to
+      `multi-agent-shell/Dockerfile`, after the
+      agent-shell-base layer:
+
+      ```dockerfile
+      # multi-agent-shell — bake the three additional harness
+      # bootstrap shims. claude is inherited from agent-base.
+      # Self-update target is $HOME/.local/bin/ (per the standard).
+      RUN npm install -g --omit=dev \
+            @openai/codex@<PIN> \
+            @google/gemini-cli@<PIN> \
+            opencode-ai@<PIN>
+      ```
+
+      Substitute `<PIN>` with the versions captured in T4.S1.
+  - id: P1.T4.S3
+    text: |-
+      Build the image locally and verify each harness reports
+      `--version` cleanly as UID 1000 (matches CI smoke shape).
+
+      ```bash
+      docker build -t multi-agent-shell:test \
+          --build-arg BASE_SHA=$(git rev-parse HEAD:agent-shell-base) \
+          multi-agent-shell/
+      for h in claude codex gemini opencode; do
+        docker run --rm --user 1000 multi-agent-shell:test \
+            "$h" --version
+      done
+      ```
+
+      Expected: four `<harness> X.Y.Z` lines, all exit 0.
+      If any harness errors on first invocation (e.g., wants
+      a config dir), file the gap in the harness-manifest
+      README and apply the workaround the standard prescribes
+      (install via inventory into `$HOME/.npm-global`).
+- number: 5
+  title: CI integration — intermediate job + matrix + smoke + dispatch-frank
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      Read the current build.yaml layout so the additions match
+      existing conventions exactly.
+
+      ```bash
+      grep -nE 'build-(base|shell-base|children)|smoke-test-|dispatch-frank' \
+          .github/workflows/build.yaml | head -40
+      ```
+
+      Note the SHA-output pattern (`outputs.sha`) used by
+      `build-shell-base`; the new `build-multi-agent-shell` job
+      must mirror it so `build-children` can reference
+      `needs.build-multi-agent-shell.outputs.sha` later (Phase 3
+      uses this for infra-shell).
+  - id: P1.T5.S2
+    text: |-
+      Add the `build-multi-agent-shell` job as a parallel
+      intermediate. Place it next to `build-shell-base` in
+      `.github/workflows/build.yaml`:
+
+      ```yaml
+      build-multi-agent-shell:
+        needs: build-shell-base
+        uses: ./.github/workflows/build-push.yaml   # whatever the existing reusable shape is
+        with:
+          image: multi-agent-shell
+          context: multi-agent-shell
+          build_args: |
+            BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+      ```
+
+      Adapt to the actual reusable-workflow shape used by
+      `build-shell-base` — copy-edit, don't re-invent.
+  - id: P1.T5.S3
+    text: |-
+      Add a `multi-agent-shell` matrix entry under
+      `build-children`. This builds the image as a child of
+      agent-shell-base (parallel to paperclip-shell/ruflo-shell),
+      so its tag follows the existing child convention:
+
+      ```yaml
+      - name: multi-agent-shell
+        context: multi-agent-shell
+        build_args: |
+          BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+      ```
+
+      Wait — clarify with the matrix: the spec's intent (and the
+      T5.S2 job) is to publish multi-agent-shell as a
+      **second intermediate** so infra-shell can be built from
+      it. Decide between (a) only the T5.S2 intermediate job,
+      with no matrix entry (matrix is for leaves), or (b) both
+      — intermediate AND a children-matrix entry for tag parity.
+      Default: (a). If the matrix shape currently bakes the tag
+      via `build-children` only, switch to (b).
+  - id: P1.T5.S4
+    text: |-
+      Add `smoke-test-multi-agent-shell` mirroring an existing
+      smoke job (e.g. `smoke-test-paperclip-shell`). Assert:
+      1. sshd up under K8s-equivalent securityContext.
+      2. `<h> --version` for each of claude/codex/gemini/opencode
+         as UID 1000.
+      3. `multi-agent-shell-reconcile` against an empty inventory
+         exits 0 and the MOTD drop-in is present.
+
+      Add the new smoke job to `dispatch-frank.needs`. Validate
+      the workflow yaml:
+
+      ```bash
+      yamllint -d relaxed .github/workflows/build.yaml || true
+      # If actionlint is available:
+      actionlint .github/workflows/build.yaml 2>&1 | head
+      ```
+
+      Expected: no syntax errors. yamllint may emit style warnings —
+      those are fine; structural errors are not.
+- number: 6
+  title: README + open PR
+  steps:
+  - id: P1.T6.S1
+    text: |-
+      Write `multi-agent-shell/README.md` following the standard's
+      "Adopting the standard" checklist. Required sections:
+
+      1. One-line summary + link to the standard doc.
+      2. Harness manifest table (claude/codex/gemini/opencode):
+         bootstrap install line, self-update path, auth command,
+         auth credential file, update command.
+      3. Inventory schema example (the three new keys).
+      4. First-boot operator runbook: SSH in, run each
+         `<agent> login`, see the MOTD update.
+      5. Smoke-test reference (link to the CI job).
+
+      Top-level `README.md` Images table gains one row pointing
+      here.
+  - id: P1.T6.S2
+    text: |-
+      Run plan-level self-review (lints the plan against the
+      schema and dependency rules).
+
+      ```bash
+      vk plan self-review docs/superpowers/plans/2026-06-01-agent-shells-batch
+      ```
+
+      Expected: no errors.
+  - id: P1.T6.S3
+    text: |-
+      Commit on a feature branch and open the PR.
+
+      ```bash
+      git checkout -b feat/multi-agent-shell-phase-1
+      git add multi-agent-shell/ .github/workflows/build.yaml README.md \
+              docs/superpowers/plans/2026-06-01-agent-shells-batch/
+      git commit -m "feat(multi-agent-shell): bake 4 harnesses + standard impl + CI"
+      git push -u origin feat/multi-agent-shell-phase-1
+      gh pr create --title \
+        "[derio-net/agent-images] 2026-06-01-agent-shells-batch · Phase 1/3 · multi-agent-shell + standard impl + CI intermediate" \
+        --body-file - <<'EOF'
+      <tracking block copied from Issue body (📦 Repo / 📋 Plan / 🎯 Goal)>
+
+      ## Summary
+      Phase 1/3 of agent-shells-batch. Adds `multi-agent-shell` —
+      the load-bearing image baking claude/codex/gemini/opencode
+      and implementing the multi-harness standard's inventory
+      extension + auth-status MOTD. Establishes the reusable
+      scaffolding that Phases 2 (hermes) and 3 (infra) will mirror.
+
+      ## Smoke checklist
+      - [ ] CI `smoke-test-multi-agent-shell` green
+      - [ ] All four `<h> --version` clean on UID 1000
+      - [ ] Empty inventory reconcile exits 0; MOTD drop-in present
+      EOF
+      ```
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S5:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

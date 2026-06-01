@@ -1,0 +1,216 @@
+schema_version: 2
+phase:
+  number: 3
+  title: infra-shell — FROM multi-agent-shell + cluster-admin tooling
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Scaffold FROM multi-agent-shell
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Create the image dir. infra-shell inherits the standard's
+      full implementation from multi-agent-shell — its rootfs
+      holds only its own namespace renames + the cluster-admin
+      install layer in the Dockerfile.
+
+      ```bash
+      cd $(git rev-parse --show-toplevel)
+      mkdir -p infra-shell/rootfs/etc/{cont-init.d,profile.d} \
+               infra-shell/rootfs/usr/local/lib/infra-shell
+      # Reuse multi-agent-shell's inventory installer (same code,
+      # different per-image namespace).
+      for f in install-base-runtimes.sh install-inventory.sh lib.sh \
+               notify-telegram.sh; do
+        cp multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/$f \
+           infra-shell/rootfs/usr/local/lib/infra-shell/$f
+      done
+      cp multi-agent-shell/rootfs/etc/cont-init.d/40-shell-inventory \
+         infra-shell/rootfs/etc/cont-init.d/40-shell-inventory
+      grep -rl 'multi-agent-shell\|MULTI_AGENT_SHELL' \
+           infra-shell/rootfs | xargs sed -i.bak \
+           -e 's/multi-agent-shell/infra-shell/g' \
+           -e 's/MULTI_AGENT_SHELL/INFRA_SHELL/g'
+      find infra-shell/rootfs -name '*.bak' -delete
+      ```
+  - id: P3.T1.S2
+    text: |-
+      infra-shell's MOTD is the same shape as multi-agent-shell's
+      (same four harnesses inherited). Copy the drop-in with
+      namespace renames:
+
+      ```bash
+      cp multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh \
+         infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh
+      cp multi-agent-shell/rootfs/etc/profile.d/40-multi-agent-shell-paths.sh \
+         infra-shell/rootfs/etc/profile.d/40-infra-shell-paths.sh
+      ```
+- number: 2
+  title: Cluster-admin tooling (kubectl/talosctl/omnictl) — cluster-ops only
+  steps:
+  - id: P3.T2.S1
+    text: |-
+      Inspect the cluster-admin install lines in
+      `kali/Dockerfile` — that's the canonical source for the
+      three tools we want infra-shell to carry.
+
+      ```bash
+      grep -nE 'kubectl|talosctl|omnictl' kali/Dockerfile | head -20
+      ```
+
+      Note the version pins, install method (curl|tar|deb),
+      and target path. We mirror these verbatim into
+      infra-shell's Dockerfile so the two images stay
+      byte-comparable for the tools they share.
+  - id: P3.T2.S2
+    text: |-
+      Author `infra-shell/Dockerfile`:
+
+      ```dockerfile
+      ARG BASE_SHA=latest
+      FROM ghcr.io/derio-net/multi-agent-shell:${BASE_SHA}
+
+      USER root
+      # --- Cluster-admin tooling (pentest stack intentionally NOT included) ---
+      ARG KUBECTL_VERSION=<copy from kali/Dockerfile>
+      ARG TALOSCTL_VERSION=<copy>
+      ARG OMNICTL_VERSION=<copy>
+      RUN <install commands copied verbatim from kali/Dockerfile>
+      USER 1000
+
+      COPY rootfs/ /
+      RUN ln -sf /usr/local/lib/infra-shell/install-inventory.sh \
+                 /usr/local/bin/infra-shell-reconcile
+      ```
+
+      Do NOT add nmap, metasploit, burpsuite, or any other
+      kali pentest package — that's the cluster-ops-only
+      scope decision.
+  - id: P3.T2.S3
+    text: |-
+      Build locally and verify all three tools + the inherited
+      harnesses as UID 1000:
+
+      ```bash
+      docker build -t infra-shell:test \
+          --build-arg BASE_SHA=$(git rev-parse HEAD:multi-agent-shell) \
+          infra-shell/
+      for c in 'kubectl version --client' 'talosctl version --client' \
+               'omnictl --version' 'claude --version' 'codex --version' \
+               'gemini --version' 'opencode --version'; do
+        docker run --rm --user 1000 infra-shell:test sh -c "$c"
+      done
+      ```
+
+      Expected: 7 clean version lines, all exit 0.
+- number: 3
+  title: CI matrix entry + smoke + dispatch-frank
+  steps:
+  - id: P3.T3.S1
+    text: |-
+      Add to `.github/workflows/build.yaml` under
+      `build-children`:
+
+      ```yaml
+      - name: infra-shell
+        context: infra-shell
+        build_args: |
+          BASE_SHA=${{ needs.build-multi-agent-shell.outputs.sha }}
+      ```
+
+      Note the `BASE_SHA` source — `build-multi-agent-shell`,
+      not `build-shell-base`. This is the only matrix entry
+      in the batch with that wiring.
+  - id: P3.T3.S2
+    text: |-
+      Add `smoke-test-infra-shell` mirroring multi-agent-shell's
+      smoke + the three admin-tool version assertions:
+
+      ```yaml
+      - name: kubectl --client
+        run: docker exec $C kubectl version --client
+      - name: talosctl --client
+        run: docker exec $C talosctl version --client
+      - name: omnictl --version
+        run: docker exec $C omnictl --version
+      ```
+
+      Add to `dispatch-frank.needs`.
+  - id: P3.T3.S3
+    text: |-
+      Validate workflow yaml:
+
+      ```bash
+      yamllint -d relaxed .github/workflows/build.yaml || true
+      actionlint .github/workflows/build.yaml 2>&1 | head
+      ```
+
+      Expected: no structural errors.
+- number: 4
+  title: README + open PR
+  steps:
+  - id: P3.T4.S1
+    text: |-
+      `infra-shell/README.md`: same standard checklist; harness
+      manifest table inherited from multi-agent-shell; explicit
+      note that pentest packages are not baked (operators can
+      layer via inventory `apt:` follow-up if ever needed);
+      migration note that `secure-agent-kali` is not removed
+      in this batch.
+
+      Top-level README Images table gains one row.
+  - id: P3.T4.S2
+    text: |-
+      Commit, push, PR with title
+      `[derio-net/agent-images] 2026-06-01-agent-shells-batch · Phase 3/3 · infra-shell`.
+      Body starts with the tracking block from the Issue and
+      cites the cluster-ops-only scope decision.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T3.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
