@@ -99,8 +99,20 @@ skills:
 ```
 
 Source of truth: `/etc/multi-agent-shell/inventory.yaml` (mounted ConfigMap
-on Frank). Removed semantics mirror the existing block:
-`removed.harnesses`, `removed.mcp-servers.<harness>`, `removed.skills.<harness>`.
+on Frank). Removed semantics mirror the existing block and are implemented
+for all three new keys:
+
+```yaml
+removed:
+  harnesses:        # deletes $HOME/.local/bin/<h> if a PV shim is present
+    - opencode
+  mcp-servers:      # deletes the named server from $HOME/.<harness>/mcp.json
+    claude:
+      - context7
+  skills:           # deletes $HOME/.<harness>/skills/<name>
+    claude:
+      - superpowers
+```
 
 ## First-boot operator runbook
 

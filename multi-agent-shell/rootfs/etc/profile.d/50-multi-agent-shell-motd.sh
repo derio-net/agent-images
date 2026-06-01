@@ -12,10 +12,17 @@ echo "Harness auth status:"
 check() {
   # $1=name $2=path (relative to $HOME)
   if [ -e "$HOME/$2" ]; then
-    age_days=$(( ( $(date +%s) - $(stat -c %Y "$HOME/$2") ) / 86400 ))
-    echo "  ✓ $1     (~/$2, age ${age_days}d)"
+    # stat may fail on an unreadable/dangling target; degrade to "?" rather
+    # than emit a shell arithmetic error on login.
+    mtime=$(stat -c %Y "$HOME/$2" 2>/dev/null)
+    if [ -n "$mtime" ]; then
+      age_days=$(( ( $(date +%s) - mtime ) / 86400 ))
+      printf '  ✓ %-9s (~/%s, age %sd)\n' "$1" "$2" "$age_days"
+    else
+      printf '  ✓ %-9s (~/%s, age ?)\n' "$1" "$2"
+    fi
   else
-    echo "  ✗ $1     not logged in — run: $1 login"
+    printf '  ✗ %-9s not logged in — run: %s login\n' "$1" "$1"
   fi
 }
 

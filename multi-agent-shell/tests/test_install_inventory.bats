@@ -16,6 +16,24 @@ setup() {
 
 teardown() { rm -rf "$TMP_HOME"; }
 
+# Seed a local bare git repo with one commit on `main` and echo its path.
+# Used as a network-free skill source.
+seed_bare_repo() {
+  local remote seed
+  remote=$(mktemp -d)
+  git init -q --bare "$remote/superpowers.git"
+  seed=$(mktemp -d)
+  git -C "$seed" init -q
+  git -C "$seed" config user.email t@t
+  git -C "$seed" config user.name t
+  : > "$seed/README"
+  git -C "$seed" add README
+  git -C "$seed" -c commit.gpgsign=false commit -qm seed
+  git -C "$seed" branch -M main
+  git -C "$seed" push -q "$remote/superpowers.git" main
+  echo "$remote/superpowers.git"
+}
+
 @test "harnesses: latest invokes update command" {
   cat > "$HOME/inventory.yaml" <<'YAML'
 harnesses:
@@ -90,4 +108,95 @@ YAML
   echo '{}' > "$HOME/inventory.yaml"
   run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
   [ "$status" -eq 0 ]
+}
+
+@test "skills: successful clone is counted in the summary (no subshell loss)" {
+  bare="$(seed_bare_repo)"
+  cat > "$HOME/inventory.yaml" <<YAML
+skills:
+  claude:
+    - name: superpowers
+      source: git+file://$bare
+      ref: main
+YAML
+  run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  # The clone must register in installed=N (regression guard: the counter
+  # used to be lost to a pipe-induced subshell and reported installed=0).
+  [[ "$output" == *"✓ skill claude/superpowers cloned"* ]]
+  echo "$output" | grep -qE 'installed=[1-9]'
+}
+
+@test "skills: second run is idempotent (fast-forwards, not re-clone)" {
+  bare="$(seed_bare_repo)"
+  cat > "$HOME/inventory.yaml" <<YAML
+skills:
+  claude:
+    - name: superpowers
+      source: git+file://$bare
+      ref: main
+YAML
+  INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"= skill claude/superpowers checked out"* ]]
+  [ -d "$HOME/.claude/skills/superpowers/.git" ]
+}
+
+@test "skills: broken source is accounted as failed (not silent)" {
+  cat > "$HOME/inventory.yaml" <<'YAML'
+skills:
+  claude:
+    - name: bogus
+      source: git+file:///nonexistent/no/such/repo.git
+      ref: main
+YAML
+  run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  # Fail-open: still exits 0, but the failure must show in the summary so the
+  # Telegram notifier fires (unlike the previous warn-only behaviour).
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qE 'failed=[1-9]'
+}
+
+@test "removed.skills: deletes the cloned skill dir" {
+  bare="$(seed_bare_repo)"
+  cat > "$HOME/inventory.yaml" <<YAML
+skills:
+  claude:
+    - name: superpowers
+      source: git+file://$bare
+      ref: main
+YAML
+  INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ -d "$HOME/.claude/skills/superpowers" ]
+  cat > "$HOME/inventory.yaml" <<'YAML'
+removed:
+  skills:
+    claude:
+      - superpowers
+YAML
+  run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [ ! -d "$HOME/.claude/skills/superpowers" ]
+}
+
+@test "removed.mcp-servers: deletes the named server from mcp.json" {
+  cat > "$HOME/inventory.yaml" <<'YAML'
+mcp-servers:
+  claude:
+    - name: context7
+      command: npx
+      args: ["-y", "@upstash/context7-mcp"]
+YAML
+  INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$(jq '.mcpServers | length' "$HOME/.claude/mcp.json")" = "1" ]
+  cat > "$HOME/inventory.yaml" <<'YAML'
+removed:
+  mcp-servers:
+    claude:
+      - context7
+YAML
+  run env INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [ "$(jq '.mcpServers | length' "$HOME/.claude/mcp.json")" = "0" ]
 }

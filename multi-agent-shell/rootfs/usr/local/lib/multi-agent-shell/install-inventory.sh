@@ -209,19 +209,6 @@ if command -v yq >/dev/null 2>&1; then
             fi
             run "harness $harness update (pin=$pin)" "$harness" update && installed+=1
         done < <(yq -r '.harnesses | to_entries[] | "\(.key)\t\(.value)"' "$INVENTORY")
-
-        # removed.harnesses — declarative uninstall. Most harness CLIs do not
-        # expose an `uninstall` subcommand, so we delegate to a generic shim
-        # path under $HOME/.local/bin/<h> if present, then warn-only otherwise.
-        while IFS= read -r harness; do
-            [[ -z "$harness" ]] && continue
-            if [[ -e "$HOME/.local/bin/$harness" ]]; then
-                rm -f "$HOME/.local/bin/$harness" && removed+=1
-                echo "✓ removed $HOME/.local/bin/$harness"
-            else
-                echo "= warn: removed.harnesses.$harness has no PV-installed binary at \$HOME/.local/bin; nothing to remove"
-            fi
-        done < <(yq -r '.removed.harnesses // [] | .[]' "$INVENTORY")
     fi
 
     # --- mcp-servers ---
@@ -257,36 +244,88 @@ if command -v yq >/dev/null 2>&1; then
 
     # --- skills ---
     # Clone (or fast-forward to ref) into $HOME/.<harness>/skills/<name>.
+    # Entries are streamed as "harness<TAB>name<TAB>source<TAB>ref" so the
+    # whole section runs in ONE while-loop with no pipe — counter mutations
+    # (installed/already/failed) persist in the current shell rather than
+    # being lost to a subshell. yq emits "null" for a missing .ref; bash
+    # normalises that to HEAD below (avoids a nested-quote yq interpolation).
     if yq -e 'has("skills")' "$INVENTORY" >/dev/null 2>&1; then
-        while IFS= read -r harness; do
-            [[ -z "$harness" ]] && continue
+        while IFS=$'\t' read -r harness name source ref; do
+            [[ -z "$harness" || -z "$name" ]] && continue
             skills_dir="$HOME/.${harness}/skills"
             mkdir -p "$skills_dir"
-            yq -o=json ".skills.\"$harness\"" "$INVENTORY" \
-                | jq -c '.[]' \
-                | while IFS= read -r entry; do
-                      name=$(echo "$entry" | jq -r '.name')
-                      source=$(echo "$entry" | jq -r '.source')
-                      ref=$(echo "$entry" | jq -r '.ref // "HEAD"')
-                      target="$skills_dir/$name"
-                      url="${source#git+}"
-                      if [[ -d "$target/.git" ]]; then
-                          if (cd "$target" && git fetch -q origin 2>/dev/null && git checkout -q "$ref" 2>/dev/null); then
-                              echo "= skill $harness/$name checked out at $ref"
-                          else
-                              echo "= warn: skill $harness/$name update to $ref failed"
-                          fi
-                      else
-                          if git clone -q "$url" "$target" 2>/dev/null; then
-                              (cd "$target" && git checkout -q "$ref" 2>/dev/null) || true
-                              echo "✓ skill $harness/$name cloned from $url"
-                              installed+=1
-                          else
-                              echo "= warn: skill $harness/$name clone from $url failed"
-                          fi
-                      fi
-                  done
-        done < <(yq -r '.skills | keys | .[]' "$INVENTORY")
+            target="$skills_dir/$name"
+            url="${source#git+}"
+            [[ "$ref" == "null" || -z "$ref" ]] && ref=HEAD
+            if [[ -d "$target/.git" ]]; then
+                if (cd "$target" && git fetch -q origin 2>/dev/null && git checkout -q "$ref" 2>/dev/null); then
+                    already+=1
+                    echo "= skill $harness/$name checked out at $ref"
+                else
+                    echo "✗ skill $harness/$name update to $ref failed"
+                    failures+=("skills/$harness/$name")
+                    failed+=1
+                fi
+            else
+                if git clone -q "$url" "$target" 2>/dev/null; then
+                    (cd "$target" && git checkout -q "$ref" 2>/dev/null) || true
+                    installed+=1
+                    echo "✓ skill $harness/$name cloned from $url"
+                else
+                    echo "✗ skill $harness/$name clone from $url failed"
+                    failures+=("skills/$harness/$name")
+                    failed+=1
+                fi
+            fi
+        done < <(yq -r '.skills | to_entries[] | .key as $h | .value[] | [$h, .name, .source, (.ref // "HEAD")] | @tsv' "$INVENTORY")
+    fi
+
+    # --- removed.* for the three new keys ---
+    # Guarded independently of the additive blocks above: a removal-only
+    # inventory carries `removed:` without the matching top-level key.
+    if yq -e 'has("removed")' "$INVENTORY" >/dev/null 2>&1; then
+
+        # removed.harnesses — declarative uninstall. Most harness CLIs do not
+        # expose an `uninstall` subcommand, so we delete a PV-installed shim at
+        # $HOME/.local/bin/<h> if present, then warn-only otherwise.
+        while IFS= read -r harness; do
+            [[ -z "$harness" ]] && continue
+            if [[ -e "$HOME/.local/bin/$harness" ]]; then
+                rm -f "$HOME/.local/bin/$harness" && removed+=1
+                echo "✓ removed $HOME/.local/bin/$harness"
+            else
+                echo "= warn: removed.harnesses.$harness has no PV-installed binary at \$HOME/.local/bin; nothing to remove"
+            fi
+        done < <(yq -r '.removed.harnesses // [] | .[]' "$INVENTORY")
+
+        # removed.mcp-servers.<harness> — delete named servers from mcp.json.
+        while IFS=$'\t' read -r harness name; do
+            [[ -z "$harness" || -z "$name" ]] && continue
+            mcp_path="$HOME/.${harness}/mcp.json"
+            [[ -f "$mcp_path" ]] || continue
+            tmp=$(mktemp)
+            if jq --arg n "$name" 'del(.mcpServers[$n])' "$mcp_path" > "$tmp" 2>/dev/null; then
+                mv "$tmp" "$mcp_path" && removed+=1
+                echo "✓ removed mcp-servers/$harness/$name"
+            else
+                echo "✗ removed.mcp-servers/$harness/$name: jq delete failed"
+                failures+=("removed.mcp-servers/$harness/$name")
+                failed+=1
+                rm -f "$tmp"
+            fi
+        done < <(yq -r '(.removed."mcp-servers" // {}) | to_entries[] | .key as $h | .value[] | [$h, .] | @tsv' "$INVENTORY")
+
+        # removed.skills.<harness> — delete the cloned skill dir.
+        while IFS=$'\t' read -r harness name; do
+            [[ -z "$harness" || -z "$name" ]] && continue
+            target="$HOME/.${harness}/skills/$name"
+            if [[ -d "$target" ]]; then
+                rm -rf "$target" && removed+=1
+                echo "✓ removed skills/$harness/$name"
+            else
+                echo "= warn: removed.skills.$harness.$name not present; nothing to remove"
+            fi
+        done < <(yq -r '(.removed.skills // {}) | to_entries[] | .key as $h | .value[] | [$h, .] | @tsv' "$INVENTORY")
     fi
 
 else
