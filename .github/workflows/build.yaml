@@ -95,6 +95,37 @@ jobs:
           cache-from: type=gha,scope=agent-shell-base
           cache-to: type=gha,scope=agent-shell-base,mode=max
 
+  # multi-agent-shell is a SECOND intermediate base — Phase 3 infra-shell
+  # builds FROM ghcr.io/derio-net/multi-agent-shell:<sha>. Mirrors the
+  # build-shell-base shape so downstream `needs.build-multi-agent-shell.outputs.sha`
+  # references work in the same idiomatic way.
+  build-multi-agent-shell:
+    needs: build-shell-base
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ github.sha }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: multi-agent-shell
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/multi-agent-shell:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/multi-agent-shell:latest
+          build-args: BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+          cache-from: type=gha,scope=multi-agent-shell
+          cache-to: type=gha,scope=multi-agent-shell,mode=max
+
   build-children:
     needs: [build-base, build-shell-base]
     runs-on: ubuntu-latest
@@ -509,6 +540,113 @@ jobs:
           docker logs ruflo-server-smoke | tail -50
           docker rm -f ruflo-server-smoke
 
+  smoke-test-multi-agent-shell:
+    needs: build-multi-agent-shell
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      MULTI_AGENT_SHELL_IMAGE: ghcr.io/derio-net/multi-agent-shell
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live K8s securityContext (runAsUser: 1000, cap-drop=ALL,
+          # no-new-privileges) so the s6-overlay preinit hits the same /run
+          # constraints it does on Frank.
+          mkdir -p /tmp/mas-home /tmp/mas-inventory
+          sudo chown 1000:1000 /tmp/mas-home /tmp/mas-inventory
+          # Empty inventory — first-deploy posture per the multi-harness
+          # standard's "Smoke testing" section. Installer must report 0
+          # installed and exit clean; sshd must come up regardless.
+          echo '{}' | sudo tee /tmp/mas-inventory/inventory.yaml >/dev/null
+          sudo chown 1000:1000 /tmp/mas-inventory/inventory.yaml
+
+          docker run -d --name mas-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/mas-home:/home/agent \
+            -v /tmp/mas-inventory:/etc/multi-agent-shell:ro \
+            "${MULTI_AGENT_SHELL_IMAGE}:${IMAGE_SHA}"
+
+          # /init must reach stage 2 (sshd up). 30s budget mirrors paperclip-shell.
+          for i in $(seq 1 30); do
+            if docker exec mas-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec mas-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ sshd never came up within 30s"
+            docker logs mas-smoke
+            docker rm -f mas-smoke
+            exit 1
+          fi
+
+          # Layer-1 managers must be on PATH and runnable as the agent UID.
+          docker exec mas-smoke mise --version
+          docker exec mas-smoke rustup --version
+          docker exec mas-smoke pipx --version
+          docker exec mas-smoke python3 --version
+          docker exec mas-smoke yq --version
+          docker exec mas-smoke jq --version
+
+          # Multi-harness manifest assertion (per docs/standards/multi-harness-shells.md
+          # § "Smoke testing"): every harness in the image's manifest reports
+          # --version cleanly as UID 1000. claude inherited from agent-base;
+          # codex/gemini/opencode baked here.
+          for h in claude codex gemini opencode; do
+            echo "::group::$h --version"
+            docker exec mas-smoke "$h" --version
+            echo "::endgroup::"
+          done
+
+          # Inventory installer reconciles cleanly against the empty inventory
+          # and writes a MOTD drop-in. failed=0 proves no section errored.
+          docker exec mas-smoke /usr/local/bin/multi-agent-shell-reconcile
+          out=$(docker exec mas-smoke cat /var/log/cont-init.d/40-shell-inventory.log)
+          echo "$out"
+          echo "$out" | grep -q 'failed=0' || { echo "✗ empty-inventory reconcile reported failed>0"; docker rm -f mas-smoke; exit 1; }
+          docker exec mas-smoke test -s /var/lib/multi-agent-shell/last-reconcile.motd
+
+          # Auth-status MOTD drop-in must be present and executable. We don't
+          # assert content here — credentials are runtime, not CI — only that
+          # the script is in place and runs cleanly with empty $HOME.
+          docker exec mas-smoke test -x /etc/profile.d/50-multi-agent-shell-motd.sh
+          docker exec mas-smoke /etc/profile.d/50-multi-agent-shell-motd.sh | grep -q '✗ claude'
+
+          # Reconcile two new schema keys end-to-end against a populated
+          # inventory: mcp-servers merges into ~/.claude/mcp.json; harnesses:
+          # latest invokes the inherited `claude update` self-update path.
+          docker exec -i mas-smoke sh -c 'cat >/tmp/inv.yaml' <<'YAML'
+          harnesses:
+            claude: latest
+          mcp-servers:
+            claude:
+              - name: context7
+                command: npx
+                args: ["-y", "@upstash/context7-mcp"]
+          YAML
+          out=$(docker exec -e INVENTORY=/tmp/inv.yaml mas-smoke \
+                  /usr/local/bin/multi-agent-shell-reconcile 2>&1)
+          echo "$out"
+          guard_ok=1
+          echo "$out" | grep -q 'mcp-servers/claude reconciled' || { echo "✗ mcp-servers section did not run"; guard_ok=0; }
+          docker exec mas-smoke jq -e '.mcpServers.context7.command == "npx"' /home/agent/.claude/mcp.json >/dev/null || { echo "✗ mcp.json not merged correctly"; guard_ok=0; }
+
+          docker logs mas-smoke
+          docker rm -f mas-smoke
+          [ "$guard_ok" -eq 1 ] || exit 1
+
   dispatch-frank:
     needs:
       - test-kali
@@ -518,6 +656,7 @@ jobs:
       - smoke-test-paperclip-shell
       - smoke-test-ruflo-shell
       - smoke-test-ruflo-server
+      - smoke-test-multi-agent-shell
     runs-on: ubuntu-latest
     permissions: {}
     steps:
