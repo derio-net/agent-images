@@ -621,10 +621,10 @@ state:
       ticked_at: '2026-06-01T19:24:41+00:00'
       note: null
     P1.T6.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:26:00+00:00'
       note: null
   completion:
-    at: null
+    at: '2026-06-01T19:26:00+00:00'
     note: null
     observed_prs: []
