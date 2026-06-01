@@ -4,7 +4,7 @@ phase:
   title: multi-agent-shell + standard impl + CI intermediate
   tag: agentic
   depends_on: []
-  tracking_issue: null
+  tracking_issue: https://github.com/derio-net/agent-images/issues/98
 tasks:
 - number: 1
   title: Scaffold image dir mirroring paperclip-shell
