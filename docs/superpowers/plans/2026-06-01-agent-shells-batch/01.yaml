@@ -536,88 +536,89 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:38+00:00'
       note: null
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:38+00:00'
       note: null
     P1.T1.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T2.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T2.S4:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T3.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:39+00:00'
       note: null
     P1.T3.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T3.S4:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T3.S5:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T4.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T4.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T4.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-06-01T19:24:47+00:00'
+      note: no docker available in execution env; verified by CI smoke-test-multi-agent-shell
     P1.T5.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:40+00:00'
       note: null
     P1.T5.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:41+00:00'
       note: null
     P1.T5.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-06-01T19:24:47+00:00'
+      note: took option (a) per the plan's default — only intermediate job, no children-matrix
+        entry; tag parity preserved by build-multi-agent-shell pushing :sha and :latest
     P1.T5.S4:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:41+00:00'
       note: null
     P1.T6.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:41+00:00'
       note: null
     P1.T6.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-01T19:24:41+00:00'
       note: null
     P1.T6.S3:
       state: ' '
