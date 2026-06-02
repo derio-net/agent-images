@@ -152,6 +152,10 @@ jobs:
           - name: ruflo-server
             context: ruflo-server
             build_args: ""
+          - name: hermes-agent-shell
+            context: hermes-agent-shell
+            build_args: |
+              BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
           - name: infra-shell
             context: infra-shell
             build_args: |
@@ -651,6 +655,83 @@ jobs:
           docker rm -f mas-smoke
           [ "$guard_ok" -eq 1 ] || exit 1
 
+  smoke-test-hermes-agent-shell:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HERMES_AGENT_SHELL_IMAGE: ghcr.io/derio-net/hermes-agent-shell
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live K8s securityContext (runAsUser: 1000, cap-drop=ALL,
+          # no-new-privileges) so the s6-overlay preinit hits the same /run
+          # constraints it does on Frank.
+          mkdir -p /tmp/has-home /tmp/has-inventory
+          sudo chown 1000:1000 /tmp/has-home /tmp/has-inventory
+          # Empty inventory — first-deploy posture per the multi-harness
+          # standard's "Smoke testing" section. Installer must report 0
+          # installed and exit clean; sshd must come up regardless. hermes is
+          # a single-harness leaf with no subscription/OAuth flow, so the
+          # inventory is expected to stay sparse in practice.
+          echo '{}' | sudo tee /tmp/has-inventory/inventory.yaml >/dev/null
+          sudo chown 1000:1000 /tmp/has-inventory/inventory.yaml
+
+          docker run -d --name has-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/has-home:/home/agent \
+            -v /tmp/has-inventory:/etc/hermes-agent-shell:ro \
+            "${HERMES_AGENT_SHELL_IMAGE}:${IMAGE_SHA}"
+
+          # /init must reach stage 2 (sshd up). 30s budget mirrors paperclip-shell.
+          for i in $(seq 1 30); do
+            if docker exec has-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec has-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ sshd never came up within 30s"
+            docker logs has-smoke
+            docker rm -f has-smoke
+            exit 1
+          fi
+
+          # Single-harness manifest assertion (per
+          # docs/standards/multi-harness-shells.md § "Smoke testing"):
+          # `hermes --version` runs cleanly as UID 1000.
+          docker exec has-smoke hermes --version
+
+          # Inventory installer reconciles cleanly against the empty inventory
+          # and writes a MOTD drop-in. failed=0 proves no section errored.
+          docker exec has-smoke /usr/local/bin/hermes-agent-shell-reconcile
+          out=$(docker exec has-smoke cat /var/log/cont-init.d/40-shell-inventory.log)
+          echo "$out"
+          echo "$out" | grep -q 'failed=0' || { echo "✗ empty-inventory reconcile reported failed>0"; docker rm -f has-smoke; exit 1; }
+          docker exec has-smoke test -s /var/lib/hermes-agent-shell/last-reconcile.motd
+
+          # BYOK MOTD drop-in must be present, executable, and emit the
+          # `(BYOK — no login flow)` row that the standard's exception
+          # mandates for hermes. We don't assert OPENAI_BASE_URL contents
+          # here — that env is Frank/ESO's responsibility, not the image's.
+          docker exec has-smoke test -x /etc/profile.d/50-hermes-agent-shell-motd.sh
+          docker exec has-smoke /etc/profile.d/50-hermes-agent-shell-motd.sh | grep -q '~ hermes'
+
+          docker logs has-smoke
+          docker rm -f has-smoke
+
   smoke-test-infra-shell:
     needs: build-children
     runs-on: ubuntu-latest
@@ -756,6 +837,7 @@ jobs:
       - smoke-test-ruflo-shell
       - smoke-test-ruflo-server
       - smoke-test-multi-agent-shell
+      - smoke-test-hermes-agent-shell
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
     permissions: {}
