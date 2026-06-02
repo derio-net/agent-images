@@ -19,7 +19,7 @@ set -uo pipefail
 _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$_self_dir/lib.sh"
-multi_agent_shell_init_dirs
+infra_shell_init_dirs
 
 INVENTORY="${INVENTORY:-/etc/infra-shell/inventory.yaml}"
 LOG="${INFRA_SHELL_LOG_DIR}/40-shell-inventory.log"
@@ -36,7 +36,7 @@ export PATH="${HOME}/.local/share/mise/shims:${HOME}/.cargo/bin:${PATH}"
 
 if [[ ! -f "$INVENTORY" ]]; then
     echo "WARN: $INVENTORY missing; nothing to do"
-    multi_agent_shell_motd_write "⚠ infra-shell: inventory file missing"
+    infra_shell_motd_write "⚠ infra-shell: inventory file missing"
     exit 0
 fi
 
@@ -343,13 +343,13 @@ fi
 echo "=== summary: installed=$installed already=$already removed=$removed failed=$failed ==="
 
 if (( failed > 0 )); then
-    multi_agent_shell_motd_write "$(printf '⚠ infra-shell: %d install(s) failed on last reconcile (%s)\n  See: %s' \
+    infra_shell_motd_write "$(printf '⚠ infra-shell: %d install(s) failed on last reconcile (%s)\n  See: %s' \
         "$failed" "$(IFS=,; echo "${failures[*]}")" "$LOG")"
     "$NOTIFY" \
         "infra-shell: $failed install(s) failed on boot" \
         "$(printf '%s\n' "${failures[@]}")" || true
 else
-    multi_agent_shell_motd_write "$(printf '✓ infra-shell: %d installed, %d already present, %d removed @ %s' \
+    infra_shell_motd_write "$(printf '✓ infra-shell: %d installed, %d already present, %d removed @ %s' \
         "$installed" "$already" "$removed" "$(date -Iseconds)")"
 fi
 

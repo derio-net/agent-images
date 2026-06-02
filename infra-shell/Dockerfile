@@ -46,7 +46,6 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
       /etc/profile.d/40-infra-shell-paths.sh \
       /etc/profile.d/45-infra-shell-reconcile-motd.sh \
       /etc/profile.d/50-infra-shell-motd.sh \
-      /usr/local/lib/infra-shell/install-base-runtimes.sh \
       /usr/local/lib/infra-shell/install-inventory.sh \
       /usr/local/lib/infra-shell/notify-telegram.sh \
       /usr/local/lib/infra-shell/lib.sh \

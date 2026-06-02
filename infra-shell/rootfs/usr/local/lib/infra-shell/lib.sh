@@ -8,11 +8,11 @@ INFRA_SHELL_LOG_DIR="${INFRA_SHELL_LOG_DIR:-/var/log/cont-init.d}"
 INFRA_SHELL_STATE_DIR="${INFRA_SHELL_STATE_DIR:-/var/lib/infra-shell}"
 INFRA_SHELL_MOTD_FILE="${INFRA_SHELL_STATE_DIR}/last-reconcile.motd"
 
-multi_agent_shell_init_dirs() {
+infra_shell_init_dirs() {
     mkdir -p "$INFRA_SHELL_LOG_DIR" "$INFRA_SHELL_STATE_DIR"
 }
 
-multi_agent_shell_motd_write() {
-    multi_agent_shell_init_dirs
+infra_shell_motd_write() {
+    infra_shell_init_dirs
     printf '%s\n' "$*" > "$INFRA_SHELL_MOTD_FILE"
 }

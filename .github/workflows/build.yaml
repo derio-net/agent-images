@@ -724,7 +724,7 @@ jobs:
           docker exec infra-smoke /usr/local/bin/infra-shell-reconcile
           out=$(docker exec infra-smoke cat /var/log/cont-init.d/40-shell-inventory.log)
           echo "$out"
-          echo "$out" | grep -q 'failed=0' || { echo "✗ empty-inventory reconcile reported failed>0"; docker rm -f infra-smoke; exit 1; }
+          echo "$out" | grep -q 'failed=0' || { echo "✗ empty-inventory reconcile reported failed>0"; exit 1; }
           docker exec infra-smoke test -s /var/lib/infra-shell/last-reconcile.motd
 
           # Auth-status MOTD drop-in must be present and executable.

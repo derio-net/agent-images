@@ -13,8 +13,8 @@
 
 [ -n "$PS1" ] || return 0
 
-_multi_agent_shell_motd_file=/var/lib/infra-shell/last-reconcile.motd
-if [ -r "$_multi_agent_shell_motd_file" ]; then
-    cat "$_multi_agent_shell_motd_file"
+_infra_shell_motd_file=/var/lib/infra-shell/last-reconcile.motd
+if [ -r "$_infra_shell_motd_file" ]; then
+    cat "$_infra_shell_motd_file"
 fi
-unset _multi_agent_shell_motd_file
+unset _infra_shell_motd_file
