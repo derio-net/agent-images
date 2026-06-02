@@ -127,7 +127,7 @@ jobs:
           cache-to: type=gha,scope=multi-agent-shell,mode=max
 
   build-children:
-    needs: [build-base, build-shell-base]
+    needs: [build-base, build-shell-base, build-multi-agent-shell]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -152,6 +152,10 @@ jobs:
           - name: ruflo-server
             context: ruflo-server
             build_args: ""
+          - name: infra-shell
+            context: infra-shell
+            build_args: |
+              BASE_SHA=${{ needs.build-multi-agent-shell.outputs.sha }}
     permissions:
       contents: read
       packages: write
@@ -647,6 +651,101 @@ jobs:
           docker rm -f mas-smoke
           [ "$guard_ok" -eq 1 ] || exit 1
 
+  smoke-test-infra-shell:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      INFRA_SHELL_IMAGE: ghcr.io/derio-net/infra-shell
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live K8s securityContext (runAsUser: 1000, cap-drop=ALL,
+          # no-new-privileges) so the s6-overlay preinit hits the same /run
+          # constraints it does on Frank. Mirrors smoke-test-multi-agent-shell
+          # because infra-shell inherits the standard implementation from
+          # multi-agent-shell and only layers kubectl/talosctl/omnictl on top.
+          mkdir -p /tmp/infra-home /tmp/infra-inventory
+          sudo chown 1000:1000 /tmp/infra-home /tmp/infra-inventory
+          # Empty inventory — first-deploy posture per the multi-harness
+          # standard's "Smoke testing" section.
+          echo '{}' | sudo tee /tmp/infra-inventory/inventory.yaml >/dev/null
+          sudo chown 1000:1000 /tmp/infra-inventory/inventory.yaml
+
+          docker run -d --name infra-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -v /tmp/infra-home:/home/agent \
+            -v /tmp/infra-inventory:/etc/infra-shell:ro \
+            "${INFRA_SHELL_IMAGE}:${IMAGE_SHA}"
+
+          # /init must reach stage 2 (sshd up). 30s budget mirrors paperclip-shell.
+          for i in $(seq 1 30); do
+            if docker exec infra-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+              echo "✓ s6-overlay started, sshd is up"
+              break
+            fi
+            sleep 1
+          done
+          if ! docker exec infra-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
+            echo "✗ sshd never came up within 30s"
+            docker logs infra-smoke
+            docker rm -f infra-smoke
+            exit 1
+          fi
+
+          # Layer-1 managers must be on PATH and runnable as the agent UID.
+          docker exec infra-smoke mise --version
+          docker exec infra-smoke rustup --version
+          docker exec infra-smoke pipx --version
+          docker exec infra-smoke python3 --version
+          docker exec infra-smoke yq --version
+          docker exec infra-smoke jq --version
+
+          # Multi-harness manifest assertion (inherited from multi-agent-shell).
+          for h in claude codex gemini opencode; do
+            echo "::group::$h --version"
+            docker exec infra-smoke "$h" --version
+            echo "::endgroup::"
+          done
+
+          # Inventory installer reconciles cleanly against the empty inventory
+          # and writes a MOTD drop-in.
+          docker exec infra-smoke /usr/local/bin/infra-shell-reconcile
+          out=$(docker exec infra-smoke cat /var/log/cont-init.d/40-shell-inventory.log)
+          echo "$out"
+          echo "$out" | grep -q 'failed=0' || { echo "✗ empty-inventory reconcile reported failed>0"; docker rm -f infra-smoke; exit 1; }
+          docker exec infra-smoke test -s /var/lib/infra-shell/last-reconcile.motd
+
+          # Auth-status MOTD drop-in must be present and executable.
+          docker exec infra-smoke test -x /etc/profile.d/50-infra-shell-motd.sh
+          docker exec infra-smoke /etc/profile.d/50-infra-shell-motd.sh | grep -q '✗ claude'
+
+      # Cluster-admin tooling — the only thing infra-shell adds on top of
+      # multi-agent-shell. All three must be on PATH and runnable as UID 1000.
+      - name: kubectl --client
+        run: docker exec infra-smoke kubectl version --client
+      - name: talosctl --client
+        run: docker exec infra-smoke talosctl version --client
+      - name: omnictl --version
+        run: docker exec infra-smoke omnictl --version
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs infra-smoke || true
+          docker rm -f infra-smoke || true
+
   dispatch-frank:
     needs:
       - test-kali
@@ -657,6 +756,7 @@ jobs:
       - smoke-test-ruflo-shell
       - smoke-test-ruflo-server
       - smoke-test-multi-agent-shell
+      - smoke-test-infra-shell
     runs-on: ubuntu-latest
     permissions: {}
     steps:
