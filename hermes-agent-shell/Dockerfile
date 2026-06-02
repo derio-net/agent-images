@@ -27,7 +27,7 @@ USER root
 # The CLI entry point declared by upstream's pyproject.toml is `hermes`
 # (→ hermes_cli.main:main).
 #
-# Pin is the version corresponding to upstream tag v2026.5.29.2 (sha
+# Pin is the version corresponding to upstream tag v2026.5.29.2 (commit
 # 77a1650c78a4cb1813d8a81fa1da40a15b6a3ec5, dated 2026-05-29). Resolved
 # during the implementation of derio-net/agent-images#99 (P2.T1.S1).
 # Floats forward via the inventory `harnesses:` key once an operator
@@ -37,10 +37,11 @@ ARG HERMES_VERSION=0.15.2
 # Install into a dedicated venv at /opt/hermes-agent so the system-python
 # layout from agent-base stays untouched (PEP 668: /usr/bin/python3 is
 # externally-managed on Debian; pip would refuse to install into it
-# anyway). uv is provided by agent-base. The venv's `hermes` entry-point
-# is symlinked onto PATH so the operator just runs `hermes`.
+# anyway). uv is provided by agent-base. `uv venv` deliberately omits
+# pip from the target interpreter (uv writes wheels directly), so no
+# ensurepip bootstrap is needed. The venv's `hermes` entry-point is
+# symlinked onto PATH so the operator just runs `hermes`.
 RUN uv venv --python 3.11 /opt/hermes-agent \
- && /opt/hermes-agent/bin/python -m ensurepip --upgrade \
  && uv pip install --python /opt/hermes-agent/bin/python \
       "hermes-agent==${HERMES_VERSION}" \
  && ln -sf /opt/hermes-agent/bin/hermes /usr/local/bin/hermes \

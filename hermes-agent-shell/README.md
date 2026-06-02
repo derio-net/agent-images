@@ -33,7 +33,7 @@ Notes:
   config, sessions, skills, memories. It is per-operator state, never
   baked into the image.
 - **Upstream pin.** `HERMES_VERSION=0.15.2` corresponds to upstream tag
-  `v2026.5.29.2` (SHA `77a1650c78a4cb1813d8a81fa1da40a15b6a3ec5`,
+  `v2026.5.29.2` (commit `77a1650c78a4cb1813d8a81fa1da40a15b6a3ec5`,
   2026-05-29). Floats forward via inventory `harnesses:` once an operator
   overrides it on first reconcile, or via a Dockerfile bump.
 
