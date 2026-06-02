@@ -169,46 +169,48 @@ tasks:
 state:
   steps:
     P2.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:44+00:00'
       note: null
     P2.T1.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:44+00:00'
       note: null
     P2.T1.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:44+00:00'
       note: null
     P2.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:44+00:00'
       note: null
     P2.T2.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-06-02T18:55:44+00:00'
+      note: no docker locally; verified install method via uv venv (hermes --version
+        exits 0 for hermes-agent==0.15.2 PyPI install); CI build-children + smoke-test-hermes-agent-shell
+        exercise the actual image build
     P2.T2.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:44+00:00'
       note: null
     P2.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:45+00:00'
       note: null
     P2.T3.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:45+00:00'
       note: null
     P2.T4.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:45+00:00'
       note: null
     P2.T4.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-02T18:55:45+00:00'
       note: null
   completion:
-    at: null
+    at: '2026-06-02T18:55:48+00:00'
     note: null
     observed_prs: []
