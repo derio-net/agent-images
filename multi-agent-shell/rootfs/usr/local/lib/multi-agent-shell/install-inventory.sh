@@ -15,8 +15,12 @@ set -uo pipefail
 
 # Source path resolves to the script's own directory so the same code runs
 # both in the baked image (under /usr/local/lib/multi-agent-shell) and from
-# a checked-out tree during bats tests.
-_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# a checked-out tree during bats tests. `readlink -f` resolves the symlink
+# at /usr/local/bin/multi-agent-shell-reconcile → this file; without it,
+# BASH_SOURCE[0] is the symlink path and `_self_dir` lands in /usr/local/bin/
+# where lib.sh doesn't exist — the source silently fails (no `set -e`),
+# functions go undefined, and `set -u` trips on the first sibling-var read.
+_self_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=/dev/null
 . "$_self_dir/lib.sh"
 multi_agent_shell_init_dirs
