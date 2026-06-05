@@ -8,13 +8,14 @@
 // all crash. This test pins the contract the callers actually require:
 //   - openUploadStream() -> Writable that accepts ArrayBuffer/Buffer/string,
 //     emits "finish"/"error", exposes .id
-//   - openDownloadStream() -> Readable emitting the stored bytes
+//   - openDownloadStream() -> Readable emitting the stored bytes, or an
+//     error-stream ("File not found") for a missing file (GridFS semantics)
 //   - find() -> SYNC cursor with next() and toArray()
 //   - base64 storage round-trips
 //
 // It mirrors the patched implementation (the patch lands in the vendored
 // ruflo source at build time, which is not present in this repo), so it doubles
-// as the executable spec for the upstream PR. Run: node --test ruflo-server/test/
+// as the executable spec for the upstream PR. Run: node --test ruflo-server/test/*.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
@@ -54,7 +55,14 @@ function makeBucket() {
 		},
 		openDownloadStream(id) {
 			const f = files.get(String(id));
-			return Readable.from(f ? [Buffer.from(f.data, "base64")] : []);
+			if (!f) {
+				// Match MongoDB GridFS (and the prior shim): a missing file is
+				// an error, surfaced on the stream.
+				const missing = new Readable({ read() {} });
+				missing.destroy(new Error("File not found"));
+				return missing;
+			}
+			return Readable.from([Buffer.from(f.data, "base64")]);
 		},
 		find(filter = {}) {
 			const r = [...files.values()]
@@ -111,6 +119,14 @@ test("pipe copy round-trips (conversation.ts fork-from-shared pattern)", async (
 	const dstId = (await b.find({ filename: "dst" }).next())._id;
 	const out = await readBack(b.openDownloadStream(dstId));
 	assert.equal(out.toString(), "payload");
+});
+
+test("openDownloadStream errors on a missing file (GridFS semantics; matches upstream rvf.spec.ts)", async () => {
+	const b = makeBucket();
+	// The upstream rvf.spec.ts "delete file" case asserts that downloading a
+	// deleted/absent file rejects with "File not found". A naive empty-Readable
+	// would silently resolve to [] and break that test.
+	await assert.rejects(b.openDownloadStream("does-not-exist").toArray(), /File not found/);
 });
 
 test("find().toArray() returns metadata without the data blob", async () => {

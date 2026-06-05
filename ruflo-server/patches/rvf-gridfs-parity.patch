@@ -8,21 +8,20 @@
  
  // ---------------------------------------------------------------------------
  // ObjectId compatibility
-@@ -1022,41 +1023,52 @@
+@@ -1022,41 +1023,59 @@ export class RvfGridFSBucket {
  		options?: { metadata?: Record<string, unknown>; contentType?: string }
  	) {
  		const id = randomUUID();
 -		const chunks: string[] = [];
--
++		const chunks: Buffer[] = [];
++		const files = this.files;
+ 
 -		return {
 -			id: new ObjectId(id),
 -			write(chunk: Buffer | string) {
 -				chunks.push(
 -					typeof chunk === "string" ? chunk : chunk.toString("base64")
 -				);
-+		const chunks: Buffer[] = [];
-+		const files = this.files;
-+
 +		// objectMode so callers may pass ArrayBuffer/Uint8Array/Buffer/string
 +		// (uploadFile.ts hands us an ArrayBuffer cast to Buffer).
 +		const stream = new Writable({
@@ -84,13 +83,20 @@
 -			},
 -		};
 +		const file = this.files.get(fileId);
-+		return Readable.from(
-+			file ? [Buffer.from(file.data as string, "base64")] : []
-+		);
++		if (!file) {
++			// Match MongoDB GridFS (and the prior shim): a missing file is an
++			// error. Surface it on the stream so callers see it via either
++			// .on("error") or a rejected .toArray(), rather than silently
++			// yielding zero bytes.
++			const missing = new Readable({ read() {} });
++			missing.destroy(new Error("File not found"));
++			return missing;
++		}
++		return Readable.from([Buffer.from(file.data as string, "base64")]);
  	}
  
  	async delete(id: ObjectId | string) {
-@@ -1065,7 +1077,7 @@
+@@ -1065,7 +1084,7 @@ export class RvfGridFSBucket {
  		scheduleSave();
  	}
  
@@ -99,17 +105,15 @@
  		const results: Record<string, unknown>[] = [];
  		for (const doc of this.files.values()) {
  			if (matchesFilter(doc, filter)) {
-@@ -1073,6 +1085,10 @@
+@@ -1073,6 +1092,10 @@ export class RvfGridFSBucket {
  				results.push(meta);
  			}
  		}
 -		return { toArray: async () => results };
--	}
--}
 +		let i = 0;
 +		return {
 +			next: async () => (i < results.length ? results[i++] : null),
 +			toArray: async () => results,
 +		};
-+	}
-+}
+ 	}
+ }
