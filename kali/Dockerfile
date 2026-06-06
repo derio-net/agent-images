@@ -57,16 +57,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       kali-tools-top10 nmap netcat-traditional logrotate \
     && rm -rf /var/lib/apt/lists/*
 
-# ── vk bridge — PVC-resident install, not image-baked ──
-# vk lives in $HOME/.local/share/uv/tools/vk/ on the shared agent-home PVC,
-# installed by etc/cont-init.d/55-install-vk-bridge on first boot via
+# ── fr bridge — PVC-resident install, not image-baked ──
+# fr lives in $HOME/.local/share/uv/tools/fr/ on the shared agent-home PVC,
+# installed by etc/cont-init.d/55-install-fr-bridge on first boot via
 # `uv tool install`. This makes bridge bumps a one-liner inside the running
-# pod (`uv tool install --force --from 'vk @ git+...@<tag>' vk`) rather
+# pod (`uv tool install --force --from 'fr @ git+...@<tag>#subdirectory=packages/fr'
+# --with 'fr-vk @ git+...@<tag>#subdirectory=packages/fr-vk' fr`) rather
 # than a Dockerfile change + image rebuild + redeploy. The default pin is
-# tracked in the init script's VK_BRIDGE_PIN below.
+# tracked in the init script's FR_BRIDGE_PIN below.
 #
-# Pre-2026-05-18 layout (now retired): vk lived at /opt/vk-bridge-venv in
-# the image, wrapper at /opt/vk-bridge/run.sh. See PR #85 history if you
+# Pre-2026-05-18 layout (now retired): the bridge lived at /opt/vk-bridge-venv
+# in the image, wrapper at /opt/vk-bridge/run.sh. See PR #85 history if you
 # need the rationale for the move.
 
 # mosh requires a UTF-8 locale on both client and server

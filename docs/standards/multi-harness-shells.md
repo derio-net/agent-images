@@ -214,8 +214,8 @@ skills:
     - name: superpowers
       source: git+https://github.com/<org>/superpowers
       ref: main
-    - name: superpowers-for-vk
-      source: git+https://github.com/derio-net/superpowers-for-vk
+    - name: super-fr
+      source: git+https://github.com/derio-net/super-fr
       ref: main
   codex: []
   gemini: []

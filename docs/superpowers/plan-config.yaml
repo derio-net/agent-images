@@ -16,5 +16,5 @@ dispatch:
   owner: derio-net
   default_repo: derio-net/agent-images
   labels:
-    agentic: vk-ready
+    agentic: fr:ready
     manual: manual
