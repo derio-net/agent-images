@@ -248,10 +248,10 @@ jobs:
             -v /tmp/kali-home:/home/claude \
             "${KALI_IMAGE}:${IMAGE_SHA}"
           # /init must reach stage 2 (services up). Budget bumped to 90s
-          # because cont-init.d/55-install-vk-bridge now does a `uv tool
-          # install` from a git tag on first boot — pulls the vk source +
+          # because cont-init.d/55-install-fr-bridge now does a `uv tool
+          # install` from a git tag on first boot — pulls the fr source +
           # transitive deps from PyPI before sshd starts. Steady-state
-          # boots are still ~3s once vk is on the PVC; the 90s budget is
+          # boots are still ~3s once fr is on the PVC; the 90s budget is
           # for the first run against an empty volume (CI is always first).
           # s6-overlay v3 installs binaries under /command/ — the agent-base
           # PATH does not include it, so we must call s6-svstat by full path.
@@ -269,20 +269,20 @@ jobs:
             exit 1
           fi
 
-          # Bridge wrapper smoke: cron invokes $HOME/.local/bin/vk-bridge
-          # (the wrapper written by cont-init.d/55-install-vk-bridge). The
-          # banner version must match the image's VK_BRIDGE_PIN — this is
+          # Bridge wrapper smoke: cron invokes $HOME/.local/bin/fr-bridge
+          # (the wrapper written by cont-init.d/55-install-fr-bridge). The
+          # banner version must match the image's FR_BRIDGE_PIN — this is
           # what proves the init script reconciled to the pinned tag rather
           # than silently keeping a stale PVC install.
-          # Capture stderr (2>&1): the v2 bridge (vk.bridge module) emits its
+          # Capture stderr (2>&1): the bridge (fr_vk.bridge module) emits its
           # banner + "dry-run complete" via logging, which goes to STDERR, not
           # stdout. Without 2>&1 `out` is empty and the assertions below fail —
           # this is what kept secure-agent-kali red on every build after the
           # 2026-05-19 v2-bridge cutover.
-          out=$(docker exec kali-smoke /home/claude/.local/bin/vk-bridge --dry-run 2>&1)
+          out=$(docker exec kali-smoke /home/claude/.local/bin/fr-bridge --dry-run 2>&1)
           echo "$out"
           echo "$out" | head -1 | grep -qE '^\[bridge\] - v[0-9]+\.[0-9]+\.[0-9]+ - '
-          echo "$out" | grep -q 'vk.bridge: dry-run complete'
+          echo "$out" | grep -q 'fr_dispatch: dry-run complete'
 
           docker logs kali-smoke
           docker rm -f kali-smoke

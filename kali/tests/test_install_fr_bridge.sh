@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# test_install_vk_bridge.sh — harness for etc/cont-init.d/55-install-vk-bridge.
+# test_install_fr_bridge.sh — harness for etc/cont-init.d/55-install-fr-bridge.
 # Covers four cases:
 #   1. First boot (no PVC install): runs `uv tool install` AND writes wrapper.
 #   2. Idempotent re-run (PVC install matches pin): skips uv tool install,
 #      still rewrites the wrapper (cheap; self-heals drift).
 #   3. Version drift (PVC install at older pin): re-runs `uv tool install`.
-#   4. Pin override via env: VK_BRIDGE_PIN can be overridden by the caller.
+#   4. Pin override via env: FR_BRIDGE_PIN can be overridden by the caller.
 #
 # Stubs `uv` by prepending a fake binary to PATH that records invocations
 # to UV_LOG and serves a fake `uv tool dir` pointing at a temp directory.
@@ -13,19 +13,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT="$SCRIPT_DIR/etc/cont-init.d/55-install-vk-bridge"
+SCRIPT="$SCRIPT_DIR/etc/cont-init.d/55-install-fr-bridge"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # Wrap the s6 shebang for portable invocation.
-SCRIPT_COPY="$TMP/55-install-vk-bridge"
+SCRIPT_COPY="$TMP/55-install-fr-bridge"
 { echo '#!/usr/bin/env bash'; tail -n +2 "$SCRIPT"; } > "$SCRIPT_COPY"
 chmod +x "$SCRIPT_COPY"
 
 # Fake `uv` binary. Records every invocation to UV_LOG, serves canned
-# output for `uv tool dir`, and, when invoked as `uv tool install`,
-# materializes a fake vk tool dir with a `bin/python` that reports the
-# requested version (parsed out of the --from arg).
+# output for `uv tool dir`, handles `uv tool uninstall` (the legacy-vk
+# migration step) as a no-op success, and, when invoked as `uv tool
+# install`, materializes a fake fr tool dir with a `bin/python` that
+# reports the requested version (parsed out of the --from arg).
 #
 # Stored as a template — install_fake_uv() copies it into each case's
 # $HOME/.local/bin/uv, which is on the script's own PATH (the script
@@ -39,8 +40,12 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "dir" ]; then
     echo "$UV_TOOL_DIR"
     exit 0
 fi
+if [ "${1:-}" = "tool" ] && [ "${2:-}" = "uninstall" ]; then
+    # Legacy-vk retirement step. No-op success — nothing to remove in tests.
+    exit 0
+fi
 if [ "${1:-}" = "tool" ] && [ "${2:-}" = "install" ]; then
-    # Parse the version out of `--from "vk @ git+...@v2.2.11"`.
+    # Parse the version out of `--from "fr @ git+...@v3.0.0#subdirectory=..."`.
     from_arg=""
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -49,12 +54,12 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "install" ]; then
         esac
     done
     ver="${from_arg##*@v}"
-    ver="${ver%%[^0-9.]*}"   # strip anything not version-shaped
+    ver="${ver%%[^0-9.]*}"   # strip anything not version-shaped (e.g. #subdirectory)
     [ -n "$ver" ] || ver="0.0.0"
-    mkdir -p "$UV_TOOL_DIR/vk/bin"
-    cat > "$UV_TOOL_DIR/vk/bin/python" <<PYEOF
+    mkdir -p "$UV_TOOL_DIR/fr/bin"
+    cat > "$UV_TOOL_DIR/fr/bin/python" <<PYEOF
 #!/usr/bin/env bash
-# Fake python that only knows how to report vk's installed version.
+# Fake python that only knows how to report fr's installed version.
 if [ "\$1" = "-c" ]; then
     case "\$2" in
         *"importlib.metadata"*) echo "$ver"; exit 0;;
@@ -63,7 +68,7 @@ fi
 echo "fake python: unsupported invocation: \$*" >&2
 exit 1
 PYEOF
-    chmod +x "$UV_TOOL_DIR/vk/bin/python"
+    chmod +x "$UV_TOOL_DIR/fr/bin/python"
     exit 0
 fi
 echo "fake uv: unsupported invocation: $*" >&2
@@ -80,10 +85,10 @@ install_fake_uv() {
 
 run_init() {
     local home="$1"
-    local pin="${2:-v2.2.11}"
+    local pin="${2:-v3.0.0}"
     UV_LOG="$home/uv.log" \
     UV_TOOL_DIR="$home/.local/share/uv/tools" \
-    HOME="$home" AGENT_HOME="$home" VK_BRIDGE_PIN="$pin" \
+    HOME="$home" AGENT_HOME="$home" FR_BRIDGE_PIN="$pin" \
         bash "$SCRIPT_COPY"
 }
 
@@ -97,54 +102,54 @@ count_lines() {
     grep -c "$1" "$2" 2>/dev/null || true
 }
 
-# ---- Case 1: first boot — installs vk and writes wrapper ----
+# ---- Case 1: first boot — installs fr and writes wrapper ----
 H1="$TMP/case1"
 mkdir -p "$H1"
 install_fake_uv "$H1"
-run_init "$H1" v2.2.11
-test -x "$H1/.local/bin/vk-bridge" || { echo "case1: wrapper missing"; exit 1; }
+run_init "$H1" v3.0.0
+test -x "$H1/.local/bin/fr-bridge" || { echo "case1: wrapper missing"; exit 1; }
 assert_grep '^uv tool install' "$H1/uv.log"
-assert_grep 'vk.bridge' "$H1/.local/bin/vk-bridge"
-grep -q "$H1/.local/share/uv/tools/vk/bin/python" "$H1/.local/bin/vk-bridge" \
-    || { echo "case1: wrapper does not point at uv tool python"; cat "$H1/.local/bin/vk-bridge"; exit 1; }
+assert_grep 'fr_vk.bridge' "$H1/.local/bin/fr-bridge"
+grep -q "$H1/.local/share/uv/tools/fr/bin/python" "$H1/.local/bin/fr-bridge" \
+    || { echo "case1: wrapper does not point at uv tool python"; cat "$H1/.local/bin/fr-bridge"; exit 1; }
 echo "case1: first-boot install OK"
 
 # ---- Case 2: idempotent re-run — already at target pin, no reinstall ----
 > "$H1/uv.log"
-run_init "$H1" v2.2.11
+run_init "$H1" v3.0.0
 installs="$(count_lines 'tool install' "$H1/uv.log")"
 [ "$installs" = "0" ] || { echo "case2: expected 0 'tool install' calls on re-run, got $installs"; cat "$H1/uv.log"; exit 1; }
-test -x "$H1/.local/bin/vk-bridge" || { echo "case2: wrapper missing after re-run"; exit 1; }
+test -x "$H1/.local/bin/fr-bridge" || { echo "case2: wrapper missing after re-run"; exit 1; }
 echo "case2: idempotent re-run OK (no reinstall)"
 
 # ---- Case 3: version drift — pin moved forward, init re-installs ----
 > "$H1/uv.log"
-run_init "$H1" v2.3.0
+run_init "$H1" v3.1.0
 assert_grep '^uv tool install' "$H1/uv.log"
-assert_grep 'v2.3.0' "$H1/uv.log"
+assert_grep 'v3.1.0' "$H1/uv.log"
 echo "case3: version-drift reinstall OK"
 
-# ---- Case 4: pin override via env — caller-supplied VK_BRIDGE_PIN wins ----
+# ---- Case 4: pin override via env — caller-supplied FR_BRIDGE_PIN wins ----
 H4="$TMP/case4"
 mkdir -p "$H4"
 install_fake_uv "$H4"
-run_init "$H4" v1.2.3
-assert_grep 'v1.2.3' "$H4/uv.log"
+run_init "$H4" v3.0.1
+assert_grep 'v3.0.1' "$H4/uv.log"
 echo "case4: env-pin override OK"
 
 # ---- Case 5: operator hotfix — install ≥ pin survives restarts ----
-# Seed an install at v2.2.15 (newer than the v2.2.11 default pin), then
+# Seed an install at v3.2.0 (newer than the v3.0.0 default pin), then
 # re-run with the default pin. The script must NOT downgrade.
 H5="$TMP/case5"
 mkdir -p "$H5"
 install_fake_uv "$H5"
-run_init "$H5" v2.2.15
-test "$(cat "$H5/.local/share/uv/tools/vk/bin/python" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" = "2.2.15" \
-    || { echo "case5: seed install did not register 2.2.15"; exit 1; }
+run_init "$H5" v3.2.0
+test "$(cat "$H5/.local/share/uv/tools/fr/bin/python" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" = "3.2.0" \
+    || { echo "case5: seed install did not register 3.2.0"; exit 1; }
 > "$H5/uv.log"
-run_init "$H5" v2.2.11
+run_init "$H5" v3.0.0
 installs="$(count_lines 'tool install' "$H5/uv.log")"
-[ "$installs" = "0" ] || { echo "case5: pin=2.2.11 must NOT downgrade an existing 2.2.15 install (saw $installs install call/s)"; cat "$H5/uv.log"; exit 1; }
+[ "$installs" = "0" ] || { echo "case5: pin=3.0.0 must NOT downgrade an existing 3.2.0 install (saw $installs install call/s)"; cat "$H5/uv.log"; exit 1; }
 echo "case5: operator-hotfix-newer-than-pin sticks OK"
 
 echo "all tests passed"

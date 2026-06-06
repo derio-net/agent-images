@@ -1,0 +1,80 @@
+#!/command/with-contenv bash
+# 55-install-fr-bridge — install fr to the shared agent-home PVC on first
+# boot and write the cron wrapper at $HOME/.local/bin/fr-bridge.
+#
+# The bridge no longer ships in the image. fr lives in
+# $HOME/.local/share/uv/tools/fr/ (PVC-resident), so bumps don't require an
+# image rebuild — they can be applied from inside the running pod with:
+#
+#     uv tool install --force \
+#       --from "fr @ git+https://github.com/derio-net/super-fr@<tag>#subdirectory=packages/fr" \
+#       --with  "fr-vk @ git+https://github.com/derio-net/super-fr@<tag>#subdirectory=packages/fr-vk" \
+#       fr
+#
+# Reconcile semantics (install-if-older, not exact-match): the script
+# installs only when the current PVC install is MISSING or STRICTLY OLDER
+# than FR_BRIDGE_PIN. An operator hotfix to a newer-than-pin version
+# (typical incident-response shape) sticks across pod restarts — the
+# image's pin acts as a floor, not a fixed point. The image-side pin
+# bump still drags old PVCs forward when the image rolls.
+set -e
+
+# FR_BRIDGE_PIN is the floor version the image guarantees. Manual upgrades
+# in the pod to versions ≥ pin survive restarts; only PVCs strictly older
+# than pin get reconciled forward.
+FR_BRIDGE_PIN="${FR_BRIDGE_PIN:-v3.0.0}"
+
+HOME="${AGENT_HOME:-$HOME}"
+export HOME
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+WRAPPER="$HOME/.local/bin/fr-bridge"
+target_version="${FR_BRIDGE_PIN#v}"
+
+# MIGRATION (idempotent): retire the legacy vk daemon from old-PVC pods on
+# the first boot of the new image. Dual-RUN (vk + fr bridges live at once)
+# is forbidden — the vk tool and its wrapper must be gone before fr lands.
+uv tool uninstall vk 2>/dev/null || true
+rm -f "$HOME/.local/bin/vk-bridge"
+
+installed_version() {
+    local uv_tool_dir
+    uv_tool_dir="$(uv tool dir 2>/dev/null || true)"
+    [ -n "$uv_tool_dir" ] || return 0
+    local py="$uv_tool_dir/fr/bin/python"
+    [ -x "$py" ] || return 0
+    "$py" -c "from importlib.metadata import version; print(version('fr'))" 2>/dev/null || true
+}
+
+# Install when current is missing or strictly older than target. `sort -V`
+# (version-sort) is the comparator — its `head -1` yields the older of
+# the two; we install only when that older one is the current install
+# AND current ≠ target (i.e., target is strictly newer).
+current_version="$(installed_version)"
+needs_install=0
+if [ -z "$current_version" ]; then
+    needs_install=1
+elif [ "$current_version" != "$target_version" ]; then
+    oldest="$(printf '%s\n%s\n' "$target_version" "$current_version" | sort -V | head -1)"
+    if [ "$oldest" = "$current_version" ]; then
+        needs_install=1
+    fi
+fi
+
+if [ "$needs_install" = "1" ]; then
+    uv tool install --force \
+        --from "fr @ git+https://github.com/derio-net/super-fr@${FR_BRIDGE_PIN}#subdirectory=packages/fr" \
+        --with  "fr-vk @ git+https://github.com/derio-net/super-fr@${FR_BRIDGE_PIN}#subdirectory=packages/fr-vk" \
+        fr
+fi
+
+fr_python="$(uv tool dir)/fr/bin/python"
+mkdir -p "$(dirname "$WRAPPER")"
+cat > "$WRAPPER" <<EOF
+#!/bin/bash
+# Map legacy vk env vars to their fr equivalents if only the old ones are set.
+[ -n "\${VK_LIFECYCLE_HOOK_SCRIPT:-}" ] && export FR_LIFECYCLE_HOOK_SCRIPT="\${FR_LIFECYCLE_HOOK_SCRIPT:-\$VK_LIFECYCLE_HOOK_SCRIPT}"
+[ -n "\${VK_REPOS_DIR:-}" ] && export FR_REPOS_DIR="\${FR_REPOS_DIR:-\$VK_REPOS_DIR}"
+exec "$fr_python" -m fr_vk.bridge "\$@"
+EOF
+chmod +x "$WRAPPER"

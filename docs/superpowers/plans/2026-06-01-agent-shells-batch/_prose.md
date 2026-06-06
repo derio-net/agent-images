@@ -1,8 +1,8 @@
 # Agent Shells Batch Implementation Plan
 
-> **For VK agents:** Use vk-execute to implement assigned phases.
+> **For FR agents:** Use fr-execute to implement assigned phases.
 > **For local execution:** Use subagent-driven-development or executing-plans.
-> **For dispatch:** Use vk-dispatch to create Issues from this plan.
+> **For dispatch:** Use fr-dispatch to create Issues from this plan.
 
 **Spec:** `docs/superpowers/specs/2026-05-12-agent-shells-batch-design.md`
 **Standard:** `docs/standards/multi-harness-shells.md`
