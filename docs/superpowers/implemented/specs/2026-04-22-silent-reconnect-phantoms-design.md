@@ -216,4 +216,4 @@ Triggered only if Phase 0 records Decision **B**.
 
 | Plan | Repo | File | Depends on |
 |------|------|------|------------|
-| Silent-Reconnect Phantom Reaper Implementation Plan | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-04-22-silent-reconnect-phantoms/` | — |
+| Silent-Reconnect Phantom Reaper Implementation Plan | `derio-net/agent-images` | `2026-04-22-silent-reconnect-phantoms` | — |

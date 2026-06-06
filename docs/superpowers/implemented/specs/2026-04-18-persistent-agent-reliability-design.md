@@ -54,7 +54,7 @@ None. No new capabilities, no loosened guardrails. The audit-hook fix restores a
 
 | Plan | Repo | File | Depends on |
 |------|------|------|------------|
-| Persistent Agent Reliability Implementation Plan | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-04-18-persistent-agent-reliability/` | — |
-| vk-bridge Warn-Pattern Broadening Implementation Plan | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-04-22-vk-bridge-warn-patterns/` | — |
-| vk-local Memory Profiling Implementation Plan | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-04-22-vk-local-memory-profile/` | — |
-| Silent-Reconnect Phantom Reaper Implementation Plan | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-04-22-silent-reconnect-phantoms/` | — |
+| Persistent Agent Reliability Implementation Plan | `derio-net/agent-images` | `2026-04-18-persistent-agent-reliability` | — |
+| vk-bridge Warn-Pattern Broadening Implementation Plan | `derio-net/agent-images` | `2026-04-22-vk-bridge-warn-patterns` | — |
+| vk-local Memory Profiling Implementation Plan | `derio-net/agent-images` | `2026-04-22-vk-local-memory-profile` | — |
+| Silent-Reconnect Phantom Reaper Implementation Plan | `derio-net/agent-images` | `2026-04-22-silent-reconnect-phantoms` | — |

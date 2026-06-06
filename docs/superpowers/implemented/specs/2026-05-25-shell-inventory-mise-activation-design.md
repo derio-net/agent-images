@@ -187,7 +187,7 @@ not built here.
 
 | Plan | Repo | File | Depends on |
 |------|------|------|------------|
-| 2026-05-25-shell-inventory-mise-activation | `derio-net/agent-images` | `docs/superpowers/archived-plans/2026-05-25-shell-inventory-mise-activation/` | — |
+| 2026-05-25-shell-inventory-mise-activation | `derio-net/agent-images` | `2026-05-25-shell-inventory-mise-activation` | — |
 
 ## Out of scope
 
