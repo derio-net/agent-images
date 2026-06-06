@@ -277,4 +277,4 @@ Tracked here so the plan author has the complete list:
 
 | Plan | Repo | File | Depends on |
 |------|------|------|------------|
-| 2026-06-01-agent-shells-batch | `derio-net/agent-images` | `docs/superpowers/plans/2026-06-01-agent-shells-batch/` | — |
+| 2026-06-01-agent-shells-batch | `derio-net/agent-images` | `2026-06-01-agent-shells-batch` | — |
