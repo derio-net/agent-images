@@ -746,7 +746,11 @@ jobs:
           # Drop a sentinel + corrupt the live marker, re-run the hook, and
           # assert the venv was re-seeded (sentinel gone, marker restored).
           docker exec has-smoke sh -c "touch $LIVE/.smoke-sentinel && echo stale > $LIVE/.seed-version"
-          docker exec has-smoke /etc/cont-init.d/35-hermes-venv-seed
+          # Invoke via `bash`, not directly: the hook's `#!/command/with-contenv
+          # bash` shebang is an s6 execline wrapper that only resolves inside
+          # supervised cont-init, not a bare `docker exec`. The hook needs no
+          # container-env (it reads only SEED/LIVE, which default correctly).
+          docker exec has-smoke bash /etc/cont-init.d/35-hermes-venv-seed
           docker exec has-smoke sh -c "! test -e $LIVE/.smoke-sentinel" \
             || { echo "✗ re-seed did not replace the live venv on version mismatch"; docker rm -f has-smoke; exit 1; }
           docker exec has-smoke sh -c "grep -q autocontinue1 $LIVE/.seed-version" \
