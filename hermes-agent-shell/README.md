@@ -22,13 +22,30 @@ version) and the other inventory keys stay sparse.
 
 | Harness | Bootstrap | Auth command | Credential file (on PV) | Update command |
 |---|---|---|---|---|
-| `hermes` | `uv pip install hermes-agent==${HERMES_VERSION}` into `/opt/hermes-agent` (venv), `hermes` entry point symlinked onto PATH | n/a — BYOK via env (`OPENAI_BASE_URL`, `OPENAI_API_KEY`) | n/a (no local credential — operator state lives at `~/.hermes/`) | inventory `harnesses: hermes: <ver>` (re-pins PyPI install via reconcile), or image rebuild |
+| `hermes` | `uv pip install hermes-agent==${HERMES_VERSION}` into a **relocatable seed** venv at `/opt/hermes-agent`, seeded onto the PVC at `/home/agent/.local/opt/hermes-agent` on first boot (see below); `hermes` entry point symlinked onto PATH | n/a — BYOK via env (`OPENAI_BASE_URL`, `OPENAI_API_KEY`) | n/a (no local credential — operator state lives at `~/.hermes/`) | inventory `harnesses: hermes: <ver>` (runs `hermes update` in the PVC venv), or image rebuild |
 
 Notes:
 
 - **No login flow.** The standard's MOTD detector ✓/✗ pattern does not
   apply; the `50-hermes-agent-shell-motd.sh` drop-in prints a constant
   BYOK row and a one-line hint when `OPENAI_BASE_URL` is unset.
+- **PVC-resident venv (frank#496).** The image bakes a *relocatable* seed
+  venv at `/opt/hermes-agent` (`uv venv --relocatable`). On first boot
+  `cont-init.d/35-hermes-venv-seed` `cp -a`'s it onto the `/home/agent` PVC
+  at `/home/agent/.local/opt/hermes-agent` — the **live** venv, uid-1000-owned
+  and writable. So the in-pod operator can patch/maintain Hermes in place
+  (`hermes update`, site-packages edits) and the changes **persist across pod
+  restarts**. The seed is version-stamped (`/opt/hermes-agent/.seed-version`);
+  the hook re-seeds when an image/Hermes bump changes the stamp, and is a
+  no-op (preserving in-pod patches) when it matches. The launcher
+  `/usr/local/bin/hermes` points at the PVC venv. The venv cannot be baked at
+  the PVC path directly — the PVC mount shadows anything under `/home/agent`.
+- **Baked auto-continue patch (frank#496).** `patches/hermes-autocontinue-chat-completions.patch`
+  widens Hermes' "announce-only turn" countermeasure gate from
+  `codex_responses` to also fire on `chat_completions` (the LiteLLM path
+  Frank uses), permanently fixing the qwen36-a3b "announce then idle" stall.
+  Applied at build with `git apply` (zero fuzz → the build fails if the hunk
+  drifts on a `HERMES_VERSION` bump; refresh the patch then).
 - **`~/.hermes/` on the PV** is hermes' own data dir (per its installer):
   config, sessions, skills, memories. It is per-operator state, never
   baked into the image.
@@ -97,7 +114,8 @@ Same three-layer model as `multi-agent-shell` and `paperclip-shell`:
 
 | Layer | Source | Where it lands | When |
 |---|---|---|---|
-| 1 — Image baseline | this Dockerfile | image rootfs (`/opt/hermes-agent`, `/usr/local/bin/hermes`) | image build |
+| 1 — Image baseline | this Dockerfile | image rootfs: relocatable **seed** venv `/opt/hermes-agent` + launcher `/usr/local/bin/hermes` | image build |
+| 1.5 — Venv seed | relocatable seed at `/opt/hermes-agent` | **live** venv on PV `/home/agent/.local/opt/hermes-agent` (uid-1000 writable) | first boot / image bump via `cont-init.d/35-hermes-venv-seed` |
 | 2 — Inventory | mounted ConfigMap `inventory.yaml` | per-user PV under `$HOME` | every container boot via `cont-init.d/40-shell-inventory` |
 | 3 — Interactive | operator typing `hermes …`, `mise install …`, etc. | per-user PV under `$HOME` | on demand inside the SSH session |
 

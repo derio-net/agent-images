@@ -1,0 +1,52 @@
+#!/command/with-contenv bash
+# 35-hermes-venv-seed — Seed the Hermes venv onto the writable PVC on first
+# boot, and re-seed when the image's seed version changes.
+#
+# The image bakes a RELOCATABLE seed venv at $SEED (read-only build artifact).
+# The LIVE venv lives at $LIVE on the /home/agent PVC — uid-1000-owned and
+# writable — so the in-pod operator can patch/maintain Hermes in place
+# (`hermes update`, site-packages edits) and have it PERSIST across pod
+# restarts. The launcher /usr/local/bin/hermes points at $LIVE/bin/hermes.
+#
+# Version-aware: when $SEED/.seed-version differs from the live marker
+# (first boot, or an image/Hermes bump) we replace the live venv. When they
+# match it's a no-op, which deliberately PRESERVES any in-pod hot-patches.
+#
+# Runs in s6 cont-init as uid 1000, numbered 35 so it precedes
+# 40-shell-inventory and the MOTD profile.d scripts that reference `hermes`.
+#
+# Fail-OPEN (always exit 0) so a seeding failure never blocks sshd — the
+# operator can still log in to debug; a dangling launcher / failed
+# `hermes --version` is the visible signal (and the CI smoke test catches it).
+#
+# SEED/LIVE are env-overridable (defaulting to the real image paths) so the
+# bats unit test can drive the logic against tmpdirs.
+set -u
+
+SEED="${SEED:-/opt/hermes-agent}"
+LIVE="${LIVE:-/home/agent/.local/opt/hermes-agent}"
+
+want="$(cat "$SEED/.seed-version" 2>/dev/null || true)"
+if [ -z "$want" ]; then
+    echo "35-hermes-venv-seed: no seed marker at $SEED/.seed-version — nothing to seed" >&2
+    exit 0
+fi
+
+have="$(cat "$LIVE/.seed-version" 2>/dev/null || true)"
+if [ "$want" = "$have" ]; then
+    echo "35-hermes-venv-seed: live venv up to date ($have) — preserving in-place changes"
+    exit 0
+fi
+
+echo "35-hermes-venv-seed: seeding ${have:-<none>} -> ${want} (SEED=$SEED LIVE=$LIVE)"
+mkdir -p "$(dirname "$LIVE")"
+rm -rf "$LIVE.new"
+if cp -a "$SEED" "$LIVE.new"; then
+    rm -rf "$LIVE"
+    mv "$LIVE.new" "$LIVE"
+    echo "35-hermes-venv-seed: live venv now ${want}"
+else
+    echo "35-hermes-venv-seed: ERROR cp -a failed; live venv left unchanged (hermes may be unavailable)" >&2
+    rm -rf "$LIVE.new"
+fi
+exit 0
