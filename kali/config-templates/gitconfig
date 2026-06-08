@@ -1,5 +1,12 @@
 [user]
 	email = clawdia-ai-assistant@gmail.com
 	name = Clawdia
+# Credential helper: prefer the GitHub App installation token mounted at
+# /var/run/github/token (short-lived, rotated by ESO, key never on the pod),
+# falling back to the s6 envdir token during cutover. `x-access-token` is the
+# App-token username convention and is also accepted with a classic PAT, so it
+# works for both sources. Reads the first readable path and stops; `$(< file)`
+# strips the single trailing newline s6 writes (an extra empty `password=` line
+# would break git's parser).
 [credential]
-	helper = "!f() { echo \"username=clawdia-ai-assistant\"; printf 'password=%s\\n' \"$(< /run/s6/basedir/env/GITHUB_TOKEN)\"; }; f"
+	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf 'password=%s\\n' \"$(< \"$t\")\"; return; done; }; f"
