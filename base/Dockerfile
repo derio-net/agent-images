@@ -55,6 +55,12 @@ RUN ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "arm64" || echo "amd64") \
 COPY opt/agent-init.d/ /opt/agent-init.d/
 RUN chmod +x /opt/agent-init.d/*
 
+# ── gh wrapper: authenticate gh with the current mounted App token (PATH puts
+#    /usr/local/bin ahead of the apt gh at /usr/bin/gh; falls back transparently
+#    where no token is mounted). ──
+COPY usr/local/bin/gh /usr/local/bin/gh
+RUN chmod +x /usr/local/bin/gh
+
 # ── Non-root user (UID/GID 1000 — matches PVC ownership) ──
 RUN /usr/sbin/addgroup --gid 1000 claude \
     && /usr/sbin/adduser --uid 1000 --gid 1000 --disabled-password --gecos "" --shell /bin/bash claude
