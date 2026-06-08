@@ -711,8 +711,51 @@ jobs:
 
           # Single-harness manifest assertion (per
           # docs/standards/multi-harness-shells.md § "Smoke testing"):
-          # `hermes --version` runs cleanly as UID 1000.
+          # `hermes --version` runs cleanly as UID 1000. This now resolves
+          # through /usr/local/bin/hermes → the PVC venv that
+          # cont-init.d/35-hermes-venv-seed copied from the relocatable seed,
+          # so a green `--version` also proves the relocatable copy works.
           docker exec has-smoke hermes --version
+
+          # frank#496 — PVC-resident venv: the live venv must be on the PVC,
+          # uid-1000-owned and WRITABLE (the whole point: the in-pod operator
+          # can patch Hermes in place). The image seed at /opt is just a
+          # template.
+          # NB: $LIVE/bin/python is a symlink to the (root-owned) base
+          # interpreter, so `test -w` on it would follow the link and mislead.
+          # Assert writability on what the operator actually patches: the venv
+          # dir and a real site-packages file.
+          LIVE=/home/agent/.local/opt/hermes-agent
+          CL="$LIVE/lib/python3.11/site-packages/agent/conversation_loop.py"
+          docker exec has-smoke test -O "$LIVE/bin/hermes" \
+            || { echo "✗ live venv hermes not owned by uid 1000"; docker logs has-smoke; docker rm -f has-smoke; exit 1; }
+          docker exec has-smoke test -w "$CL" \
+            || { echo "✗ live conversation_loop.py not writable by uid 1000"; docker rm -f has-smoke; exit 1; }
+          docker exec has-smoke sh -c "touch $LIVE/.smoke-wtest && rm -f $LIVE/.smoke-wtest" \
+            || { echo "✗ cannot write into live venv dir"; docker rm -f has-smoke; exit 1; }
+          # The launcher must point at the PVC venv, not the /opt seed.
+          docker exec has-smoke sh -c 'readlink -f "$(command -v hermes)"' | grep -q "^$LIVE/" \
+            || { echo "✗ hermes launcher does not resolve into the PVC venv"; docker rm -f has-smoke; exit 1; }
+
+          # frank#496 — the auto-continue patch is BAKED into the live venv:
+          # the announce-only countermeasure gate is widened to chat_completions.
+          docker exec has-smoke grep -q 'api_mode in ("codex_responses", "chat_completions")' "$CL" \
+            || { echo "✗ auto-continue patch not present in live venv"; docker rm -f has-smoke; exit 1; }
+
+          # Version-aware re-seed: a changed seed marker replaces the live venv.
+          # Drop a sentinel + corrupt the live marker, re-run the hook, and
+          # assert the venv was re-seeded (sentinel gone, marker restored).
+          docker exec has-smoke sh -c "touch $LIVE/.smoke-sentinel && echo stale > $LIVE/.seed-version"
+          # Invoke via `bash`, not directly: the hook's `#!/command/with-contenv
+          # bash` shebang is an s6 execline wrapper that only resolves inside
+          # supervised cont-init, not a bare `docker exec`. The hook needs no
+          # container-env (it reads only SEED/LIVE, which default correctly).
+          docker exec has-smoke bash /etc/cont-init.d/35-hermes-venv-seed
+          docker exec has-smoke sh -c "! test -e $LIVE/.smoke-sentinel" \
+            || { echo "✗ re-seed did not replace the live venv on version mismatch"; docker rm -f has-smoke; exit 1; }
+          docker exec has-smoke sh -c "grep -q autocontinue1 $LIVE/.seed-version" \
+            || { echo "✗ live seed marker not restored after re-seed"; docker rm -f has-smoke; exit 1; }
+          echo "✓ frank#496: PVC venv writable, patch baked, version-aware re-seed OK"
 
           # Inventory installer reconciles cleanly against the empty inventory
           # and writes a MOTD drop-in. failed=0 proves no section errored.
