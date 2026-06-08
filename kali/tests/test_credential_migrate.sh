@@ -92,7 +92,15 @@ run_case dash_broken '[credential]
 run_case current_filereader '[credential]
 	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(cat \"$t\")\"; return; done; }; f"' no
 
-# Case 6: unrelated user gitconfig (no GitHub credential helper) — must NOT migrate.
+# Case 6: dash-safe generic helper BUT a gh host-specific override present
+# (`gh auth git-credential` serves gh's stored token for github.com) — must
+# MIGRATE so `cp /opt/gitconfig` drops the override.
+run_case gh_override '[credential]
+	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(cat \"$t\")\"; return; done; }; f"
+[credential "https://github.com"]
+	helper = !/usr/bin/gh auth git-credential' yes
+
+# Case 7: unrelated user gitconfig (no GitHub credential helper) — must NOT migrate.
 run_case unrelated '[user]
 	name = Some Other Identity' no
 
