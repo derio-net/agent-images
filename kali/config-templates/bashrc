@@ -15,7 +15,20 @@ _env_from_s6() {
     printf '%s' "$(< "$f")"
 }
 
-export GITHUB_TOKEN="${GITHUB_TOKEN:-$(_env_from_s6 GITHUB_TOKEN)}"
+# GitHub token: PREFER the live App-installation-token file (mounted at
+# /var/run/github/token, rotated by ESO ~hourly), else fall back to the s6
+# envdir token (the clawdia PAT during cutover). The git credential helper in
+# ~/.gitconfig does the same for git; this covers gh/fr which read the token
+# from the environment. NOTE: a long-lived interactive shell captures the value
+# at startup, so it can go stale after a rotation — cron jobs re-source this
+# file (session-manager.sh), and new shells always pick up the current token.
+_token_from_file() {
+    local f=/var/run/github/token
+    [ -r "$f" ] || return 0
+    printf '%s' "$(< "$f")"
+}
+export GITHUB_TOKEN="$(_token_from_file)"
+[ -n "$GITHUB_TOKEN" ] || export GITHUB_TOKEN="$(_env_from_s6 GITHUB_TOKEN)"
 export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_env_from_s6 TELEGRAM_BOT_TOKEN)}"
 export TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-$(_env_from_s6 TELEGRAM_CHAT_ID)}"
 export GRAFANA_API_KEY="${GRAFANA_API_KEY:-$(_env_from_s6 GRAFANA_API_KEY)}"
