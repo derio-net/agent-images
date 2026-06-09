@@ -1,0 +1,22 @@
+#!/bin/sh
+# gh wrapper — authenticate `gh` with the current GitHub App installation token.
+#
+# The agent's git credential is a short-lived App token mounted (and rotated by
+# ESO) at /var/run/github/token. `gh` needs that SAME current token per call:
+# App installation tokens rotate hourly, and gh otherwise falls back to a stale
+# env value or ~/.config/gh/hosts.yml (which may hold a revoked PAT) → "Bad
+# credentials". This shim reads the token file fresh on every invocation and
+# exports it as GH_TOKEN (gh's highest-priority source).
+#
+# On images/pods where no token file is mounted, it transparently falls through
+# to the real gh (env / hosts.yml unchanged). It exec's the absolute real-gh
+# path to avoid re-invoking itself via PATH.
+#
+# The two override vars exist only so the unit test can point at fixtures.
+_tok="${GH_APP_TOKEN_FILE:-/var/run/github/token}"
+_real="${GH_REAL_BIN:-/usr/bin/gh}"
+
+if [ -r "$_tok" ]; then
+    exec env GH_TOKEN="$(cat "$_tok")" "$_real" "$@"
+fi
+exec "$_real" "$@"

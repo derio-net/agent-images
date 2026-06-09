@@ -49,7 +49,10 @@ run_scenario() {
     esac
 
     local out_file="$tmp/out"
-    env -i HOME="$tmp" PATH=/usr/bin:/bin bash -c "$helper" > "$out_file"
+    # Run under /bin/sh (dash), NOT bash — git invokes credential helpers via
+    # `sh -c`, so the helper must be POSIX-sh-safe (e.g. $(cat …), not the
+    # bash-only $(< …) read which yields an empty password under dash).
+    env -i HOME="$tmp" PATH=/usr/bin:/bin sh -c "$helper" > "$out_file"
     local username_line password_line
     username_line="$(grep '^username=' "$out_file" || true)"
     password_line="$(grep '^password=' "$out_file" || true)"

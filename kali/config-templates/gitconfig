@@ -5,8 +5,12 @@
 # /var/run/github/token (short-lived, rotated by ESO, key never on the pod),
 # falling back to the s6 envdir token during cutover. `x-access-token` is the
 # App-token username convention and is also accepted with a classic PAT, so it
-# works for both sources. Reads the first readable path and stops; `$(< file)`
-# strips the single trailing newline s6 writes (an extra empty `password=` line
-# would break git's parser).
+# works for both sources. Reads the first readable path and stops.
+#
+# MUST use $(cat …), NOT $(< …): git runs credential helpers via /bin/sh (dash),
+# where the $(< file) read shortcut is a bash-only feature that yields an EMPTY
+# string — producing `password=` and rejected auth on PRIVATE repos (public
+# repos mask it: git reads them with no auth). $(cat …) also strips the single
+# trailing newline s6 writes, so no extra empty `password=` line.
 [credential]
-	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf 'password=%s\\n' \"$(< \"$t\")\"; return; done; }; f"
+	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf 'password=%s\\n' \"$(cat \"$t\")\"; return; done; }; f"
