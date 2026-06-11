@@ -104,8 +104,23 @@ COPY --from=source --chown=1000:1000 /src/ruflo/ruflo/src/ruvocal/ ./
 # `git config safe.directory /app` is mirrored from upstream's Dockerfile (their
 # build context is `src/ruvocal/` so they have no `.git` either — the line is a
 # defensive no-op for any sveltekit plugin that probes for git metadata).
+# `npm run build` prerenders pages that fetch the HuggingFace router model
+# list (router.huggingface.co) at build time. A momentary HF 429 otherwise
+# fails the whole build — and matrix fail-fast then cancels the sibling images
+# (agent-images#115). Retry with linear backoff so a transient upstream
+# rate-limit doesn't break a build whose own sources are fine.
 RUN git config --global --add safe.directory /app \
- && npm run build
+ && for attempt in 1 2 3 4 5; do \
+      npm run build && break; \
+      status=$?; \
+      if [ "$attempt" -eq 5 ]; then \
+        echo "npm run build failed after 5 attempts (last exit $status)" >&2; \
+        exit "$status"; \
+      fi; \
+      delay=$((attempt * 15)); \
+      echo "npm run build failed (attempt $attempt/5, exit $status); retrying in ${delay}s…" >&2; \
+      sleep "$delay"; \
+    done
 
 # --- runtime: mirrors upstream `base` + `final` (INCLUDE_DB=false branch).
 #     The `local_db_true` Mongo install layer is intentionally omitted; ruvocal
