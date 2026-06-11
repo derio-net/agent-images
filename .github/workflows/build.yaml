@@ -130,6 +130,10 @@ jobs:
     needs: [build-base, build-shell-base, build-multi-agent-shell]
     runs-on: ubuntu-latest
     strategy:
+      # One child's external flake (e.g. ruflo-server's build-time
+      # router.huggingface.co fetch returning 429, #115) must not cancel the
+      # unrelated sibling builds mid-push.
+      fail-fast: false
       matrix:
         image:
           - name: secure-agent-kali
