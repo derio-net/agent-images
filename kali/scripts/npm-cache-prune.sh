@@ -9,7 +9,10 @@
 #      for npm cache content is when it was downloaded — slightly more
 #      conservative but correct).
 #   2. Removes cache files untouched for >7d.
-#   3. Runs `npm cache verify` so npm rebuilds its index after the deletion and
+#   3. Sweeps stale npx atomic-swap remnants (`.<pkg>-<random>` dirs) in
+#      ~/.npm/_npx/*/node_modules/ that block all future npx installs of the
+#      same package (agent-images#87).
+#   4. Runs `npm cache verify` so npm rebuilds its index after the deletion and
 #      emits a final size report into the log.
 #
 # A flock guard prevents overlap with a manual `kubectl exec` invocation or a
@@ -71,6 +74,26 @@ if [ -n "${PROBE:-}" ] && [ -f "$PROBE" ]; then
 fi
 
 find "$CACHE_DIR" -type f "$TIME_FLAG" +7 -delete 2>/dev/null || true
+
+# Sweep stale npx atomic-swap remnants (agent-images#87). During an npx
+# package swap, npm renames <pkg> -> .<pkg>-<random>; a crash/SIGKILL mid-swap
+# leaves that dot-dir behind, and every later swap of the same package then
+# fails the rename with ENOTEMPTY — permanently breaking npx install of that
+# package (seen as the gitnexus MCP failing on every child spawn). The regex
+# only matches dash-bearing dot-dirs that are direct children of node_modules
+# (or of an @scope dir), so `.bin` and package-internal dot-dirs never match.
+# The >24h mtime guard ensures an in-flight swap is never raced; mtime (not
+# atime) is deliberate — remnant dirs are never legitimately touched again.
+NPX_DIR="$HOME/.npm/_npx"
+if [ -d "$NPX_DIR" ]; then
+    find "$NPX_DIR" -mindepth 3 -maxdepth 4 -type d -mtime +0 \
+        -regextype posix-extended \
+        -regex '.*/node_modules/(@[^/]+/)?\.[^/]+-[^/]+' -prune -print 2>/dev/null \
+    | while IFS= read -r remnant; do
+        echo "removing stale npx swap remnant: $remnant"
+        rm -rf "$remnant"
+    done
+fi
 
 verify_rc=0
 if command -v npm >/dev/null 2>&1; then
