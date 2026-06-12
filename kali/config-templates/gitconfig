@@ -14,3 +14,11 @@
 # trailing newline s6 writes, so no extra empty `password=` line.
 [credential]
 	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf 'password=%s\\n' \"$(cat \"$t\")\"; return; done; }; f"
+# Rewrite SSH GitHub remotes to HTTPS so they authenticate via the App-token
+# credential helper above. The agent has NO SSH key registered on GitHub — its
+# only credential is the App installation token, which works over HTTPS. Without
+# this, `git remote add origin git@github.com:…` (or an SSH clone URL) fails with
+# "Permission denied (publickey)".
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
