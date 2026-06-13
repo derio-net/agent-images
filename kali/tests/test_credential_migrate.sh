@@ -39,6 +39,9 @@ run_case() {
 	name = Clawdia
 [credential]
 	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf 'password=%s\\n' \"$(cat \"$t\")\"; return; done; }; f"
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
 GIT
 
     sed "s|/opt/gitconfig|$fake_opt/gitconfig|g" "$SCRIPT" > "$TMP/$label.sh"
@@ -88,9 +91,15 @@ run_case s6_envdir '[credential]
 run_case dash_broken '[credential]
 	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(< \"$t\")\"; return; done; }; f"' yes
 
-# Case 5: already on the dash-safe App-token reader ($(cat …)) — must NOT migrate.
+# Case 5a: dash-safe helper but MISSING the SSH→HTTPS rewrite — must MIGRATE to add it.
+run_case missing_insteadof '[credential]
+	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(cat \"$t\")\"; return; done; }; f"' yes
+
+# Case 5: already on the dash-safe App-token reader + SSH→HTTPS rewrite — must NOT migrate.
 run_case current_filereader '[credential]
-	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(cat \"$t\")\"; return; done; }; f"' no
+	helper = "!f() { for t in /var/run/github/token /run/s6/basedir/env/GITHUB_TOKEN; do [ -r \"$t\" ] || continue; echo username=x-access-token; printf '"'"'password=%s\\n'"'"' \"$(cat \"$t\")\"; return; done; }; f"
+[url "https://github.com/"]
+	insteadOf = git@github.com:' no
 
 # Case 6: dash-safe generic helper BUT a gh host-specific override present
 # (`gh auth git-credential` serves gh's stored token for github.com) — must
