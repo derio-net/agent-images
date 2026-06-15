@@ -37,18 +37,24 @@ tasks:
 state:
   steps:
     P4.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-15T21:38:46+00:00'
       note: null
     P4.T2.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T22:25:49+00:00'
+      note: Branch build run 27579103277 green. build-multi-agent-shell published
+        ghcr.io/derio-net/multi-agent-shell:e24446ea0758e97b3f0eac736735b0863a485d45
+        (github.sha = branch HEAD; frank's bump handler pins by SHA, so this SHA tag
+        is the consumable gate — not a branch-name tag). dispatch-frank skipped via
+        new event guard so the branch build never bumps frank prod.
     P4.T2.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T22:25:50+00:00'
+      note: 'serve-binds smoke green in CI (smoke-test-multi-agent-shell) AND locally
+        against the published image: agent-session on PATH at /usr/local/bin/agent-session,
+        serve bound + stayed up (rc=124).'
   completion:
-    at: null
+    at: '2026-06-15T22:25:52+00:00'
     note: null
     observed_prs: []

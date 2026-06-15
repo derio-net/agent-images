@@ -43,6 +43,25 @@ jobs:
         working-directory: kali
         run: uv run pytest tests/ -v
 
+  # The baked agent-session driver (multi-agent-shell/rootfs/.../agent-session)
+  # is exercised by a tmux-mock pytest suite ported from frank. Mirrors the
+  # test-kali Python step; gates the frank dispatch alongside test-kali.
+  test-multi-agent-shell:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Sync Python deps
+        run: uv sync --group dev
+      - name: Run multi-agent-shell Python tests
+        working-directory: multi-agent-shell
+        run: uv run pytest tests/ -v
+
   build-base:
     runs-on: ubuntu-latest
     outputs:
@@ -622,6 +641,17 @@ jobs:
             echo "::endgroup::"
           done
 
+          # agent-session contract (Part A): the baked driver is on PATH, the
+          # s6 longrun is present + gated on AGENT_SESSION_SERVE, and
+          # `agent-session serve` binds 127.0.0.1 cleanly. A clean bind keeps
+          # serving until `timeout` kills it at 2s (rc 124 = success); a bind
+          # failure raises and exits non-124 fast.
+          docker exec mas-smoke bash -lc 'command -v agent-session'
+          docker exec mas-smoke test -x /etc/services.d/agent-session-server/run
+          docker exec mas-smoke grep -q AGENT_SESSION_SERVE /etc/services.d/agent-session-server/run
+          docker exec mas-smoke bash -lc 'timeout 2 agent-session serve; rc=$?; [ "$rc" = 124 ] || { echo "✗ agent-session serve did not bind+stay up (rc=$rc)"; exit 1; }'
+          echo "✓ agent-session on PATH, s6 service gated, serve binds"
+
           # Inventory installer reconciles cleanly against the empty inventory
           # and writes a MOTD drop-in. failed=0 proves no section errored.
           docker exec mas-smoke /usr/local/bin/multi-agent-shell-reconcile
@@ -877,6 +907,7 @@ jobs:
   dispatch-frank:
     needs:
       - test-kali
+      - test-multi-agent-shell
       - build-children
       - smoke-test-vk-local
       - smoke-test-secure-agent-kali
@@ -887,6 +918,12 @@ jobs:
       - smoke-test-hermes-agent-shell
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
+    # Only notify frank when the MAIN image tag actually moved: a push to main
+    # or the vk repository_dispatch rebuild. A manual workflow_dispatch (used to
+    # validate a feature BRANCH image before merge) must NOT bump frank — its
+    # handler sed-pins frank's prod manifests to the dispatched SHA and opens a
+    # PR, which would pin production to an unmerged branch build.
+    if: github.event_name == 'push' || github.event_name == 'repository_dispatch'
     permissions: {}
     steps:
       - env:
