@@ -59,7 +59,7 @@ $HOME/
 ├── .config/                  # XDG-Base-Dir per-harness configs that follow XDG
 │   ├── codex/                # auth.json, settings.json (TBD per upstream)
 │   └── opencode/             # (TBD per upstream)
-├── .gemini/antigravity-cli/  # agy (antigravity) settings.json + credentials.enc
+├── .gemini/antigravity-cli/  # agy (antigravity) settings.json + antigravity-oauth-token
 │                             #   (agy reuses the ~/.gemini dir; not XDG)
 ├── .claude/                  # claude-code; canonical layout — see below
 │   ├── credentials.json

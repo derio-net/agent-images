@@ -38,7 +38,7 @@ teardown() { rm -rf "$TMP_HOME"; }
 
 @test "agy creds present: shows ✓ for agy" {
   mkdir -p "$TMP_HOME/.gemini/antigravity-cli"
-  echo 'enc' > "$TMP_HOME/.gemini/antigravity-cli/credentials.enc"
+  echo 'token' > "$TMP_HOME/.gemini/antigravity-cli/antigravity-oauth-token"
   run bash "$MOTD"
   [ "$status" -eq 0 ]
   [[ "$output" == *"✓ agy"* ]]
