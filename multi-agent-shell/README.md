@@ -199,6 +199,73 @@ Failures fire to `@agent_zero_cc_bot` via `FRANK_C2_TELEGRAM_BOT_TOKEN` +
 `FRANK_C2_TELEGRAM_CHAT_ID` env vars (same Infisical-backed Secret used by
 the other shells). Fail-silent if either env is empty.
 
+## agent-session — persistent-agent interface
+
+`agent-session` (baked at
+`/usr/local/lib/multi-agent-shell/agent-session`, symlinked onto `PATH`)
+drives a **running** interactive agent session over HTTP — never `claude -p`.
+It is the reusable, versioned contract every consumer shares (n8n, the
+alert-agent, …); stdlib-only Python, no extra deps.
+
+How it drives the session: submit the message via tmux **bracketed paste**
+(multi-line safe), then read the reply from a **per-turn nonce file** the
+agent is asked to write (the file appearing + parsing IS the completion
+signal — robust to TUI soft-wrapping). A locked, atomic per-session turn
+counter is the continuity evidence.
+
+### Serving (opt-in)
+
+A baked **s6 longrun** (`/etc/services.d/agent-session-server`) serves the
+endpoint **only when `AGENT_SESSION_SERVE=1`** (default off — a plain
+interactive shell is unaffected; consumers opt in). s6 supervises restarts;
+there is no postStart hook or restart loop to wire up. `agent-session send
+'<json>'` runs the same core as a CLI for debug/manual use.
+
+### API
+
+```
+POST /session/send   {session_id, agent, message, timeout_s?}
+                  -> {session_id, agent, status, turn, payload}
+GET  /healthz        -> 200 {"status":"ok"}
+```
+
+Bound on `127.0.0.1:${AGENT_SESSION_PORT:-8765}` (pod-local; same netns as the
+consumer — never the wildcard address). `status` is `ok` or `timeout` (the
+per-turn file never appeared); on timeout `payload` is `null`, so a consumer
+can fall back to a deterministic render.
+
+### Environment
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `AGENT_SESSION_SERVE` | `0` | `1` starts the baked serve longrun |
+| `AGENT_SESSION_PORT` | `8765` | loopback port the HTTP server binds |
+| `AGENT_SESSION_TURN_DIR` | `~/.agent-session` | per-session turn counters |
+| `AGENT_SESSION_OUT_DIR` | `~/.agent-session/out` | per-turn output files |
+| `AGENT_SESSION_POLL_S` | `2` | output-file poll interval (s) |
+| `AGENT_SESSION_SETTLE_S` | `0.5` | paste→Enter settle delay (s) |
+
+Each `AGENT_SESSION_*` var falls back to the legacy `STOA_*` name
+(`STOA_TURN_DIR`, `STOA_OUT_DIR`, `STOA_SESSION_PORT`, `STOA_POLL_S`,
+`STOA_SETTLE_S`) when unset — a **deprecated alias kept for one migration
+cycle** so a consumer mid-migration never breaks.
+
+### Per-agent launch profiles
+
+`ensure_session` auto-creates the session by launching the configured `agent`
+(the `agent` field in the request), defaulting to `claude`:
+
+| `agent` | Launch command | Status |
+|---------|----------------|--------|
+| `claude` (default) | `claude --permission-mode auto` | wired + verified |
+| `codex` | `codex --full-auto` | config-selectable — **auto-approve invocation not yet verified live (follow-up)** |
+| `antigravity` | `agy --yolo` | config-selectable — **auto-approve invocation not yet verified live (follow-up)** |
+
+An unrecognized `agent` falls back to the verified `claude` profile. The auto-
+approve flag lets the session write its per-turn output file without a prompt
+(short of a full permissions bypass). Correcting a `codex`/`antigravity` flag
+is a one-line edit to the `LAUNCH_PROFILES` table in the driver.
+
 ## Plan / spec
 
 - Standard: [`docs/standards/multi-harness-shells.md`](../docs/standards/multi-harness-shells.md)
