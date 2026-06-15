@@ -27,13 +27,17 @@ tasks:
          # image rebuild, NOT the inventory harnesses: key. Auth is interactive
          # OAuth on first run (no API key). install.sh --dir places the binary on
          # the global PATH. See docs/standards/multi-harness-shells.md.
-         RUN curl -fsSL https://antigravity.google/cli/install.sh \
-               | bash -s -- --dir /usr/local/bin </dev/null \
+         RUN mkdir -p /tmp/agy-home \
+          && curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh \
+          && HOME=/tmp/agy-home bash /tmp/agy-install.sh --dir /usr/local/bin </dev/null \
+          && rm -rf /tmp/agy-install.sh /tmp/agy-home \
           && agy --version
          ```
 
-         (`</dev/null` keeps the installer's `agy install` env-setup step
-         non-interactive in the build.)
+         Download-then-run (not `curl | bash`) so a curl/TLS failure fails the
+         build directly (no pipefail under `/bin/sh`); throwaway `$HOME` absorbs
+         the installer's shell-rc edits; `</dev/null` keeps `agy install`
+         non-interactive; `agy --version` gates install + executability.
 
       4. Update the comment block (lines ~15-24) so it no longer implies all
          harnesses are npm/self-updating: note agy is script-installed and
