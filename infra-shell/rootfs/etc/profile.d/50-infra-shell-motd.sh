@@ -10,7 +10,8 @@
 echo "Harness auth status:"
 
 check() {
-  # $1=name $2=path (relative to $HOME)
+  # $1=name $2=path (relative to $HOME) $3=login-command hint (default "$1 login")
+  hint="${3:-$1 login}"
   if [ -e "$HOME/$2" ]; then
     # stat may fail on an unreadable/dangling target; degrade to "?" rather
     # than emit a shell arithmetic error on login.
@@ -22,11 +23,14 @@ check() {
       printf '  ✓ %-9s (~/%s, age ?)\n' "$1" "$2"
     fi
   else
-    printf '  ✗ %-9s not logged in — run: %s login\n' "$1" "$1"
+    printf '  ✗ %-9s not logged in — run: %s\n' "$1" "$hint"
   fi
 }
 
+# agy (antigravity) auth is interactive on first run of `agy` (no `agy login`),
+# and its credential lands at ~/.gemini/antigravity-cli/credentials.enc
+# (best-effort path — confirmed post-merge per the spec's Test Plan).
 check claude   .claude/credentials.json
 check codex    .config/codex/auth.json
-check gemini   .config/gemini/auth.json
-check opencode .local/share/opencode/auth.json
+check agy      .gemini/antigravity-cli/credentials.enc   agy
+check opencode .local/share/opencode/auth.json           "opencode auth login"

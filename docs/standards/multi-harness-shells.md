@@ -2,7 +2,7 @@
 
 **Status:** Draft (living document)
 **Applies to:** any `*-shell` image in this repo that hosts one or more agent-CLI
-harnesses (`claude`, `codex`, `gemini`, `opencode`, `hermes`, future harnesses).
+harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`, future harnesses).
 **Does not apply to:** server images (`ruflo-server`, `vk-local`).
 
 ## Purpose
@@ -58,8 +58,9 @@ $HOME/
 │   └── state/<image>-shell/  # inventory reconcile state, last-run logs
 ├── .config/                  # XDG-Base-Dir per-harness configs that follow XDG
 │   ├── codex/                # auth.json, settings.json (TBD per upstream)
-│   ├── gemini/               # auth.json, settings.json (TBD per upstream)
 │   └── opencode/             # (TBD per upstream)
+├── .gemini/antigravity-cli/  # agy (antigravity) settings.json + credentials.enc
+│                             #   (agy reuses the ~/.gemini dir; not XDG)
 ├── .claude/                  # claude-code; canonical layout — see below
 │   ├── credentials.json
 │   ├── settings.json
@@ -84,6 +85,9 @@ Each `*-shell` image declares which harnesses it carries. For every
 harness, the image's README lists:
 
 1. **Bootstrap install** — the Dockerfile line that puts the CLI on PATH.
+   Usually `npm i -g <pkg>`, but it may instead be a vendor binary installer
+   (e.g. `agy`/antigravity installs via `curl …/install.sh | bash -s -- --dir
+   /usr/local/bin`).
 2. **Self-update path** — where the CLI writes updates (`$HOME/.local/bin/`
    preferred). If the upstream CLI has no self-update mechanism, install via
    the inventory layer with an npm prefix of `$HOME/.npm-global` so updates
@@ -103,7 +107,7 @@ issued session).
 ## Auth model — subscription, not API tokens
 
 For harnesses that ship a subscription/OAuth login flow (claude, codex,
-gemini, …) the standard mandates that flow over any API-key env-var
+agy, …) the standard mandates that flow over any API-key env-var
 mechanism. The implications:
 
 - The image **does not** carry an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
@@ -131,7 +135,7 @@ SSH login, prints a per-harness auth status table:
 Harness auth status:
   ✓ claude     (~/.claude/credentials.json, age 4d)
   ✓ codex      (~/.config/codex/auth.json, age 4d)
-  ✗ gemini     not logged in — run: gemini login
+  ✗ agy        not logged in — run: agy
   ✗ opencode   not logged in — run: opencode auth login
 ```
 
@@ -186,8 +190,9 @@ removed:
 harnesses:
   claude: latest
   codex: latest
-  gemini: latest
   opencode: 0.4.2
+  # Binary-distributed harnesses with no self-update (e.g. agy/antigravity)
+  # do NOT belong here — they are refreshed by image rebuild.
 
 # Per-harness MCP servers. Each entry is appended to that harness's mcp.json
 # during reconcile, idempotently (existing entries with the same name are
@@ -204,7 +209,6 @@ mcp-servers:
     - name: context7
       command: npx
       args: ["-y", "@upstash/context7-mcp"]
-  gemini: []
   opencode: []
 
 # Per-harness skills/plugins. Reconcile clones (or pulls) git refs into the
@@ -218,7 +222,6 @@ skills:
       source: git+https://github.com/derio-net/super-fr
       ref: main
   codex: []
-  gemini: []
   opencode: []
 ```
 
@@ -242,7 +245,7 @@ concern. What the standard does require:
    `$HOME/.claude/` for that working directory — that's claude-code's own
    behaviour, restated here so spec authors don't fight it.
 3. **Missing per-repo config is non-fatal.** A repo set up only for claude
-   (no `.codex/`, no `.gemini/`) must remain usable by codex and gemini,
+   (no `.codex/`, no agy config) must remain usable by codex and agy,
    which fall back to their `$HOME` defaults.
 4. **No cross-harness pollution.** The standard does not introduce shared
    files like `~/.agent-skills/` that multiple harnesses must read.
@@ -279,9 +282,11 @@ Minimum requirements for a new `*-shell` image to claim compliance:
 
 ## Open questions tracked on this doc
 
-- Self-update behaviour of `codex`, `gemini`, `opencode` — to be confirmed
-  per upstream. If any lacks a self-update mechanism, this doc gains a
-  per-harness workaround section.
+- Self-update behaviour of `codex`, `opencode` — to be confirmed per
+  upstream. If any lacks a self-update mechanism, this doc gains a
+  per-harness workaround section. (`agy`/antigravity is already known to have
+  **no** self-update and no version pin → refreshed by image rebuild, and is
+  intentionally excluded from the inventory `harnesses:` key.)
 - Whether `superpowers` (and similar) ship MCP servers, claude-code
   plugins, or both, and how that distinction maps to the
   `mcp-servers` vs `skills` inventory keys.

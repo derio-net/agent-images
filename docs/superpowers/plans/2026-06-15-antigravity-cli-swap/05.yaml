@@ -30,21 +30,22 @@ tasks:
   steps:
   - id: P5.T2.S1
     text: |-
-      Confirm the only remaining `gemini` references are the intentional
-      historical records (the 2026-05-12 spec and the 2026-06-01 plan dir).
+      Confirm no FUNCTIONAL gemini-CLI references remain in the source tree.
+      The naive `grep gemini` over-matches: agy's credential path legitimately
+      lives under `~/.gemini/antigravity-cli/`, and this swap's own spec + plan
+      describe the change. So the sweep targets the stale FUNCTIONAL tokens and
+      excludes the historical records, this swap's spec/plan dir, and lines that
+      co-occur with `antigravity` (agy's real path).
 
       ```bash
-      grep -rniE 'gemini|@google/gemini-cli|\.config/gemini' . \
+      grep -rniE '@google/gemini-cli|\.config/gemini|GEMINI_CLI_VERSION|check gemini|gemini login|for h in.*gemini|`gemini`|gemini:( |$)' . \
         --include='*.sh' --include='*.md' --include='*.yaml' --include='*.yml' \
         --include='*.bats' --include='Dockerfile' \
-        | grep -vE 'docs/superpowers/(specs/2026-05-12|plans/2026-06-01)' \
-        | grep -vE 'docs/superpowers/specs/2026-06-15-antigravity' \
-        || echo "OK: only historical gemini refs remain"
+        | grep -vE 'docs/superpowers/(specs/2026-05-12|plans/2026-06-01|specs/2026-06-15-antigravity|plans/2026-06-15-antigravity)' \
+        || echo "OK: no functional gemini-CLI refs remain"
       ```
 
-      Expected: prints `OK: only historical gemini refs remain` (the 2026-06-15
-      spec legitimately mentions gemini when describing the swap; it is
-      excluded above).
+      Expected: prints `OK: no functional gemini-CLI refs remain`.
   - id: P5.T2.S2
     text: |-
       Run the full local test surface one more time as a regression gate.
@@ -59,18 +60,18 @@ tasks:
 state:
   steps:
     P5.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-15T08:55:16+00:00'
       note: null
     P5.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-15T08:55:17+00:00'
       note: null
     P5.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-15T08:55:19+00:00'
       note: null
   completion:
-    at: null
+    at: '2026-06-15T08:55:20+00:00'
     note: null
     observed_prs: []

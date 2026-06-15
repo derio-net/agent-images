@@ -17,19 +17,23 @@ tasks:
       1. Remove `ARG GEMINI_CLI_VERSION=0.44.1` (line ~26).
       2. Remove the `@google/gemini-cli@${GEMINI_CLI_VERSION} \` line from the
          `npm install -g` RUN (leaving codex + opencode).
-      3. Add a new RUN after that npm install, using the install command +
-         relocate path confirmed in Phase 1. Baseline shape:
+      3. Add a new RUN after that npm install. Phase 1 confirmed (by inspecting
+         install.sh) that the installer supports a `--dir` flag — install
+         straight to the global PATH, no scratch-HOME/relocate needed:
 
          ```dockerfile
          # antigravity CLI (agy) — replaces gemini CLI (deprecating 2026-06-18).
          # Binary-distributed (no npm), no self-update subcommand: updated by
          # image rebuild, NOT the inventory harnesses: key. Auth is interactive
-         # OAuth on first run (no API key). See docs/standards/multi-harness-shells.md.
-         RUN curl -fsSL https://antigravity.google/cli/install.sh | HOME=/tmp/agy bash \
-          && install -m 0755 /tmp/agy/.local/bin/agy /usr/local/bin/agy \
-          && rm -rf /tmp/agy \
+         # OAuth on first run (no API key). install.sh --dir places the binary on
+         # the global PATH. See docs/standards/multi-harness-shells.md.
+         RUN curl -fsSL https://antigravity.google/cli/install.sh \
+               | bash -s -- --dir /usr/local/bin </dev/null \
           && agy --version
          ```
+
+         (`</dev/null` keeps the installer's `agy install` env-setup step
+         non-interactive in the build.)
 
       4. Update the comment block (lines ~15-24) so it no longer implies all
          harnesses are npm/self-updating: note agy is script-installed and
@@ -53,14 +57,16 @@ tasks:
 state:
   steps:
     P3.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T08:48:30+00:00'
+      note: Used install.sh --dir /usr/local/bin (Phase-1 finding); removed GEMINI_CLI_VERSION
+        ARG + npm line
     P3.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T08:48:31+00:00'
+      note: No functional gemini refs remain; one intentional migration-context comment
+        kept
   completion:
-    at: null
+    at: '2026-06-15T08:48:33+00:00'
     note: null
     observed_prs: []

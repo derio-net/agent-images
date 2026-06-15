@@ -56,18 +56,20 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T08:44:51+00:00'
+      note: Direct curl|bash blocked by security classifier; de-risked by inspecting
+        install.sh instead
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T08:44:52+00:00'
+      note: 'Strategy: install.sh supports --dir flag → install straight to /usr/local/bin
+        (no scratch-HOME/relocate). Binary agy; no version pin (R3 accepted).'
     P1.T1.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-06-15T08:44:54+00:00'
+      note: N/A — nothing installed locally (inspection only)
   completion:
-    at: null
+    at: '2026-06-15T08:44:55+00:00'
     note: null
     observed_prs: []

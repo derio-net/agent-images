@@ -615,8 +615,8 @@ jobs:
           # Multi-harness manifest assertion (per docs/standards/multi-harness-shells.md
           # § "Smoke testing"): every harness in the image's manifest reports
           # --version cleanly as UID 1000. claude inherited from agent-base;
-          # codex/gemini/opencode baked here.
-          for h in claude codex gemini opencode; do
+          # codex/agy/opencode baked here.
+          for h in claude codex agy opencode; do
             echo "::group::$h --version"
             docker exec mas-smoke "$h" --version
             echo "::endgroup::"
@@ -841,7 +841,7 @@ jobs:
           docker exec infra-smoke jq --version
 
           # Multi-harness manifest assertion (inherited from multi-agent-shell).
-          for h in claude codex gemini opencode; do
+          for h in claude codex agy opencode; do
             echo "::group::$h --version"
             docker exec infra-smoke "$h" --version
             echo "::endgroup::"
