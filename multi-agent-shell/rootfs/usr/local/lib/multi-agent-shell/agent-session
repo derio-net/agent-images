@@ -218,8 +218,9 @@ def serve():
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError as exc:
-        # Surface bind failures (handler logs are silenced, not stderr):
-        # inspect via `tmux capture-pane -t agent-session-server`.
+        # Surface bind failures (handler logs are silenced, not stderr). Under
+        # the baked s6 longrun this stderr lands in the agent-session-server
+        # service / container logs (`docker logs` / `kubectl logs`).
         print(f"agent-session serve: bind 127.0.0.1:{PORT} failed: {exc}", file=sys.stderr)
         raise
     server.daemon_threads = True
