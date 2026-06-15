@@ -1,0 +1,54 @@
+schema_version: 2
+phase:
+  number: 4
+  title: README contract + branch image build
+  tag: agentic
+  depends_on:
+  - 1
+  - 2
+  - 3
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Document the contract
+  steps:
+  - id: P4.T1.S1
+    text: |
+      Document the `agent-session` contract in `multi-agent-shell/README.md`: the
+      `serve`/`send` API (`POST /session/send {session_id, agent, message, timeout_s?} →
+      {…, turn, payload}`, `GET /healthz`), the `AGENT_SESSION_SERVE=1` opt-in, the
+      `AGENT_SESSION_*` env vars (+ the deprecated `STOA_*` aliases), and the per-agent profile
+      table (claude default / antigravity / codex, with the verification-status note).
+- number: 2
+  title: Build + verify the branch-tagged image
+  steps:
+  - id: P4.T2.S1
+    text: |
+      Trigger the branch build: `gh workflow run build.yaml --ref feat/agent-session-extract`
+      (agent-images CI builds on push:main, so a branch needs the manual dispatch). Watch it:
+      `gh run watch <id>`. **Confirm the workflow publishes a BRANCH-tagged multi-agent-shell
+      image** (not a main tag) — that tag is the gate frank's two plans consume. Record the tag.
+  - id: P4.T2.S2
+    text: |
+      Smoke the built image: `agent-session` is on PATH and `agent-session serve` binds, e.g.
+      `docker run --rm <branch-image> bash -lc 'command -v agent-session && timeout 2
+      agent-session serve; echo exit=$?'` (a clean bind then timeout is success). Expected:
+      agent-session present + serve binds.
+state:
+  steps:
+    P4.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

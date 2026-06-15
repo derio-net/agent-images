@@ -1,0 +1,42 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Baked s6 longrun (AGENT_SESSION_SERVE gate)
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: s6 service mirroring the sshd precedent
+  steps:
+  - id: P3.T1.S1
+    text: |
+      Add `multi-agent-shell/rootfs/etc/services.d/agent-session-server/run` mirroring the
+      existing sshd service EXACTLY (`#!/command/with-contenv bash`, a sibling `finish`
+      script). The run script: if `[ "${AGENT_SESSION_SERVE:-0}" = 1 ]`, pre-trust the
+      workspace (the bootstrap's `~/.claude.json hasTrustDialogAccepted` step) then
+      `exec s6-setuidgid "$AGENT_USER" agent-session serve`; else `exec sleep infinity` (the
+      service exists but idles when not opted in — default off). s6 supervises restarts, so NO
+      `while/sleep` loop.
+  - id: P3.T1.S2
+    text: |
+      In the Dockerfile, add `/etc/services.d/agent-session-server/run` (+ `finish`) to the
+      existing `chmod +x` list (alongside the sshd run script). Add a bats assertion (extend
+      `multi-agent-shell/tests/test_install_inventory.bats` or a new `.bats`) that the run
+      script exists, is executable, and is gated on `AGENT_SESSION_SERVE`. Run the bats suite.
+      Expected: PASS.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

@@ -1,0 +1,78 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Bake agent-session into the image + genericize env (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Pytest port (modeled on kali/tests), reading the baked path — RED
+  steps:
+  - id: P1.T1.S1
+    text: |
+      The repo already has pytest (`pyproject.toml` + `kali/tests/test_*.py`; the `dev` profile
+      runs "pytest locally"); `multi-agent-shell/tests/` is bats-only today. Add
+      `multi-agent-shell/tests/test_agent_session.py` modeled on `kali/tests/` (mirror its
+      conftest/invocation style). Port the tmux-mock cases from frank
+      `scripts/tests/test_agent_session_driver.py` — the FAKE_TMUX PATH-injection harness,
+      bracketed-paste submit, per-turn nonce-file read, turn counter, timeout, and the HTTP
+      `serve` test — but point the driver-source fixture at the BAKED file
+      `multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/agent-session` (not the n8n
+      ConfigMap). Run `uv run --with pytest pytest multi-agent-shell/tests/test_agent_session.py
+      -q`. Expected: FAIL/colluction-error (RED — the baked file does not exist yet).
+  - id: P1.T1.S2
+    text: |
+      Wire pytest for multi-agent-shell into CI the same way kali's python tests run (check
+      `.github/workflows/` for the existing pytest invocation; extend its path filter / matrix
+      to include `multi-agent-shell/tests/`). No new test framework — extend the existing one.
+- number: 2
+  title: Move + genericize the driver into rootfs — GREEN
+  steps:
+  - id: P1.T2.S1
+    text: |
+      Extract the driver Python from frank `apps/n8n-01/manifests/agent-session-driver.yaml`
+      (`data["agent-session"]`) into
+      `multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/agent-session` as a plain
+      executable script (`#!/usr/bin/env python3`, stdlib-only — verified: fcntl/json/os/
+      secrets/subprocess/sys/time, runs on the image's python3).
+  - id: P1.T2.S2
+    text: |
+      Genericize the env vars to `AGENT_SESSION_*` with deprecated-alias fallback — each
+      `os.environ.get` reads the new name, falling back to the `STOA_*` source var if unset:
+      `AGENT_SESSION_TURN_DIR←STOA_TURN_DIR`, `_OUT_DIR←STOA_OUT_DIR`, `_PORT←STOA_SESSION_PORT`,
+      `_POLL_S←STOA_POLL_S`, `_SETTLE_S←STOA_SETTLE_S`, `_NAME←STOA_SESSION_NAME`. Add an alias
+      test asserting a `STOA_*`-only env still drives the same behaviour.
+  - id: P1.T2.S3
+    text: |
+      In `multi-agent-shell/Dockerfile`, `chmod +x` the baked driver and symlink it onto PATH
+      (mirror the existing `ln -sf … /usr/local/bin/multi-agent-shell-reconcile` line):
+      `ln -sf /usr/local/lib/multi-agent-shell/agent-session /usr/local/bin/agent-session`.
+      Run `uv run --with pytest pytest multi-agent-shell/tests/test_agent_session.py -q`.
+      Expected: GREEN.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
