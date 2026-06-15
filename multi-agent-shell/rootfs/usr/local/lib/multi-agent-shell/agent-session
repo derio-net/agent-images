@@ -41,6 +41,27 @@ SETTLE_S = float(_env("AGENT_SESSION_SETTLE_S", "STOA_SETTLE_S", "0.5"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
 
 
+# Per-agent launch profiles: the interactive launch command (never -p /
+# one-shot) for each selectable agent. The session must auto-approve safe
+# operations so it can write its per-turn output file without a prompt.
+#   * claude  — wired + verified default.
+#   * codex / antigravity — config-selectable; their auto-approve invocation
+#     here is best-effort and NOT yet verified live (a follow-up — see the
+#     image README). This table is the single place to correct a flag.
+LAUNCH_PROFILES = {
+    "claude": "claude --permission-mode auto",
+    "codex": "codex --full-auto",
+    "antigravity": "agy --yolo",
+}
+DEFAULT_AGENT = "claude"
+
+
+def launch_command(agent):
+    # Unknown agent → fall back to the verified claude profile rather than
+    # launching nothing (which would leave send() to time out mysteriously).
+    return LAUNCH_PROFILES.get(agent, LAUNCH_PROFILES[DEFAULT_AGENT])
+
+
 def tmux(*args, stdin=None):
     return subprocess.run(["tmux", *args], input=stdin, capture_output=True, text=True)
 
@@ -63,17 +84,16 @@ def pretrust():
         pass
 
 
-def ensure_session(session_id, agent="claude"):
+def ensure_session(session_id, agent=DEFAULT_AGENT):
     # Auto-create the session (interactive agent CLI, never -p) if absent, so
-    # the caller's session_id drives whatever it names. Unauthenticated until
-    # the operator logs the agent in. `claude --permission-mode auto` lets the
-    # session auto-approve safe operations (incl. writing its per-turn output
-    # file) without a prompt, short of a full permissions bypass. Concurrency-
+    # the caller's session_id drives whatever it names. The launch command is
+    # the per-agent profile; its auto-approve flag lets the session write its
+    # per-turn output file without a prompt, short of a full permissions
+    # bypass. Unauthenticated until the operator logs the agent in. Concurrency-
     # safe: a racing dup new-session errors harmlessly.
     if tmux("has-session", "-t", session_id).returncode != 0:
         pretrust()
-        tmux("new-session", "-d", "-s", session_id,
-             "claude --permission-mode auto")
+        tmux("new-session", "-d", "-s", session_id, launch_command(agent))
 
 
 def submit(session_id, text):

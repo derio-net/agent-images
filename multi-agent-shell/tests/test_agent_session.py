@@ -182,6 +182,28 @@ def test_deprecated_stoa_aliases_still_drive(tmp_path):
     assert (tmp_path / "turns" / (SEND_REQ["session_id"] + ".turn")).exists()
 
 
+@pytest.mark.parametrize("agent,expected_launch", [
+    ("claude", "claude --permission-mode auto"),
+    ("codex", "codex --full-auto"),
+    ("antigravity", "agy --yolo"),
+])
+def test_per_agent_launch_profile(harness, agent, expected_launch):
+    # ensure_session dispatches on the `agent` field via the launch-profile
+    # table; the FAKE_TMUX records the new-session command verbatim.
+    harness.run(dict(SEND_REQ, agent=agent), session_exists=False)
+    newlog = (harness.fdir / "new.log").read_text()
+    assert expected_launch in newlog, \
+        f"agent {agent!r} must launch via `{expected_launch}`, got: {newlog!r}"
+
+
+def test_unknown_agent_falls_back_to_claude(harness):
+    # An unrecognized agent must not crash — default to the verified claude
+    # profile rather than launching nothing.
+    harness.run(dict(SEND_REQ, agent="nope-not-an-agent"), session_exists=False)
+    newlog = (harness.fdir / "new.log").read_text()
+    assert "claude --permission-mode auto" in newlog
+
+
 def test_http_server_serves_session_send(harness):
     port = _free_port()
     (harness.fdir / "has.code").write_text("0")
