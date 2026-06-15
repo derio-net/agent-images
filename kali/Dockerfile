@@ -42,6 +42,15 @@ RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
 # (e.g. the GCC-16 churn of 2026-05): the index advertises gcc-16-base
 # 16-20260322-1 but the .deb 404s, failing dist-upgrade. kali.download keeps
 # index↔pool consistent. See docs/runbooks/frank-gotchas (kali mirror skew).
+#
+# Dpkg::Options --force-overwrite: the bookworm→kali-rolling jump crosses the
+# Debian 64-bit time_t (t64) transition, where renamed/merged library packages
+# legitimately ship the same SONAME file as the bookworm package they replace
+# (e.g. kali libcurl4-gnutls 8.20.0-5 ships
+# /usr/lib/x86_64-linux-gnu/libcurl-gnutls.so.4.8.0, still owned by bookworm
+# libcurl3-gnutls 7.88.1-10+deb12u14). dpkg refuses the cross-package overwrite
+# and aborts dist-upgrade; --force-overwrite is the canonical resolution — it
+# only permits file overwrites, never dependency breakage.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       lsb-release wget gnupg \
     && wget -qO - https://archive.kali.org/archive-key.asc \
@@ -49,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://kali.download/kali kali-rolling main non-free contrib" \
       > /etc/apt/sources.list.d/kali.list \
     && apt-get update \
-    && apt-get dist-upgrade -y \
+    && apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Kali tooling + logrotate (openssh-server/tmux/mosh inherited from agent-shell-base) ──
