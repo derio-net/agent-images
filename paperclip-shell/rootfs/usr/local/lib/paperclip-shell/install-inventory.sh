@@ -114,7 +114,14 @@ fi
 if command -v npm >/dev/null 2>&1; then
     while IFS= read -r pkg; do
         [[ -z "$pkg" ]] && continue
-        if npm ls -g "$pkg" --depth=0 >/dev/null 2>&1; then
+        # Presence check by package NAME, not the full spec. A version/tag
+        # selector (e.g. `claude-flow@alpha`) makes `npm ls -g pkg@tag` exit
+        # non-zero even when the package IS installed, re-installing it every
+        # boot (and risking a stale-retired-dir ENOTEMPTY deadlock). Strip a
+        # trailing @selector, preserving a leading @scope (`@openai/codex`).
+        name="$pkg"
+        [[ "${pkg#@}" == *@* ]] && name="${pkg%@*}"
+        if npm ls -g "$name" --depth=0 >/dev/null 2>&1; then
             already+=1
             echo "= npm $pkg"
             continue
