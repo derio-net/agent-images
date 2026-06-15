@@ -641,6 +641,17 @@ jobs:
             echo "::endgroup::"
           done
 
+          # agent-session contract (Part A): the baked driver is on PATH, the
+          # s6 longrun is present + gated on AGENT_SESSION_SERVE, and
+          # `agent-session serve` binds 127.0.0.1 cleanly. A clean bind keeps
+          # serving until `timeout` kills it at 2s (rc 124 = success); a bind
+          # failure raises and exits non-124 fast.
+          docker exec mas-smoke command -v agent-session
+          docker exec mas-smoke test -x /etc/services.d/agent-session-server/run
+          docker exec mas-smoke grep -q AGENT_SESSION_SERVE /etc/services.d/agent-session-server/run
+          docker exec mas-smoke bash -lc 'timeout 2 agent-session serve; rc=$?; [ "$rc" = 124 ] || { echo "✗ agent-session serve did not bind+stay up (rc=$rc)"; exit 1; }'
+          echo "✓ agent-session on PATH, s6 service gated, serve binds"
+
           # Inventory installer reconciles cleanly against the empty inventory
           # and writes a MOTD drop-in. failed=0 proves no section errored.
           docker exec mas-smoke /usr/local/bin/multi-agent-shell-reconcile

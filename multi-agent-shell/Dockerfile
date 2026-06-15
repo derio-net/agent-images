@@ -63,6 +63,8 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
       /var/lib/multi-agent-shell \
  && chmod +x \
       /etc/cont-init.d/40-shell-inventory \
+      /etc/services.d/agent-session-server/run \
+      /etc/services.d/agent-session-server/finish \
       /etc/profile.d/40-multi-agent-shell-paths.sh \
       /etc/profile.d/45-multi-agent-shell-reconcile-motd.sh \
       /etc/profile.d/50-multi-agent-shell-motd.sh \

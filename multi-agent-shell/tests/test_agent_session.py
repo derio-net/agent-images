@@ -30,6 +30,8 @@ import pytest
 
 MAS = Path(__file__).resolve().parents[1]
 DRIVER = MAS / "rootfs/usr/local/lib/multi-agent-shell/agent-session"
+SERVICE_RUN = MAS / "rootfs/etc/services.d/agent-session-server/run"
+SERVICE_FINISH = MAS / "rootfs/etc/services.d/agent-session-server/finish"
 
 # The send/receive contract (inlined — the baked driver is a plain executable,
 # not a ConfigMap, so there is no yaml to parse and no fixture file to read).
@@ -202,6 +204,28 @@ def test_unknown_agent_falls_back_to_claude(harness):
     harness.run(dict(SEND_REQ, agent="nope-not-an-agent"), session_exists=False)
     newlog = (harness.fdir / "new.log").read_text()
     assert "claude --permission-mode auto" in newlog
+
+
+def test_s6_service_run_gated_on_serve_flag():
+    # The baked s6 longrun serves agent-session ONLY when AGENT_SESSION_SERVE=1
+    # (default off — a plain interactive shell is unaffected; consumers opt in).
+    assert SERVICE_RUN.exists(), "agent-session-server s6 run script must exist"
+    text = SERVICE_RUN.read_text()
+    assert text.startswith("#!/command/with-contenv bash"), "must mirror the sshd s6 shebang"
+    assert "AGENT_SESSION_SERVE" in text, "serve must be gated on AGENT_SESSION_SERVE"
+    assert "agent-session serve" in text, "must exec the baked agent-session serve"
+    # s6 supervises restarts, so there is NO busy while/sleep loop; when not
+    # opted in the service idles (sleep infinity) so s6 sees it as up.
+    assert "sleep infinity" in text, "must idle (not exit) when not opted in"
+    # Check for an actual `while` loop construct, ignoring the word in comments.
+    code = [l.split("#", 1)[0].strip() for l in text.splitlines()]
+    assert not any(l.startswith("while") for l in code), \
+        "s6 supervises restarts; no while/sleep loop"
+
+
+def test_s6_service_finish_mirrors_sshd():
+    assert SERVICE_FINISH.exists(), "agent-session-server s6 finish script must exist"
+    assert SERVICE_FINISH.read_text().startswith("#!/command/with-contenv bash")
 
 
 def test_http_server_serves_session_send(harness):

@@ -29,14 +29,18 @@ tasks:
 state:
   steps:
     P3.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-15T21:37:26+00:00'
       note: null
     P3.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-06-15T21:37:28+00:00'
+      note: 'Service assertion done in pytest (test_s6_service_*) + a CI runtime serve-binds
+        smoke in smoke-test-multi-agent-shell, not bats: bats is wired into neither
+        CI nor the dev container, so it cannot be run green; pytest is the CI-executed
+        surface and the spec mandates the CI serve-binds smoke. run script execs directly
+        (no s6-setuidgid) to mirror sshd under cap-drop=ALL.'
   completion:
-    at: null
+    at: '2026-06-15T21:37:30+00:00'
     note: null
     observed_prs: []
