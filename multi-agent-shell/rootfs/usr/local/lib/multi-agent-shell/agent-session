@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""agent-session — drive a persistent agent tmux session (send/receive).
+
+A reusable, image-baked interface (beside notify-telegram.sh). Never `claude -p`:
+submit via bracketed paste; receive the structured payload from a per-turn file
+the agent writes (the file appearing + parsing is the completion signal). Emits
+{session_id, agent, status, turn, payload} with a locked, atomic per-session turn
+counter (continuity evidence). `serve` runs the HTTP endpoint consumers call;
+`send` is the same core as a CLI.
+
+Env is `AGENT_SESSION_*`; the legacy `STOA_*` names are read as deprecated
+aliases (one migration cycle) when the new var is unset. Stdlib-only so it runs
+on the image's python3 with no extra deps.
+"""
+import fcntl
+import json
+import os
+import secrets
+import subprocess
+import sys
+import time
+
+
+def _env(new, old, default):
+    # Read the genericized AGENT_SESSION_* var, falling back to the deprecated
+    # STOA_* alias if unset, then the default. Keeps a consumer mid-migration
+    # working for one cycle without setting the new name.
+    val = os.environ.get(new)
+    if val is None:
+        val = os.environ.get(old)
+    return val if val is not None else default
+
+
+HOME = os.path.expanduser("~")
+TURN_DIR = _env("AGENT_SESSION_TURN_DIR", "STOA_TURN_DIR", os.path.join(HOME, ".agent-session"))
+OUT_DIR = _env("AGENT_SESSION_OUT_DIR", "STOA_OUT_DIR", os.path.join(HOME, ".agent-session", "out"))
+POLL_S = float(_env("AGENT_SESSION_POLL_S", "STOA_POLL_S", "2"))
+# Delay between pasting the message and pressing Enter — the TUI needs to
+# render the paste before the submit, or the Enter is dropped.
+SETTLE_S = float(_env("AGENT_SESSION_SETTLE_S", "STOA_SETTLE_S", "0.5"))
+PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
+
+
+def tmux(*args, stdin=None):
+    return subprocess.run(["tmux", *args], input=stdin, capture_output=True, text=True)
+
+
+def pretrust():
+    # Mark the workspace trusted in ~/.claude.json so claude never blocks on
+    # the folder-trust gate (an abrupt kill never flushes an acceptance, so
+    # it would otherwise re-appear and hang the session). Idempotent.
+    path = os.path.expanduser("~/.claude.json")
+    try:
+        d = json.load(open(path)) if os.path.exists(path) else {}
+    except (OSError, json.JSONDecodeError):
+        d = {}
+    home = os.path.expanduser("~")
+    d.setdefault("projects", {}).setdefault(home, {})["hasTrustDialogAccepted"] = True
+    try:
+        with open(path, "w") as fh:
+            json.dump(d, fh)
+    except OSError:
+        pass
+
+
+def ensure_session(session_id, agent="claude"):
+    # Auto-create the session (interactive agent CLI, never -p) if absent, so
+    # the caller's session_id drives whatever it names. Unauthenticated until
+    # the operator logs the agent in. `claude --permission-mode auto` lets the
+    # session auto-approve safe operations (incl. writing its per-turn output
+    # file) without a prompt, short of a full permissions bypass. Concurrency-
+    # safe: a racing dup new-session errors harmlessly.
+    if tmux("has-session", "-t", session_id).returncode != 0:
+        pretrust()
+        tmux("new-session", "-d", "-s", session_id,
+             "claude --permission-mode auto")
+
+
+def submit(session_id, text):
+    # Bracketed paste so a multi-line message lands without premature submit,
+    # then a SEPARATE Enter after the paste renders.
+    tmux("load-buffer", "-b", "agent-session-msg", "-", stdin=text)
+    tmux("paste-buffer", "-d", "-p", "-b", "agent-session-msg", "-t", session_id)
+    time.sleep(SETTLE_S)
+    tmux("send-keys", "-t", session_id, "Enter")
+
+
+def read_turn(session_id):
+    path = os.path.join(TURN_DIR, session_id + ".turn")
+    try:
+        with open(path) as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def bump_turn(session_id):
+    # Atomic + locked: the turn counter is the contract's continuity evidence.
+    os.makedirs(TURN_DIR, exist_ok=True)
+    path = os.path.join(TURN_DIR, session_id + ".turn")
+    with open(path + ".lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        turn = read_turn(session_id) + 1
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write(str(turn))
+        os.replace(tmp, path)
+    return turn
+
+
+def response(session_id, agent, status, turn, payload):
+    return {"session_id": session_id, "agent": agent, "status": status,
+            "turn": turn, "payload": payload}
+
+
+def send(req):
+    session_id = req["session_id"]
+    agent = req.get("agent", "claude")
+    message = req["message"]
+    timeout_s = float(req.get("timeout_s", 300))
+
+    ensure_session(session_id, agent)
+
+    # Per-turn output file (unique nonce → no stale-reply ambiguity).
+    os.makedirs(OUT_DIR, exist_ok=True)
+    nonce = secrets.token_hex(4)
+    outfile = os.path.join(OUT_DIR, "{}.{}.json".format(session_id, nonce))
+    try:
+        os.remove(outfile)
+    except OSError:
+        pass
+
+    driven = (
+        message
+        + "\n\n[agent-session] When done, write ONLY the JSON result to the file "
+        + outfile
+        + " — raw JSON, overwrite it, nothing else in that file."
+    )
+    submit(session_id, driven)
+
+    # The file appearing + parsing IS the completion signal (robust to TUI
+    # rendering / soft-wrapping). Tolerate a partial write by retrying.
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if os.path.exists(outfile):
+            try:
+                with open(outfile) as fh:
+                    payload = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                time.sleep(POLL_S)
+                continue
+            try:
+                os.remove(outfile)
+            except OSError:
+                pass
+            return response(session_id, agent, "ok", bump_turn(session_id), payload)
+        time.sleep(POLL_S)
+
+    return response(session_id, agent, "timeout", read_turn(session_id), None)
+
+
+def serve():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def _json(self, code, obj):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/healthz":
+                self._json(200, {"status": "ok"})
+            else:
+                self._json(404, {"status": "error", "error": "not found"})
+
+        def do_POST(self):
+            if self.path != "/session/send":
+                self._json(404, {"status": "error", "error": "not found"})
+                return
+            n = int(self.headers.get("Content-Length", "0") or 0)
+            try:
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except json.JSONDecodeError:
+                self._json(400, {"status": "error", "error": "bad json"})
+                return
+            self._json(200, send(req))
+
+        def log_message(self, *a):  # quiet
+            pass
+
+    # Pod-local only: the consumer shares the pod netns — bind loopback, never
+    # the wildcard address. Threaded so a long send() never head-of-line-blocks
+    # /healthz or a concurrent request.
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError as exc:
+        # Surface bind failures (handler logs are silenced, not stderr):
+        # inspect via `tmux capture-pane -t agent-session-server`.
+        print(f"agent-session serve: bind 127.0.0.1:{PORT} failed: {exc}", file=sys.stderr)
+        raise
+    server.daemon_threads = True
+    server.serve_forever()
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "serve":
+        serve()
+        return 0
+    if cmd == "send":
+        raw = argv[2] if len(argv) > 2 else sys.stdin.read()
+        print(json.dumps(send(json.loads(raw))))
+        return 0
+    print(json.dumps({"status": "error", "error": "usage: agent-session serve|send"}))
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

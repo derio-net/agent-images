@@ -70,9 +70,12 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
       /usr/local/lib/multi-agent-shell/install-inventory.sh \
       /usr/local/lib/multi-agent-shell/notify-telegram.sh \
       /usr/local/lib/multi-agent-shell/lib.sh \
+      /usr/local/lib/multi-agent-shell/agent-session \
  && /usr/local/lib/multi-agent-shell/install-base-runtimes.sh \
  && ln -sf /usr/local/lib/multi-agent-shell/install-inventory.sh \
-           /usr/local/bin/multi-agent-shell-reconcile
+           /usr/local/bin/multi-agent-shell-reconcile \
+ && ln -sf /usr/local/lib/multi-agent-shell/agent-session \
+           /usr/local/bin/agent-session
 
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}

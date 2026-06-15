@@ -43,6 +43,25 @@ jobs:
         working-directory: kali
         run: uv run pytest tests/ -v
 
+  # The baked agent-session driver (multi-agent-shell/rootfs/.../agent-session)
+  # is exercised by a tmux-mock pytest suite ported from frank. Mirrors the
+  # test-kali Python step; gates the frank dispatch alongside test-kali.
+  test-multi-agent-shell:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Sync Python deps
+        run: uv sync --group dev
+      - name: Run multi-agent-shell Python tests
+        working-directory: multi-agent-shell
+        run: uv run pytest tests/ -v
+
   build-base:
     runs-on: ubuntu-latest
     outputs:
@@ -877,6 +896,7 @@ jobs:
   dispatch-frank:
     needs:
       - test-kali
+      - test-multi-agent-shell
       - build-children
       - smoke-test-vk-local
       - smoke-test-secure-agent-kali
