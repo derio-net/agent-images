@@ -646,7 +646,7 @@ jobs:
           # `agent-session serve` binds 127.0.0.1 cleanly. A clean bind keeps
           # serving until `timeout` kills it at 2s (rc 124 = success); a bind
           # failure raises and exits non-124 fast.
-          docker exec mas-smoke command -v agent-session
+          docker exec mas-smoke bash -lc 'command -v agent-session'
           docker exec mas-smoke test -x /etc/services.d/agent-session-server/run
           docker exec mas-smoke grep -q AGENT_SESSION_SERVE /etc/services.d/agent-session-server/run
           docker exec mas-smoke bash -lc 'timeout 2 agent-session serve; rc=$?; [ "$rc" = 124 ] || { echo "✗ agent-session serve did not bind+stay up (rc=$rc)"; exit 1; }'
@@ -918,6 +918,12 @@ jobs:
       - smoke-test-hermes-agent-shell
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
+    # Only notify frank when the MAIN image tag actually moved: a push to main
+    # or the vk repository_dispatch rebuild. A manual workflow_dispatch (used to
+    # validate a feature BRANCH image before merge) must NOT bump frank — its
+    # handler sed-pins frank's prod manifests to the dispatched SHA and opens a
+    # PR, which would pin production to an unmerged branch build.
+    if: github.event_name == 'push' || github.event_name == 'repository_dispatch'
     permissions: {}
     steps:
       - env:
