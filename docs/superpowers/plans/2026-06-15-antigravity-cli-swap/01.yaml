@@ -1,0 +1,73 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Validate the agy install mechanism (spike)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Run the vendor install script in the devcontainer and record reality
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Run the antigravity install script against a scratch HOME and observe
+      exactly what it produces. This de-risks the Dockerfile (spec risk R2)
+      and confirms the binary name / install path / version reporting.
+
+      ```bash
+      rm -rf /tmp/agy-spike && mkdir -p /tmp/agy-spike
+      curl -fsSL https://antigravity.google/cli/install.sh | HOME=/tmp/agy-spike bash 2>&1 | tail -20
+      echo "--- tree ---"
+      find /tmp/agy-spike -maxdepth 4 -type f 2>/dev/null
+      echo "--- version ---"
+      /tmp/agy-spike/.local/bin/agy --version 2>&1 | head -3
+      ```
+
+      Expected: a binary named `agy` lands under `/tmp/agy-spike/.local/bin/`
+      and `agy --version` prints a version string. Record the ACTUAL path and
+      version observed.
+  - id: P1.T1.S2
+    text: |-
+      Decide the Dockerfile install strategy from the spike result and write
+      it down in this step's notes (it becomes the basis for Phase 3):
+
+      - If `HOME=<scratch>` was respected → the Dockerfile can install with a
+        scratch HOME then relocate the binary to `/usr/local/bin/agy`.
+      - If the script ignored HOME / wrote elsewhere → record where it wrote
+        and adjust the relocate source accordingly.
+      - If the script requires unavailable network/tooling in the spike →
+        fall back to the documented install (`curl … | bash` as root, then
+        `install -m 0755 ~/.local/bin/agy /usr/local/bin/agy`), and flag that
+        the CI build is the real gate.
+
+      Expected: a one-paragraph note recording the confirmed install command +
+      relocate path to use in Phase 3, plus the observed `agy --version`.
+  - id: P1.T1.S3
+    text: |-
+      Clean up the spike so it leaves no trace.
+
+      ```bash
+      rm -rf /tmp/agy-spike
+      echo "spike cleaned"
+      ```
+
+      Expected: prints `spike cleaned`.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

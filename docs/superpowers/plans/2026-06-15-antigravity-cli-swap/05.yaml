@@ -1,0 +1,76 @@
+schema_version: 2
+phase:
+  number: 5
+  title: CI smoke assertions + residual-gemini sweep
+  tag: agentic
+  depends_on:
+  - 2
+  - 3
+  - 4
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Update build.yaml smoke loops
+  steps:
+  - id: P5.T1.S1
+    text: |-
+      Edit `.github/workflows/build.yaml`:
+
+      - L618 comment `codex/gemini/opencode baked here` → `codex/agy/opencode`.
+      - Both smoke loops (L619 multi-agent-shell, L844 infra-shell):
+        `for h in claude codex gemini opencode;` → `for h in claude codex agy opencode;`.
+
+      ```bash
+      grep -n 'for h in' .github/workflows/build.yaml
+      ```
+
+      Expected: both loops now read `claude codex agy opencode`.
+- number: 2
+  title: Final residual-gemini sweep
+  steps:
+  - id: P5.T2.S1
+    text: |-
+      Confirm the only remaining `gemini` references are the intentional
+      historical records (the 2026-05-12 spec and the 2026-06-01 plan dir).
+
+      ```bash
+      grep -rniE 'gemini|@google/gemini-cli|\.config/gemini' . \
+        --include='*.sh' --include='*.md' --include='*.yaml' --include='*.yml' \
+        --include='*.bats' --include='Dockerfile' \
+        | grep -vE 'docs/superpowers/(specs/2026-05-12|plans/2026-06-01)' \
+        | grep -vE 'docs/superpowers/specs/2026-06-15-antigravity' \
+        || echo "OK: only historical gemini refs remain"
+      ```
+
+      Expected: prints `OK: only historical gemini refs remain` (the 2026-06-15
+      spec legitimately mentions gemini when describing the swap; it is
+      excluded above).
+  - id: P5.T2.S2
+    text: |-
+      Run the full local test surface one more time as a regression gate.
+
+      ```bash
+      cd multi-agent-shell && bats tests/test_motd.bats && cd ..
+      shellcheck -s sh multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh \
+                       infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh
+      ```
+
+      Expected: all bats tests PASS; shellcheck clean.
+state:
+  steps:
+    P5.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P5.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P5.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

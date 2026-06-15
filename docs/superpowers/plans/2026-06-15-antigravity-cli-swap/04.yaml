@@ -1,0 +1,79 @@
+schema_version: 2
+phase:
+  number: 4
+  title: Update manifest, standard, READMEs & inventory examples
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: multi-agent-shell README — manifest, build args, prose, inventory
+  steps:
+  - id: P4.T1.S1
+    text: |-
+      Edit `multi-agent-shell/README.md`:
+
+      1. Manifest table: replace the `gemini` row with an `agy` row:
+         `| `agy` (antigravity) | install script `curl …/install.sh \| bash` →
+         `/usr/local/bin/agy` | `agy` (first run prompts OAuth) |
+         `~/.gemini/antigravity-cli/credentials.enc` *(best-effort — see spec R1)* |
+         **image rebuild (no self-update)** |`.
+      2. Build-args table: delete the `GEMINI_CLI_VERSION` row.
+      3. Prose harness lists (lines ~4, ~15): `claude`, `codex`, `agy`, `opencode`.
+      4. Inventory examples: remove `gemini:` from `harnesses:`, `mcp-servers:`,
+         and `skills:` blocks (per spec D1 — agy is not an inventory-managed
+         harness). Add a one-line note under the manifest that agy is updated
+         by image rebuild and is intentionally absent from `harnesses:`.
+
+      Expected: `grep -ni gemini multi-agent-shell/README.md` returns nothing.
+- number: 2
+  title: Standard doc + infra-shell README + root README
+  steps:
+  - id: P4.T2.S1
+    text: |-
+      Edit `docs/standards/multi-harness-shells.md`:
+
+      - L5 applies-to list, L106 auth-model prose, L245 per-repo-fallback
+        prose: replace `gemini` with `agy`.
+      - L61 `$HOME` layout: replace the `.config/gemini/` entry with
+        `~/.gemini/antigravity-cli/   # agy (antigravity) settings + credentials.enc`.
+      - L134 MOTD example: `  ✗ agy        not logged in — run: agy`.
+      - Inventory examples (L189/207/221): remove the `gemini:` lines.
+      - L282 open-question: resolve the gemini self-update item — note agy has
+        no self-update (updated by image rebuild).
+      - In the "Harness manifest" section, add a sentence that a bootstrap
+        "shim" may be a vendor binary installer, not only `npm i -g`.
+
+      Expected: `grep -ni gemini docs/standards/multi-harness-shells.md` returns nothing.
+  - id: P4.T2.S2
+    text: |-
+      Edit the two remaining doc references:
+
+      - `infra-shell/README.md` L4: `(\`claude\`, \`codex\`, \`agy\`, …)`.
+      - `README.md` (repo root) L12: image description
+        `claude + codex + agy + opencode`.
+
+      ```bash
+      grep -ni gemini infra-shell/README.md README.md && echo "FAIL" || echo "OK: clean"
+      ```
+
+      Expected: prints `OK: clean`.
+state:
+  steps:
+    P4.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P4.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

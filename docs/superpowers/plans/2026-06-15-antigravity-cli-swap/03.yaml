@@ -1,0 +1,66 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Swap the Dockerfile install gemini→agy
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Replace the gemini npm install with the agy binary install
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Edit `multi-agent-shell/Dockerfile`:
+
+      1. Remove `ARG GEMINI_CLI_VERSION=0.44.1` (line ~26).
+      2. Remove the `@google/gemini-cli@${GEMINI_CLI_VERSION} \` line from the
+         `npm install -g` RUN (leaving codex + opencode).
+      3. Add a new RUN after that npm install, using the install command +
+         relocate path confirmed in Phase 1. Baseline shape:
+
+         ```dockerfile
+         # antigravity CLI (agy) — replaces gemini CLI (deprecating 2026-06-18).
+         # Binary-distributed (no npm), no self-update subcommand: updated by
+         # image rebuild, NOT the inventory harnesses: key. Auth is interactive
+         # OAuth on first run (no API key). See docs/standards/multi-harness-shells.md.
+         RUN curl -fsSL https://antigravity.google/cli/install.sh | HOME=/tmp/agy bash \
+          && install -m 0755 /tmp/agy/.local/bin/agy /usr/local/bin/agy \
+          && rm -rf /tmp/agy \
+          && agy --version
+         ```
+
+      4. Update the comment block (lines ~15-24) so it no longer implies all
+         harnesses are npm/self-updating: note agy is script-installed and
+         refreshed by image rebuild.
+
+      Expected: `grep -n gemini multi-agent-shell/Dockerfile` returns nothing;
+      the agy RUN is present.
+  - id: P3.T1.S2
+    text: |-
+      Lint the Dockerfile (hadolint if available, else a syntax sanity check)
+      and confirm no gemini/GEMINI references remain.
+
+      ```bash
+      command -v hadolint >/dev/null && hadolint multi-agent-shell/Dockerfile || echo "hadolint not present — skipping"
+      grep -niE 'gemini' multi-agent-shell/Dockerfile && echo "FAIL: gemini remains" || echo "OK: no gemini in Dockerfile"
+      ```
+
+      Expected: final line prints `OK: no gemini in Dockerfile`. (The real
+      build gate is the CI smoke job, Phase 5 / R2 — local docker build is out
+      of the devcontainer's scope.)
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

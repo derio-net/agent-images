@@ -196,3 +196,9 @@ the operator confirms the OAuth-gated steps.
 `infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh`,
 `infra-shell/README.md`, `infra-shell/tests/*` (if present),
 `README.md`, `.github/workflows/build.yaml`.
+
+## Implementation Plans
+
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| 2026-06-15-antigravity-cli-swap | `derio-net/agent-images` | `2026-06-15-antigravity-cli-swap` | — |
