@@ -1,0 +1,22 @@
+{
+  "name": "agent-images — dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/jsburckhardt/devcontainer-features/uv:1": {}
+  },
+  "postCreateCommand": "pipx install uv 2>/dev/null || true; uv tool install 'git+https://github.com/derio-net/super-fr#subdirectory=packages/fr' || true",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "runArgs": [
+    "--env-file",
+    "${localEnv:HOME}/.config/fr/secrets/agent-images/dev.env"
+  ],
+  "customizations": {
+    "fr": {
+      "profile": "dev",
+      "purpose": "Day-to-day dev on agent-images: edit Dockerfiles/docs/shell, run bats MOTD tests + pytest locally; GitHub ops on host"
+    }
+  }
+}

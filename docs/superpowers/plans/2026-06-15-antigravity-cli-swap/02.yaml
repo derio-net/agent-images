@@ -1,0 +1,140 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Swap the MOTD auth detector gemini→agy (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: RED — update the bats test to expect agy
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Edit `multi-agent-shell/tests/test_motd.bats`:
+
+      1. In the "no creds" test, replace the `✗ gemini` assertion with
+         `✗ agy`, and add an assertion that the agy line hints the bare
+         command (not "agy login"):
+
+         ```bash
+         [[ "$output" == *"✗ agy"* ]]
+         [[ "$output" == *"run: agy"* ]]
+         [[ "$output" != *"run: agy login"* ]]
+         ```
+
+      2. Add a new test that an agy credential file present → `✓ agy`:
+
+         ```bash
+         @test "agy creds present: shows ✓ for agy" {
+           mkdir -p "$TMP_HOME/.gemini/antigravity-cli"
+           echo 'enc' > "$TMP_HOME/.gemini/antigravity-cli/credentials.enc"
+           run bash "$MOTD"
+           [ "$status" -eq 0 ]
+           [[ "$output" == *"✓ agy"* ]]
+           [[ "$output" == *"✗ codex"* ]]
+         }
+         ```
+
+      Expected: file edited; `git diff --stat` shows the bats file changed.
+  - id: P2.T1.S2
+    text: |-
+      Install bats on-demand (devcontainer is minimal) and run the test to
+      confirm RED.
+
+      ```bash
+      command -v bats >/dev/null || sudo apt-get update -qq && sudo apt-get install -y -qq bats
+      cd multi-agent-shell && bats tests/test_motd.bats || true
+      ```
+
+      Expected: the agy assertions FAIL (the MOTD still emits `gemini`,
+      not `agy`).
+- number: 2
+  title: GREEN — update both MOTD scripts
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      Edit `multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh`:
+
+      1. Extend `check()` to take an optional 3rd arg = login-command hint,
+         defaulting to `"$1 login"`, and print `run: <hint>`:
+
+         ```sh
+         check() {
+           # $1=name $2=path (relative to $HOME) $3=login hint (default "$1 login")
+           hint="${3:-$1 login}"
+           if [ -e "$HOME/$2" ]; then
+             mtime=$(stat -c %Y "$HOME/$2" 2>/dev/null)
+             if [ -n "$mtime" ]; then
+               age_days=$(( ( $(date +%s) - mtime ) / 86400 ))
+               printf '  ✓ %-9s (~/%s, age %sd)\n' "$1" "$2" "$age_days"
+             else
+               printf '  ✓ %-9s (~/%s, age ?)\n' "$1" "$2"
+             fi
+           else
+             printf '  ✗ %-9s not logged in — run: %s\n' "$1" "$hint"
+           fi
+         }
+         ```
+
+      2. Replace the harness check lines: drop `gemini`, add `agy` with the
+         bare-command hint; also correct opencode's hint to its real command:
+
+         ```sh
+         check claude   .claude/credentials.json
+         check codex    .config/codex/auth.json
+         check agy      .gemini/antigravity-cli/credentials.enc   agy
+         check opencode .local/share/opencode/auth.json           "opencode auth login"
+         ```
+
+      Expected: file edited; no `gemini` remains in the script.
+  - id: P2.T2.S2
+    text: |-
+      Apply the identical `check()` + harness-line change to
+      `infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh` (it is a
+      near-duplicate of the multi-agent-shell MOTD). infra-shell has no bats
+      suite, so verify by running it against a temp HOME:
+
+      ```bash
+      TMPH=$(mktemp -d) ; HOME=$TMPH bash infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh ; rm -rf "$TMPH"
+      ```
+
+      Expected: output shows `✗ agy … run: agy` and no `gemini`.
+  - id: P2.T2.S3
+    text: |-
+      Run the bats suite to confirm GREEN, and shellcheck both scripts.
+
+      ```bash
+      cd multi-agent-shell && bats tests/test_motd.bats
+      cd .. && command -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck
+      shellcheck -s sh multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh \
+                       infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh
+      ```
+
+      Expected: all bats tests PASS; shellcheck reports no errors.
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: '2026-06-15T08:47:02+00:00'
+      note: null
+    P2.T1.S2:
+      state: x
+      ticked_at: '2026-06-15T08:47:03+00:00'
+      note: null
+    P2.T2.S1:
+      state: x
+      ticked_at: '2026-06-15T08:47:04+00:00'
+      note: null
+    P2.T2.S2:
+      state: x
+      ticked_at: '2026-06-15T08:47:06+00:00'
+      note: null
+    P2.T2.S3:
+      state: x
+      ticked_at: '2026-06-15T08:47:07+00:00'
+      note: null
+  completion:
+    at: '2026-06-15T08:47:09+00:00'
+    note: null
+    observed_prs: []

@@ -1,0 +1,6 @@
+profiles:
+  dev:
+    purpose: 'Day-to-day dev on agent-images: edit Dockerfiles/docs/shell, run bats
+      MOTD tests + pytest locally; GitHub ops on host'
+    secrets: []
+default: dev

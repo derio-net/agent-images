@@ -1,7 +1,7 @@
 # infra-shell
 
 SSH-able shell image carrying the four agent-CLI harnesses inherited from
-[`multi-agent-shell`](../multi-agent-shell/) (`claude`, `codex`, `gemini`,
+[`multi-agent-shell`](../multi-agent-shell/) (`claude`, `codex`, `agy`,
 `opencode`) **plus** cluster-admin tooling (`kubectl`, `talosctl`,
 `omnictl`). Implements the
 [multi-harness shell standard](../docs/standards/multi-harness-shells.md)

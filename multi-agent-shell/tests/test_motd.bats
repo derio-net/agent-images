@@ -16,8 +16,15 @@ teardown() { rm -rf "$TMP_HOME"; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"✗ claude"* ]]
   [[ "$output" == *"✗ codex"* ]]
-  [[ "$output" == *"✗ gemini"* ]]
+  [[ "$output" == *"✗ agy"* ]]
   [[ "$output" == *"✗ opencode"* ]]
+}
+
+@test "agy hint is the bare command, not 'agy login'" {
+  run bash "$MOTD"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"run: agy"* ]]
+  [[ "$output" != *"run: agy login"* ]]
 }
 
 @test "claude creds present: shows ✓ for claude only" {
@@ -26,5 +33,14 @@ teardown() { rm -rf "$TMP_HOME"; }
   run bash "$MOTD"
   [ "$status" -eq 0 ]
   [[ "$output" == *"✓ claude"* ]]
+  [[ "$output" == *"✗ codex"* ]]
+}
+
+@test "agy creds present: shows ✓ for agy" {
+  mkdir -p "$TMP_HOME/.gemini/antigravity-cli"
+  echo 'enc' > "$TMP_HOME/.gemini/antigravity-cli/credentials.enc"
+  run bash "$MOTD"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ agy"* ]]
   [[ "$output" == *"✗ codex"* ]]
 }

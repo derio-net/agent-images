@@ -1,0 +1,76 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Swap the Dockerfile install gemini→agy
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Replace the gemini npm install with the agy binary install
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Edit `multi-agent-shell/Dockerfile`:
+
+      1. Remove `ARG GEMINI_CLI_VERSION=0.44.1` (line ~26).
+      2. Remove the `@google/gemini-cli@${GEMINI_CLI_VERSION} \` line from the
+         `npm install -g` RUN (leaving codex + opencode).
+      3. Add a new RUN after that npm install. Phase 1 confirmed (by inspecting
+         install.sh) that the installer supports a `--dir` flag — install
+         straight to the global PATH, no scratch-HOME/relocate needed:
+
+         ```dockerfile
+         # antigravity CLI (agy) — replaces gemini CLI (deprecating 2026-06-18).
+         # Binary-distributed (no npm), no self-update subcommand: updated by
+         # image rebuild, NOT the inventory harnesses: key. Auth is interactive
+         # OAuth on first run (no API key). install.sh --dir places the binary on
+         # the global PATH. See docs/standards/multi-harness-shells.md.
+         RUN mkdir -p /tmp/agy-home \
+          && curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh \
+          && HOME=/tmp/agy-home bash /tmp/agy-install.sh --dir /usr/local/bin </dev/null \
+          && rm -rf /tmp/agy-install.sh /tmp/agy-home \
+          && agy --version
+         ```
+
+         Download-then-run (not `curl | bash`) so a curl/TLS failure fails the
+         build directly (no pipefail under `/bin/sh`); throwaway `$HOME` absorbs
+         the installer's shell-rc edits; `</dev/null` keeps `agy install`
+         non-interactive; `agy --version` gates install + executability.
+
+      4. Update the comment block (lines ~15-24) so it no longer implies all
+         harnesses are npm/self-updating: note agy is script-installed and
+         refreshed by image rebuild.
+
+      Expected: `grep -n gemini multi-agent-shell/Dockerfile` returns nothing;
+      the agy RUN is present.
+  - id: P3.T1.S2
+    text: |-
+      Lint the Dockerfile (hadolint if available, else a syntax sanity check)
+      and confirm no gemini/GEMINI references remain.
+
+      ```bash
+      command -v hadolint >/dev/null && hadolint multi-agent-shell/Dockerfile || echo "hadolint not present — skipping"
+      grep -niE 'gemini' multi-agent-shell/Dockerfile && echo "FAIL: gemini remains" || echo "OK: no gemini in Dockerfile"
+      ```
+
+      Expected: final line prints `OK: no gemini in Dockerfile`. (The real
+      build gate is the CI smoke job, Phase 5 / R2 — local docker build is out
+      of the devcontainer's scope.)
+state:
+  steps:
+    P3.T1.S1:
+      state: x
+      ticked_at: '2026-06-15T08:48:30+00:00'
+      note: Used install.sh --dir /usr/local/bin (Phase-1 finding); removed GEMINI_CLI_VERSION
+        ARG + npm line
+    P3.T1.S2:
+      state: x
+      ticked_at: '2026-06-15T08:48:31+00:00'
+      note: No functional gemini refs remain; one intentional migration-context comment
+        kept
+  completion:
+    at: '2026-06-15T08:48:33+00:00'
+    note: null
+    observed_prs: []

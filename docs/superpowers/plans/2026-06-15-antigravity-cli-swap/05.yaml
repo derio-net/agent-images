@@ -1,0 +1,77 @@
+schema_version: 2
+phase:
+  number: 5
+  title: CI smoke assertions + residual-gemini sweep
+  tag: agentic
+  depends_on:
+  - 2
+  - 3
+  - 4
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Update build.yaml smoke loops
+  steps:
+  - id: P5.T1.S1
+    text: |-
+      Edit `.github/workflows/build.yaml`:
+
+      - L618 comment `codex/gemini/opencode baked here` → `codex/agy/opencode`.
+      - Both smoke loops (L619 multi-agent-shell, L844 infra-shell):
+        `for h in claude codex gemini opencode;` → `for h in claude codex agy opencode;`.
+
+      ```bash
+      grep -n 'for h in' .github/workflows/build.yaml
+      ```
+
+      Expected: both loops now read `claude codex agy opencode`.
+- number: 2
+  title: Final residual-gemini sweep
+  steps:
+  - id: P5.T2.S1
+    text: |-
+      Confirm no FUNCTIONAL gemini-CLI references remain in the source tree.
+      The naive `grep gemini` over-matches: agy's credential path legitimately
+      lives under `~/.gemini/antigravity-cli/`, and this swap's own spec + plan
+      describe the change. So the sweep targets the stale FUNCTIONAL tokens and
+      excludes the historical records, this swap's spec/plan dir, and lines that
+      co-occur with `antigravity` (agy's real path).
+
+      ```bash
+      grep -rniE '@google/gemini-cli|\.config/gemini|GEMINI_CLI_VERSION|check gemini|gemini login|for h in.*gemini|`gemini`|gemini:( |$)' . \
+        --include='*.sh' --include='*.md' --include='*.yaml' --include='*.yml' \
+        --include='*.bats' --include='Dockerfile' \
+        | grep -vE 'docs/superpowers/(specs/2026-05-12|plans/2026-06-01|specs/2026-06-15-antigravity|plans/2026-06-15-antigravity)' \
+        || echo "OK: no functional gemini-CLI refs remain"
+      ```
+
+      Expected: prints `OK: no functional gemini-CLI refs remain`.
+  - id: P5.T2.S2
+    text: |-
+      Run the full local test surface one more time as a regression gate.
+
+      ```bash
+      cd multi-agent-shell && bats tests/test_motd.bats && cd ..
+      shellcheck -s sh multi-agent-shell/rootfs/etc/profile.d/50-multi-agent-shell-motd.sh \
+                       infra-shell/rootfs/etc/profile.d/50-infra-shell-motd.sh
+      ```
+
+      Expected: all bats tests PASS; shellcheck clean.
+state:
+  steps:
+    P5.T1.S1:
+      state: x
+      ticked_at: '2026-06-15T08:55:16+00:00'
+      note: null
+    P5.T2.S1:
+      state: x
+      ticked_at: '2026-06-15T08:55:17+00:00'
+      note: null
+    P5.T2.S2:
+      state: x
+      ticked_at: '2026-06-15T08:55:19+00:00'
+      note: null
+  completion:
+    at: '2026-06-15T08:55:20+00:00'
+    note: null
+    observed_prs: []

@@ -12,23 +12,43 @@ ARG AGENT_GID=1000
 
 USER root
 
-# Per docs/standards/multi-harness-shells.md — bake the three additional
+# Per docs/standards/multi-harness-shells.md — bake the additional
 # subscription/OAuth harness bootstrap shims. claude is inherited from
 # agent-base (npm i -g @anthropic-ai/claude-code) and the inherited shim's
-# self-update target is $HOME/.local/bin/. Each new shim follows the same
-# convention: the operator runs `<h> login` once on first SSH; the CLI
-# self-updates or is refreshed via inventory reconcile thereafter.
+# self-update target is $HOME/.local/bin/. The npm-distributed shims
+# (codex, opencode) follow the same convention: the operator runs `<h> login`
+# once on first SSH; the CLI self-updates or is refreshed via inventory
+# reconcile thereafter.
 #
 # Pins captured during plan execution (npm view <pkg> version on
 # 2026-06-01). These pins float forward via the inventory `harnesses:`
 # key; the Dockerfile shim is only a bootstrap.
 ARG CODEX_VERSION=0.136.0
-ARG GEMINI_CLI_VERSION=0.44.1
 ARG OPENCODE_VERSION=1.15.13
 RUN npm install -g --omit=dev \
       @openai/codex@${CODEX_VERSION} \
-      @google/gemini-cli@${GEMINI_CLI_VERSION} \
       opencode-ai@${OPENCODE_VERSION}
+
+# antigravity CLI (agy) — replaces the gemini CLI (deprecating upstream
+# 2026-06-18). Unlike the npm harnesses, agy is binary-distributed via a
+# vendor install script, has NO self-update subcommand and NO version-pin
+# mechanism, so it is refreshed by IMAGE REBUILD — not the inventory
+# `harnesses:` key. Auth is interactive Google OAuth on first run of `agy`
+# (no `agy login`, no API key); the credential persists on the PV.
+#
+# Install via download-then-run (not `curl | bash`) so a curl/TLS failure
+# fails the build directly instead of being masked by the pipe — `/bin/sh`
+# here has no pipefail. The installer's `--dir` flag drops the binary
+# straight onto the global PATH (no relocate needed); a throwaway $HOME
+# absorbs the installer's shell-rc edits so they don't bloat root's home,
+# and both scratch paths are removed in the same layer. `agy --version`
+# gates that the binary installed and is executable (CI smoke re-checks it
+# as UID 1000).
+RUN mkdir -p /tmp/agy-home \
+ && curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh \
+ && HOME=/tmp/agy-home bash /tmp/agy-install.sh --dir /usr/local/bin </dev/null \
+ && rm -rf /tmp/agy-install.sh /tmp/agy-home \
+ && agy --version
 
 COPY --chown=root:root rootfs/ /
 

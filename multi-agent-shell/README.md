@@ -1,7 +1,7 @@
 # multi-agent-shell
 
 SSH-able shell image carrying four agent-CLI harnesses
-(`claude`, `codex`, `gemini`, `opencode`). The load-bearing reference
+(`claude`, `codex`, `agy`, `opencode`). The load-bearing reference
 implementation of the
 [multi-harness shell standard](../docs/standards/multi-harness-shells.md):
 per-harness state under `$HOME` on the per-pod PV, no API tokens in the
@@ -12,7 +12,7 @@ SSH login.
 Intended consumers:
 
 - The n8n sidecar use case — workflow nodes `exec` into this shell to invoke
-  `claude -p`, `codex`, `gemini`, or `opencode` against a shared pod
+  `claude -p`, `codex`, `agy`, or `opencode` against a shared pod
   filesystem with PV-resident OAuth credentials.
 - `infra-shell` (Phase 3 of the agent-shells-batch plan) builds **FROM**
   this image and adds cluster-admin tooling.
@@ -21,15 +21,16 @@ Intended consumers:
 
 Per the standard's "Harness manifest" section, every harness baked into this
 image is declared below. The bootstrap install only puts the CLI on PATH;
-the operator runs `<h> login` once on first SSH and the OAuth credential
-lands on the PV. Updates flow via `<h> update` (CLI self-update) or via the
-inventory `harnesses:` key on each reconcile.
+the operator runs the auth command once on first SSH and the OAuth credential
+lands on the PV. For the npm harnesses, updates flow via `<h> update` (CLI
+self-update) or the inventory `harnesses:` key on each reconcile; `agy` is the
+exception — it has no self-update and is refreshed by image rebuild (see note).
 
 | Harness | Bootstrap | Auth command | Credential file (on PV) | Update command |
 |---|---|---|---|---|
 | `claude` | `npm i -g @anthropic-ai/claude-code` (inherited from `agent-base`) | `claude login` | `~/.claude/credentials.json` | `claude update` |
 | `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login` | `~/.config/codex/auth.json` | `codex update` (or inventory `harnesses: codex: <ver>`) |
-| `gemini` | `npm i -g @google/gemini-cli@${GEMINI_CLI_VERSION}` | `gemini` (first run prompts the OAuth flow) | `~/.config/gemini/auth.json` | inventory `harnesses: gemini: <ver>` |
+| `agy` (antigravity) | `curl -fsSL …/install.sh \| bash -s -- --dir /usr/local/bin` (replaces gemini CLI) | `agy` (first run prompts the OAuth flow) | `~/.gemini/antigravity-cli/credentials.enc` *(best-effort — confirmed post-merge, see notes)* | **image rebuild** (no self-update; not inventory-managed) |
 | `opencode` | `npm i -g opencode-ai@${OPENCODE_VERSION}` | `opencode auth login` | `~/.local/share/opencode/auth.json` | inventory `harnesses: opencode: <ver>` |
 
 Notes:
@@ -40,6 +41,14 @@ Notes:
 - **`opencode` credential path is a best-effort default** until first
   operator login confirms upstream's chosen location; if it differs, fix
   here and in the MOTD detector — both must agree.
+- **`agy` (antigravity) is a bootstrap-only harness.** It is
+  binary-distributed (no npm), has no `agy update` subcommand and no
+  version-pin mechanism, so it is updated by **image rebuild** and is
+  intentionally **absent from the inventory `harnesses:` key**. Its
+  credential path (`~/.gemini/antigravity-cli/credentials.enc`) is
+  best-effort and confirmed the first time an operator runs `agy` — if it
+  differs, fix the manifest row and both MOTD detectors together. Auth is
+  interactive OAuth on first run of `agy` (no `agy login`, no API key).
 - **No `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / etc. in the image or in
   Frank's `env:` block for this image.** The subscription-OAuth flows replace
   API-key auth per the standard.
@@ -71,8 +80,9 @@ cargo:
 harnesses:
   claude: latest
   codex: latest
-  gemini: latest
   opencode: 1.15.13
+  # NB: agy (antigravity) is NOT listed here — it has no `agy update`
+  # subcommand and is refreshed by image rebuild, not inventory reconcile.
 
 # Per-harness MCP servers. Each entry is merged into the harness's
 # mcp.json by .name (idempotent — re-running reconcile produces no
@@ -83,7 +93,6 @@ mcp-servers:
       command: npx
       args: ["-y", "@upstash/context7-mcp"]
   codex: []
-  gemini: []
   opencode: []
 
 # Per-harness skills/plugins. Reconcile clones (or fast-forwards to ref)
@@ -94,7 +103,6 @@ skills:
       source: git+https://github.com/obra/superpowers
       ref: main
   codex: []
-  gemini: []
   opencode: []
 ```
 
@@ -159,8 +167,10 @@ cat /var/lib/multi-agent-shell/last-reconcile.motd
 |---|---|---|
 | `BASE_SHA` | `latest` | The `agent-shell-base` tag/SHA to inherit from. CI passes the SHA of the same workflow run. |
 | `CODEX_VERSION` | `0.136.0` | `@openai/codex` npm pin. |
-| `GEMINI_CLI_VERSION` | `0.44.1` | `@google/gemini-cli` npm pin. |
 | `OPENCODE_VERSION` | `1.15.13` | `opencode-ai` npm pin. |
+
+`agy` (antigravity) has no build-arg pin — it is installed at the latest
+version by the vendor script (the installer exposes no version flag).
 
 `AGENT_USER`, `AGENT_HOME`, `AGENT_UID`, `AGENT_GID` are inherited from
 `agent-shell-base` (defaults: `agent`, `/home/agent`, `1000`, `1000`).
