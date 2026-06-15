@@ -1,0 +1,39 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Configurable per-agent launch profile (TDD)
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Dispatch tests then generalize ensure_session
+  steps:
+  - id: P2.T1.S1
+    text: |
+      Add per-agent dispatch tests (none exist — the driver hardcodes claude): assert
+      `ensure_session` launches the configured agent's CLI — `claude` (default) →
+      `claude --permission-mode auto`; `antigravity` → the `agy` launch profile; `codex` →
+      the `codex` launch profile (assert via the FAKE_TMUX recorded new-session command). RED.
+  - id: P2.T1.S2
+    text: |
+      Generalize `ensure_session` with a per-agent launch-profile table keyed on the `agent`
+      field (already plumbed through the API), default `claude`. Each profile names the launch
+      command + its auto-approve flag + (where the harness differs) how it writes the per-turn
+      output file. claude is the fully-wired+verified default; antigravity/codex profiles land
+      but full verification of each is a follow-up (note in README). Run. Expected: GREEN.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

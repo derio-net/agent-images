@@ -1,0 +1,6 @@
+schema_version: 2
+plan: 2026-06-15-agent-session-extract
+spec: derio-net/frank:docs/superpowers/specs/2026-06-15--obs--agentic-alert-helper-design.md
+target_repo: derio-net/agent-images
+fr_version: '>=3.0.0,<4.0.0'
+created: '2026-06-15'
