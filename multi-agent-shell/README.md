@@ -30,7 +30,7 @@ exception — it has no self-update and is refreshed by image rebuild (see note)
 |---|---|---|---|---|
 | `claude` | `npm i -g @anthropic-ai/claude-code` (inherited from `agent-base`) | `claude login` | `~/.claude/credentials.json` | `claude update` |
 | `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login` | `~/.config/codex/auth.json` | `codex update` (or inventory `harnesses: codex: <ver>`) |
-| `agy` (antigravity) | `curl -fsSL …/install.sh \| bash -s -- --dir /usr/local/bin` (replaces gemini CLI) | `agy` (first run prompts the OAuth flow) | `~/.gemini/antigravity-cli/credentials.enc` *(best-effort — confirmed post-merge, see notes)* | **image rebuild** (no self-update; not inventory-managed) |
+| `agy` (antigravity) | `curl -fsSL …/install.sh \| bash -s -- --dir /usr/local/bin` (replaces gemini CLI) | `agy` (first run prompts the OAuth flow) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | **image rebuild** (no self-update; not inventory-managed) |
 | `opencode` | `npm i -g opencode-ai@${OPENCODE_VERSION}` | `opencode auth login` | `~/.local/share/opencode/auth.json` | inventory `harnesses: opencode: <ver>` |
 
 Notes:
@@ -44,11 +44,12 @@ Notes:
 - **`agy` (antigravity) is a bootstrap-only harness.** It is
   binary-distributed (no npm), has no `agy update` subcommand and no
   version-pin mechanism, so it is updated by **image rebuild** and is
-  intentionally **absent from the inventory `harnesses:` key**. Its
-  credential path (`~/.gemini/antigravity-cli/credentials.enc`) is
-  best-effort and confirmed the first time an operator runs `agy` — if it
-  differs, fix the manifest row and both MOTD detectors together. Auth is
-  interactive OAuth on first run of `agy` (no `agy login`, no API key).
+  intentionally **absent from the inventory `harnesses:` key**. Its OAuth
+  token lands at `~/.gemini/antigravity-cli/antigravity-oauth-token`
+  (confirmed 2026-06-15 by completing a real login in this image — a plain
+  file, not an OS keyring, so the MOTD presence check works on a headless
+  pod). Auth is interactive OAuth on first run of `agy` (no `agy login`, no
+  API key).
 - **No `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / etc. in the image or in
   Frank's `env:` block for this image.** The subscription-OAuth flows replace
   API-key auth per the standard.
