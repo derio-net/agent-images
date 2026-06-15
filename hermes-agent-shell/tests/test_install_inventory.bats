@@ -16,6 +16,52 @@ setup() {
 
 teardown() { rm -rf "$TMP_HOME"; }
 
+# Put no-op stubs for the other section managers on PATH so a focused
+# npm-global test doesn't accrue spurious failures from `assert_manager`.
+stub_managers() {
+  mkdir -p "$HOME/.local/bin"
+  for m in mise pipx; do
+    printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/$m"
+    chmod +x "$HOME/.local/bin/$m"
+  done
+}
+
+@test "npm-global: a present package declared with a dist-tag is skipped, not reinstalled" {
+  # Regression for frank ruflo-shell ENOTEMPTY deadlock: the guard used to
+  # pass the full `pkg@tag` spec to `npm ls -g`, which never matches a
+  # dist-tag locally, so an already-installed `claude-flow@alpha` was
+  # reinstalled on every boot (and eventually deadlocked on a stale npm
+  # retired dir). The presence check must be by package NAME.
+  stub_managers
+  # Stub npm: claude-flow IS installed, but `npm ls -g claude-flow@alpha`
+  # (the tagged spec) does not resolve — exactly real npm behaviour.
+  export NPM_LOG="$HOME/npm-install.log"
+  cat > "$HOME/.local/bin/npm" <<STUB
+#!/bin/sh
+case "\$1" in
+  ls)
+    case "\$3" in
+      claude-flow)   exit 0 ;;   # present, queried by name
+      claude-flow@*) exit 1 ;;   # tagged spec never matches (the bug trigger)
+      *)             exit 1 ;;
+    esac ;;
+  install) echo "install \$*" >> "$NPM_LOG"; exit 0 ;;
+esac
+exit 1
+STUB
+  chmod +x "$HOME/.local/bin/npm"
+  cat > "$HOME/inventory.yaml" <<'YAML'
+npm-global:
+  - "claude-flow@alpha"
+YAML
+  run env PATH="$HOME/.local/bin:$PATH" INVENTORY="$HOME/inventory.yaml" bash "$INSTALLER"
+  [ "$status" -eq 0 ]
+  # Must be reported as already-present and NOT reinstalled.
+  [[ "$output" == *"= npm claude-flow@alpha"* ]]
+  [ ! -f "$NPM_LOG" ]
+  echo "$output" | grep -qE 'failed=0'
+}
+
 # Seed a local bare git repo with one commit on `main` and echo its path.
 # Used as a network-free skill source.
 seed_bare_repo() {
