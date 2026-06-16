@@ -92,8 +92,11 @@ if cmd == "capture-pane":
         sys.stdout.write("")            # cold boot: REPL not ready → empty pane
     else:
         box = open(p("box.txt")).read() if os.path.exists(p("box.txt")) else ""
-        # ready pane: the ❯ prompt (with any unsubmitted box text after it) + status line
-        sys.stdout.write("some history\n❯ " + box + "\n⏵⏵ auto mode on\n")
+        # ready pane: the ❯ prompt (with any unsubmitted box text after it) + status line.
+        # FAKE_HISTORY_PROMPT adds a transcript line that ALSO contains ❯ above the
+        # input box — the driver must read the LAST ❯ line (the box), not this one.
+        history = "echoed ❯ old input\n" if os.environ.get("FAKE_HISTORY_PROMPT") == "1" else "some history\n"
+        sys.stdout.write(history + "❯ " + box + "\n⏵⏵ auto mode on\n")
     sys.exit(0)
 sys.exit(0)
 '''
@@ -281,6 +284,21 @@ def test_warm_submit_does_not_double_enter(harness):
     # A3: when the first Enter submits cleanly, there must be NO spurious retry.
     harness.run(SEND_REQ)   # warm session, default envs
     assert _enter_count(harness) == 1
+
+
+def test_verified_submit_ignores_transcript_prompt_glyph(tmp_path):
+    # A3 hardening: a ❯ in the transcript (echoed output) above an EMPTY input box
+    # must not be mistaken for an unsubmitted message — the box is the LAST ❯ line.
+    # With a top-down scan this would spuriously retry; bottom-up reads the empty box.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_HISTORY_PROMPT"] = "1"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")   # warm; clean first-Enter submit clears the box
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert _enter_count(h) == 1, "a transcript ❯ must not trigger the verified-submit retry"
 
 
 def test_pretrust_seeds_auto_mode_flag(harness):
