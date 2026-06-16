@@ -67,12 +67,33 @@ if cmd == "paste-buffer":
     open(p("pending.txt"), "w").write(buf); sys.exit(0)
 if cmd == "send-keys":
     if "Enter" in a and os.environ.get("FAKE_NO_REPLY") != "1":
-        msg = open(p("pending.txt")).read() if os.path.exists(p("pending.txt")) else ""
-        m = re.search(r"to the file (\S+)", msg)
-        if m:
-            outfile = m.group(1)
-            os.makedirs(os.path.dirname(outfile), exist_ok=True)
-            open(outfile, "w").write(os.environ.get("FAKE_PAYLOAD", "{}"))
+        ec = p("enter.count")
+        k = int(open(ec).read() or "0") if os.path.exists(ec) else 0
+        open(ec, "w").write(str(k + 1))
+        if k < int(os.environ.get("FAKE_DROP_FIRST_ENTER", "0")):
+            # Dropped Enter (cold TUI / first-run interstitial): the message stays
+            # stuck in the input box instead of submitting.
+            pend = open(p("pending.txt")).read() if os.path.exists(p("pending.txt")) else ""
+            open(p("box.txt"), "w").write(pend[:40])
+        else:
+            open(p("box.txt"), "w").write("")   # submitted → input box clears
+            msg = open(p("pending.txt")).read() if os.path.exists(p("pending.txt")) else ""
+            m = re.search(r"to the file (\S+)", msg)
+            if m:
+                outfile = m.group(1)
+                os.makedirs(os.path.dirname(outfile), exist_ok=True)
+                open(outfile, "w").write(os.environ.get("FAKE_PAYLOAD", "{}"))
+    sys.exit(0)
+if cmd == "capture-pane":
+    cc = p("capture.count")
+    n = int(open(cc).read() or "0") if os.path.exists(cc) else 0
+    open(cc, "w").write(str(n + 1))
+    if n < int(os.environ.get("FAKE_COLD_CAPTURES", "0")):
+        sys.stdout.write("")            # cold boot: REPL not ready → empty pane
+    else:
+        box = open(p("box.txt")).read() if os.path.exists(p("box.txt")) else ""
+        # ready pane: the ❯ prompt (with any unsubmitted box text after it) + status line
+        sys.stdout.write("some history\n❯ " + box + "\n⏵⏵ auto mode on\n")
     sys.exit(0)
 sys.exit(0)
 '''
@@ -204,6 +225,70 @@ def test_unknown_agent_falls_back_to_claude(harness):
     harness.run(dict(SEND_REQ, agent="nope-not-an-agent"), session_exists=False)
     newlog = (harness.fdir / "new.log").read_text()
     assert "claude --permission-mode auto" in newlog
+
+
+# --- Cold-start reliability (A1 readiness gate, A3 verified submit, A2 flag) ----
+
+def _enter_count(harness):
+    log = (harness.fdir / "calls.log").read_text()
+    return len([l for l in log.splitlines() if l.startswith("send-keys") and "Enter" in l])
+
+
+def test_waits_for_ready_before_submit(tmp_path):
+    # A1: a fresh session whose pane is empty for the first 3 captures (cold boot)
+    # must NOT submit until the REPL prompt renders — the readiness gate polls past
+    # the cold captures, so the submit lands and the turn completes.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_COLD_CAPTURES"] = "3"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("1")   # session missing → created → gated
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert int((h.fdir / "capture.count").read_text()) >= 3, "must have polled the cold pane"
+
+
+def test_readiness_gate_times_out_gracefully(tmp_path):
+    # A1: if the pane never becomes ready, the gate must time out and proceed
+    # best-effort (never hang the request).
+    h = _make_harness(tmp_path)
+    h.env["FAKE_COLD_CAPTURES"] = "100000"
+    h.env["AGENT_SESSION_READY_TIMEOUT_S"] = "0.3"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("1")
+    res = subprocess.run([sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+                         capture_output=True, text=True, env=e, timeout=15)
+    out = json.loads(res.stdout)   # returns (does not hang) — submit still ran
+    assert out["status"] == "ok"
+
+
+def test_verified_submit_retries_dropped_enter(tmp_path):
+    # A3: the first Enter is dropped (cold TUI / interstitial) leaving the message
+    # in the input box — the verified submit must re-press Enter so it lands.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_DROP_FIRST_ENTER"] = "1"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")   # warm session → no readiness gate
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok" and out["payload"] == PAYLOAD
+    assert _enter_count(h) == 2, "must retry Enter exactly once when the box didn't clear"
+
+
+def test_warm_submit_does_not_double_enter(harness):
+    # A3: when the first Enter submits cleanly, there must be NO spurious retry.
+    harness.run(SEND_REQ)   # warm session, default envs
+    assert _enter_count(harness) == 1
+
+
+def test_pretrust_seeds_auto_mode_flag(harness):
+    # A2: pretrust seeds the auto-mode-entry warning flag alongside the trust flag,
+    # so a fresh profile's first --permission-mode auto entry swallows no Enter.
+    harness.run(SEND_REQ, session_exists=False)
+    proj = json.loads((harness.home / ".claude.json").read_text()).get("projects", {})
+    assert proj.get(str(harness.home), {}).get("hasSeenAutoModeEntryWarning") is True
 
 
 def test_s6_service_run_gated_on_serve_flag():
