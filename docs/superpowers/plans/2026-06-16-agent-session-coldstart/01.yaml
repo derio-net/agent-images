@@ -1,0 +1,119 @@
+schema_version: 2
+phase:
+  number: 1
+  title: agent-session cold-start reliability (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: RED — extend FAKE_TMUX (capture-pane + dropped-Enter) and add failing tests
+  steps:
+  - id: P1.T1.S1
+    text: |
+      In `multi-agent-shell/tests/test_agent_session.py` extend the `FAKE_TMUX` stub so the
+      cold-start behaviours are simulable (the current stub has no `capture-pane` handler and
+      no way to model a dropped Enter):
+        * `capture-pane`: serve a test-controlled pane. Maintain a capture counter file; while
+          the counter is below `FAKE_COLD_CAPTURES` (default 0) emit an EMPTY pane (cold —
+          REPL not ready); otherwise emit a "ready" pane: a line containing the `❯` prompt
+          glyph, then the input-box content from `box.txt` on that same `❯ ` line (so an
+          unsubmitted message is visible next to the prompt), then a `⏵⏵ auto mode on` line.
+        * `send-keys Enter`: honour `FAKE_DROP_FIRST_ENTER` (default 0) — while an enter
+          counter is below it, DROP the Enter (write the first ~40 chars of `pending.txt` into
+          `box.txt`, simulating the message stuck in the input box) and write NO output file;
+          once at/above it, submit normally (clear `box.txt`, write the nonce output file as
+          today). With both new envs unset the stub behaves EXACTLY as before (existing tests
+          unchanged). Run `cd multi-agent-shell && uv run --with pytest python -m pytest tests/
+          -q`. Expected: GREEN (the stub change alone keeps all current tests passing).
+  - id: P1.T1.S2
+    text: |
+      Add the RED tests (new behaviour not yet implemented):
+        * `test_waits_for_ready_before_submit`: run with `FAKE_COLD_CAPTURES=3` and
+          `session_exists=False`; assert `status == "ok"` (the readiness gate polled past the
+          cold captures so the submit landed) AND the capture counter file shows >= 3 captures
+          (it actually polled). Without the gate the first Enter would fire into the empty pane.
+        * `test_readiness_gate_times_out_gracefully`: `FAKE_COLD_CAPTURES=10000`,
+          `AGENT_SESSION_READY_TIMEOUT_S=0.3`, `session_exists=False`; assert the process
+          RETURNS within a few seconds (does not hang) — best-effort proceed after timeout.
+        * `test_verified_submit_retries_dropped_enter`: `FAKE_DROP_FIRST_ENTER=1`,
+          `session_exists=True`; assert `status == "ok"` and `payload == PAYLOAD` (the retry
+          Enter submitted what the first, dropped, Enter did not) AND the calls log shows TWO
+          `send-keys ... Enter` lines.
+        * `test_warm_submit_does_not_double_enter`: default envs, `session_exists=True`; assert
+          exactly ONE `send-keys Enter` (no spurious retry when the box cleared on first Enter).
+        * `test_pretrust_seeds_auto_mode_flag`: `session_exists=False`; assert the written
+          `~/.claude.json` projects entry has `hasSeenAutoModeEntryWarning is True` (alongside
+          the existing `hasTrustDialogAccepted`).
+      Run the suite. Expected: FAIL (RED — readiness gate / verified-submit / flag not yet
+      implemented).
+- number: 2
+  title: GREEN — A1 readiness gate in ensure_session
+  steps:
+  - id: P1.T2.S1
+    text: |
+      In `multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/agent-session` add a
+      readiness gate. New env `READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S",
+      "STOA_READY_TIMEOUT_S", "30"))`. Add `wait_ready(session_id, timeout_s=READY_TIMEOUT_S)`:
+      poll `tmux("capture-pane", "-p", "-t", session_id).stdout` every `POLL_S`; return True
+      when the pane contains the claude REPL prompt marker `❯` (empirically the cold→ready
+      signal — at 0.5–2s the pane is EMPTY, the `❯` prompt + `⏵⏵ auto mode on` render together
+      ~6s in); also return True on the version-drift fallback (pane non-empty AND unchanged
+      across two consecutive polls). On timeout, print a stderr WARN and return False
+      (best-effort — never hang a request). Call `wait_ready(session_id)` at the END of the
+      `if tmux("has-session", ...).returncode != 0:` block in `ensure_session` (gate ONLY on a
+      freshly-created session — a warm session is already ready, so warm turns are untouched).
+      Run the suite. Expected: the two readiness tests GREEN; verified-submit + flag tests
+      still RED.
+- number: 3
+  title: GREEN — A3 verified submit
+  steps:
+  - id: P1.T3.S1
+    text: |
+      Make `submit(session_id, text)` self-healing. After the existing `send-keys Enter`, add a
+      single verified retry: `time.sleep(SETTLE_S)`, re-capture the pane, and if the input box
+      still holds the message press Enter once more. Detect an unsubmitted box with a helper
+      `_input_box_has_text(pane)`: find the line containing `❯` and return True if there is
+      non-whitespace text AFTER the glyph (after submission the `❯` line is empty; a dropped
+      Enter leaves the message there). Single retry only — no unbounded loop. This is the
+      load-bearing fix: it catches both a cold pane and any first-run auto-mode interstitial
+      that swallows the first Enter, independent of the A1 marker being right. Run the suite.
+      Expected: verified-submit + warm-no-double-enter tests GREEN; flag test still RED.
+- number: 4
+  title: GREEN — A2 pretrust seeds the auto-mode-entry flag
+  steps:
+  - id: P1.T4.S1
+    text: |
+      In `pretrust()`, alongside `…["hasTrustDialogAccepted"] = True`, also set the project
+      entry's `hasSeenAutoModeEntryWarning = True` so a fresh profile's first `--permission-mode
+      auto` entry shows no Enter-swallowing interstitial. Best-effort / defence-in-depth: the
+      exact key is the live `~/.claude.json` source of truth (candidate confirmed against a
+      local claude config) and A3's verified-submit is the actual guarantee if the key name
+      drifts. Run the full suite `cd multi-agent-shell && uv run --with pytest python -m pytest
+      tests/ -q`. Expected: ALL GREEN (new cold-start tests + every pre-existing driver test).
+state:
+  steps:
+    P1.T1.S1:
+      state: x
+      ticked_at: '2026-06-16T21:38:01+00:00'
+      note: null
+    P1.T1.S2:
+      state: x
+      ticked_at: '2026-06-16T21:38:03+00:00'
+      note: null
+    P1.T2.S1:
+      state: x
+      ticked_at: '2026-06-16T21:38:05+00:00'
+      note: null
+    P1.T3.S1:
+      state: x
+      ticked_at: '2026-06-16T21:38:07+00:00'
+      note: null
+    P1.T4.S1:
+      state: x
+      ticked_at: '2026-06-16T21:38:09+00:00'
+      note: null
+  completion:
+    at: '2026-06-16T21:38:11+00:00'
+    note: null
+    observed_prs: []

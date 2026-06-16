@@ -38,7 +38,15 @@ POLL_S = float(_env("AGENT_SESSION_POLL_S", "STOA_POLL_S", "2"))
 # Delay between pasting the message and pressing Enter — the TUI needs to
 # render the paste before the submit, or the Enter is dropped.
 SETTLE_S = float(_env("AGENT_SESSION_SETTLE_S", "STOA_SETTLE_S", "0.5"))
+# Max wait for a freshly-created session's REPL to start accepting input before
+# the first submit (cold-start gate). On timeout we proceed best-effort.
+READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOUT_S", "30"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
+
+# The claude REPL input-prompt glyph: empirically the cold→ready signal (the pane
+# is EMPTY for the first ~5s of boot, then the ❯ prompt + "auto mode" status line
+# render together). Used as the primary readiness marker.
+READY_MARKER = "❯"
 
 
 # Per-agent launch profiles: the interactive launch command (never -p /
@@ -76,7 +84,12 @@ def pretrust():
     except (OSError, json.JSONDecodeError):
         d = {}
     home = os.path.expanduser("~")
-    d.setdefault("projects", {}).setdefault(home, {})["hasTrustDialogAccepted"] = True
+    proj = d.setdefault("projects", {}).setdefault(home, {})
+    proj["hasTrustDialogAccepted"] = True
+    # Seed the first-run auto-mode-entry warning so `--permission-mode auto` shows
+    # no interstitial that could swallow the first Enter. Best-effort defence in
+    # depth — submit()'s verified retry is the actual guarantee if the key drifts.
+    proj["hasSeenAutoModeEntryWarning"] = True
     try:
         with open(path, "w") as fh:
             json.dump(d, fh)
@@ -94,6 +107,52 @@ def ensure_session(session_id, agent=DEFAULT_AGENT):
     if tmux("has-session", "-t", session_id).returncode != 0:
         pretrust()
         tmux("new-session", "-d", "-s", session_id, launch_command(agent))
+        # Cold-start gate: a just-launched REPL is not yet accepting input (the
+        # pane is empty for several seconds). Block until it is, so the first
+        # submit's Enter is not dropped. Gated on creation only, to spare warm
+        # turns the poll. CAVEAT: under the threaded server a SECOND send for the
+        # same session_id may see has-session==0 (this branch just created it)
+        # and skip the gate while the pane is still booting — submit()'s verified
+        # retry is the backstop for that race (and for a genuinely-wedged session
+        # an unconditional gate would only add a dead 30s before the real timeout).
+        wait_ready(session_id)
+
+
+def _pane(session_id):
+    return tmux("capture-pane", "-p", "-t", session_id).stdout or ""
+
+
+def wait_ready(session_id, timeout_s=READY_TIMEOUT_S):
+    # Poll the pane until the REPL accepts input: the ❯ prompt marker is the
+    # primary signal; a non-empty pane that is unchanged across two polls is the
+    # version-drift fallback (an agent/version that doesn't render ❯) — note it
+    # CAN return early if a version paints a static splash frame for ≥2 polls
+    # before accepting input; submit()'s verified retry backstops a too-early
+    # proceed. On timeout proceed best-effort — never hang the request.
+    deadline = time.monotonic() + timeout_s
+    last = None
+    while time.monotonic() < deadline:
+        pane = _pane(session_id)
+        if READY_MARKER in pane:
+            return True
+        if pane.strip() and pane == last:
+            return True
+        last = pane
+        time.sleep(POLL_S)
+    print(f"agent-session: session {session_id} not ready after {timeout_s}s; proceeding",
+          file=sys.stderr)
+    return False
+
+
+def _input_box_has_text(pane):
+    # After a clean submit the ❯ prompt line is empty; a dropped Enter leaves the
+    # message sitting after the glyph. Non-whitespace after ❯ ⇒ still unsubmitted.
+    # Scan from the BOTTOM: the input box is the last ❯ line — a ❯ in the
+    # transcript above (echoed output) must not be mistaken for the input line.
+    for line in reversed(pane.splitlines()):
+        if READY_MARKER in line:
+            return bool(line.split(READY_MARKER, 1)[1].strip())
+    return False
 
 
 def submit(session_id, text):
@@ -103,6 +162,17 @@ def submit(session_id, text):
     tmux("paste-buffer", "-d", "-p", "-b", "agent-session-msg", "-t", session_id)
     time.sleep(SETTLE_S)
     tmux("send-keys", "-t", session_id, "Enter")
+    # Verified submit: if the Enter was dropped (cold TUI / a first-run
+    # interstitial), the message is still in the input box — press Enter once
+    # more. Single retry, self-healing, independent of the readiness marker.
+    # NB: this can also fire if the Enter DID submit but the TUI hasn't repainted
+    # the now-empty box within SETTLE_S (loaded node) — the extra keypress is then
+    # a bare Enter into an empty prompt. Harmless for claude (empty submit; and
+    # send() keys off the output FILE, not the pane), but unverified for the
+    # codex/antigravity profiles.
+    time.sleep(SETTLE_S)
+    if _input_box_has_text(_pane(session_id)):
+        tmux("send-keys", "-t", session_id, "Enter")
 
 
 def read_turn(session_id):
