@@ -1,0 +1,80 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Persistent --session-id sessions + idle/clear + 60% compact (TDD)
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: RED — tests for deterministic uuid, --session-id launch, idle /clear
+  steps:
+  - id: P2.T1.S1
+    text: |
+      Add RED tests:
+        * `test_session_uuid_is_deterministic`: a helper `session_uuid(session_id)` returns the
+          same valid UUID for a given session_id across calls and differs per id (uuid5).
+        * `test_launch_uses_session_id_uuid`: `has.code=1`; assert the recorded `new-session`
+          launch command contains `--session-id <session_uuid(SEND_REQ.session_id)>` and
+          `--permission-mode auto`.
+        * `test_idle_over_12h_clears_first`: pre-write a `last_activity` file (PVC dir) older than
+          12h for the session; `has.code=0` live; assert the driver submits a `/clear` (a paste
+          whose buffer == "/clear") BEFORE the message paste, and updates last_activity.
+        * `test_recent_activity_no_clear`: last_activity = now; assert NO `/clear` submit.
+      Run the suite. Expected: FAIL (RED — none implemented).
+- number: 2
+  title: GREEN — uuid launch + idle reset
+  steps:
+  - id: P2.T2.S1
+    text: |
+      Implement: `NAMESPACE = uuid.UUID(<fixed constant>)`; `session_uuid(sid) =
+      str(uuid.uuid5(NAMESPACE, sid))`. `launch_command(agent, session_id)` for claude →
+      `claude --session-id <session_uuid> --permission-mode auto` (thread session_id through
+      ensure_session→launch_command; non-claude profiles unchanged). Add `LAST_DIR`/`last_activity`
+      helpers (PVC, beside TURN_DIR): `read_last_activity`/`touch_last_activity`. In `send()`,
+      BEFORE submit: if `now - read_last_activity(session_id) > 12*3600`, `submit(session_id,
+      "/clear")` + brief settle; always `touch_last_activity` after the turn. Run the suite.
+      Expected: GREEN. RED-verify by stash.
+- number: 3
+  title: 60% compaction (best-effort) + live-verify markers
+  steps:
+  - id: P2.T3.S1
+    text: |
+      Add a best-effort proactive compaction: helper `context_pct(pane)` parses claude's
+      context-usage indicator from a captured pane (returns int% or None). After a successful turn,
+      if `context_pct >= 60`, `submit(session_id, "/compact")`. Test with a FAKE pane line the stub
+      emits carrying a parametrized context indicator (`FAKE_CONTEXT_PCT`): assert `/compact` is
+      submitted at 70, NOT at 40, and that a None/unparseable indicator submits nothing (fallback
+      to claude auto-compact, no crash). Run the suite. Expected: GREEN.
+  - id: P2.T3.S2
+    text: |
+      `# manual-operation` LIVE-VERIFY (cannot be unit-tested — real claude/TUI): on the running
+      pod, (a) confirm `claude --session-id <uuid> --permission-mode auto` RESUMES the same
+      conversation on a second launch (2.1.177), and (b) confirm the exact context-usage indicator
+      string/location `context_pct` must parse (`/context` output or status line) and tune the
+      parser to it. Record findings; if the indicator is unparseable, the idle-/clear + claude
+      auto-compact still bound growth (documented degrade). This step is verification only — the
+      agentic code ships with the parser's best-effort target + fallback.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

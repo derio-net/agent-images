@@ -1,0 +1,45 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Continuum conditional in agent-shell-base (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: RED+GREEN — AGENT_TMUX_RESTORE gate in tmux-resurrect.conf
+  steps:
+  - id: P3.T1.S1
+    text: |
+      RED — add `agent-shell-base/tests/test_tmux_restore_gate.py` (mirror the repo's pytest
+      layout): assert `agent-shell-base/etc/agent/tmux-resurrect.conf` contains an `if-shell`
+      honoring `AGENT_TMUX_RESTORE` that sets `@continuum-restore 'off'` when it equals `off` and
+      `'on'` otherwise (default-on), and that the conditional appears BEFORE the
+      `run-shell …/continuum.tmux` line. Run `cd agent-shell-base && uv run --with pytest python -m
+      pytest tests/ -q`. Expected: FAIL (RED — conf has the static `set -g @continuum-restore 'on'`).
+  - id: P3.T1.S2
+    text: |
+      GREEN — in `agent-shell-base/etc/agent/tmux-resurrect.conf` replace
+      `set -g @continuum-restore 'on'` with:
+      BEGIN
+      if-shell '[ "${AGENT_TMUX_RESTORE:-on}" = "off" ]' \
+        "set -g @continuum-restore 'off'" \
+        "set -g @continuum-restore 'on'"
+      END
+      (kept before the `run-shell …/continuum.tmux`). Run the test. Expected: GREEN. Note in the
+      conf a comment: agent pods set AGENT_TMUX_RESTORE=off (driver-managed sessions); human shells
+      leave it unset.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

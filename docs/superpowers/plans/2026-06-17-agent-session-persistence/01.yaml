@@ -1,0 +1,64 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Driver liveness check — never trust a dead existing session (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: RED — model an existing-but-dead session in FAKE_TMUX + failing tests
+  steps:
+  - id: P1.T1.S1
+    text: |
+      In `multi-agent-shell/tests/test_agent_session.py` extend `FAKE_TMUX` so a session can be
+      modelled as EXISTING but DEAD (a bash shell, no ❯). Add an env `FAKE_DEAD_SESSION` (default
+      unset): when set, `capture-pane` for an EXISTING session emits a shell pane (e.g.
+      `"agent@pod:~$ "`, NO ❯) until the session is KILLED (track a `killed` marker file written
+      on `kill-session`); after a kill+new-session it emits the normal ready `❯` pane. Add a
+      `kill-session` handler that records the killed session id. Keep all existing tests green
+      with the new envs unset. Run `cd multi-agent-shell && uv run --with pytest python -m pytest
+      tests/ -q`. Expected: GREEN (stub change only).
+  - id: P1.T1.S2
+    text: |
+      Add RED tests:
+        * `test_dead_existing_session_is_recreated`: `has.code=0` (exists) + `FAKE_DEAD_SESSION=1`;
+          assert `status==ok` and the calls log shows a `kill-session` for the id followed by a
+          `new-session` (the driver detected the dead shell and recreated it), and the reply
+          payload is PAYLOAD.
+        * `test_live_existing_session_is_reused`: `has.code=0`, pane already ready (`❯`), default
+          envs; assert `status==ok` and NO `kill-session` in the calls log (warm reuse, untouched).
+        * `test_absent_session_still_creates`: `has.code=1`; assert a `new-session` and `status==ok`
+          (regression — the creation path + wait_ready still works).
+      Run the suite. Expected: FAIL (RED — ensure_session reuses the dead session blindly).
+- number: 2
+  title: GREEN — liveness probe in ensure_session
+  steps:
+  - id: P1.T2.S1
+    text: |
+      In `…/multi-agent-shell/agent-session`, change `ensure_session` so it stops trusting bare
+      `has-session`. If the session is ABSENT → create + `wait_ready` (as today). If it EXISTS →
+      run a quick liveness probe: poll `capture-pane` for `READY_MARKER` with a SHORT bounded
+      timeout (new `READY_PROBE_S`, ~3s, env-overridable) reusing the wait_ready logic; if the pane
+      is NOT a live REPL within the probe, `tmux("kill-session","-t",session_id)` then create +
+      `wait_ready` (recreate); if live, reuse untouched. Factor the poll so wait_ready and the
+      probe share one helper (different timeouts). Run the suite. Expected: GREEN (dead recreated,
+      live reused, absent created). RED-verify by stashing the driver and re-running the 3 tests.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
