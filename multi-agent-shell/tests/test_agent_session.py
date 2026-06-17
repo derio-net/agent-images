@@ -15,6 +15,8 @@ proves the deprecated `STOA_*` aliases still drive identical behaviour.
 
 Modeled on the repo's existing pytest setup (`kali/tests/test_*.py`).
 """
+import importlib.machinery
+import importlib.util
 import json
 import os
 import socket
@@ -54,6 +56,17 @@ def p(n): return os.path.join(D, n)
 a = sys.argv[1:]
 cmd = a[0] if a else ""
 open(p("calls.log"), "a").write(cmd + " " + " ".join(a[1:]) + "\n")
+def _target(args):
+    if "-t" in args:
+        i = args.index("-t")
+        if i + 1 < len(args):
+            return args[i + 1]
+    return ""
+if cmd == "kill-session":
+    # Record the killed session id so capture-pane can flip a DEAD session to a
+    # ready REPL after the driver recreates it (Fix C liveness recreate path).
+    open(p("killed.log"), "a").write(_target(a) + "\n")
+    sys.exit(0)
 if cmd == "has-session":
     try: code = int((open(p("has.code")).read().strip() or "0"))
     except Exception: code = 0
@@ -61,7 +74,12 @@ if cmd == "has-session":
 if cmd == "new-session":
     open(p("new.log"), "a").write(" ".join(a) + "\n"); sys.exit(0)
 if cmd == "load-buffer":
-    open(p("buffer.txt"), "w").write(sys.stdin.read()); sys.exit(0)
+    data = sys.stdin.read()
+    open(p("buffer.txt"), "w").write(data)
+    # Record the first line of every pasted buffer so tests can assert the
+    # ordering of control submits (/clear, /compact) relative to the message.
+    open(p("pastes.log"), "a").write((data.splitlines()[0] if data else "") + "\n")
+    sys.exit(0)
 if cmd == "paste-buffer":
     buf = open(p("buffer.txt")).read() if os.path.exists(p("buffer.txt")) else ""
     open(p("pending.txt"), "w").write(buf); sys.exit(0)
@@ -88,7 +106,14 @@ if cmd == "capture-pane":
     cc = p("capture.count")
     n = int(open(cc).read() or "0") if os.path.exists(cc) else 0
     open(cc, "w").write(str(n + 1))
-    if n < int(os.environ.get("FAKE_COLD_CAPTURES", "0")):
+    tgt = _target(a)
+    killed = bool(tgt) and os.path.exists(p("killed.log")) and tgt in open(p("killed.log")).read().split()
+    if os.environ.get("FAKE_DEAD_SESSION") == "1" and not killed:
+        # An EXISTING but DEAD session (continuum-restored bash shell / crashed
+        # claude): a stable shell prompt, NO ❯, until the driver KILLS + recreates
+        # it — after the kill marker the recreated session renders the ready ❯.
+        sys.stdout.write("agent@pod:~$ \n")
+    elif n < int(os.environ.get("FAKE_COLD_CAPTURES", "0")):
         sys.stdout.write("")            # cold boot: REPL not ready → empty pane
     else:
         box = open(p("box.txt")).read() if os.path.exists(p("box.txt")) else ""
@@ -96,7 +121,11 @@ if cmd == "capture-pane":
         # FAKE_HISTORY_PROMPT adds a transcript line that ALSO contains ❯ above the
         # input box — the driver must read the LAST ❯ line (the box), not this one.
         history = "echoed ❯ old input\n" if os.environ.get("FAKE_HISTORY_PROMPT") == "1" else "some history\n"
-        sys.stdout.write(history + "❯ " + box + "\n⏵⏵ auto mode on\n")
+        # Optional context-usage indicator line (Fix E 60% compaction). The exact
+        # live string is a live-verify item (P2.T3.S2); the stub emits the parser's
+        # target form ("context: NN% used") so the unit path is exercisable.
+        ctx = ("context: " + os.environ["FAKE_CONTEXT_PCT"] + "% used\n") if os.environ.get("FAKE_CONTEXT_PCT") else ""
+        sys.stdout.write(history + "❯ " + box + "\n⏵⏵ auto mode on\n" + ctx)
     sys.exit(0)
 sys.exit(0)
 '''
@@ -124,6 +153,7 @@ def _make_harness(tmp_path, *, env_prefix="AGENT_SESSION_"):
     env["FAKE_DIR"] = str(fdir)
     env[env_prefix + "TURN_DIR"] = str(tmp_path / "turns")
     env[env_prefix + "OUT_DIR"] = str(tmp_path / "out")
+    env[env_prefix + "LAST_DIR"] = str(tmp_path / "last")
     env[env_prefix + "POLL_S"] = "0.05"
     env[env_prefix + "SETTLE_S"] = "0"
     env["FAKE_PAYLOAD"] = json.dumps(PAYLOAD)
@@ -208,18 +238,21 @@ def test_deprecated_stoa_aliases_still_drive(tmp_path):
     assert (tmp_path / "turns" / (SEND_REQ["session_id"] + ".turn")).exists()
 
 
-@pytest.mark.parametrize("agent,expected_launch", [
-    ("claude", "claude --permission-mode auto"),
-    ("codex", "codex --full-auto"),
-    ("antigravity", "agy --yolo"),
+@pytest.mark.parametrize("agent,expected_tokens", [
+    # claude embeds a per-session --session-id uuid (Fix E); codex/antigravity
+    # profiles are unchanged. Token-list assertion tolerates the injected uuid.
+    ("claude", ["claude", "--session-id", "--permission-mode auto"]),
+    ("codex", ["codex --full-auto"]),
+    ("antigravity", ["agy --yolo"]),
 ])
-def test_per_agent_launch_profile(harness, agent, expected_launch):
+def test_per_agent_launch_profile(harness, agent, expected_tokens):
     # ensure_session dispatches on the `agent` field via the launch-profile
     # table; the FAKE_TMUX records the new-session command verbatim.
     harness.run(dict(SEND_REQ, agent=agent), session_exists=False)
     newlog = (harness.fdir / "new.log").read_text()
-    assert expected_launch in newlog, \
-        f"agent {agent!r} must launch via `{expected_launch}`, got: {newlog!r}"
+    for tok in expected_tokens:
+        assert tok in newlog, \
+            f"agent {agent!r} launch missing {tok!r}, got: {newlog!r}"
 
 
 def test_unknown_agent_falls_back_to_claude(harness):
@@ -307,6 +340,193 @@ def test_pretrust_seeds_auto_mode_flag(harness):
     harness.run(SEND_REQ, session_exists=False)
     proj = json.loads((harness.home / ".claude.json").read_text()).get("projects", {})
     assert proj.get(str(harness.home), {}).get("hasSeenAutoModeEntryWarning") is True
+
+
+# --- Fix C: driver liveness check (never trust a dead existing session) -------
+
+def test_dead_existing_session_is_recreated(tmp_path):
+    # has-session reports the session EXISTS, but its pane is a dead bash shell
+    # (continuum-restored / crashed claude — no ❯). The driver must detect this,
+    # kill the dead session, recreate it, and submit to the fresh REPL.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_DEAD_SESSION"] = "1"
+    h.env["AGENT_SESSION_READY_PROBE_S"] = "0.3"   # short bound so the probe gives up fast
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # session EXISTS (but dead)
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok" and out["payload"] == PAYLOAD
+    calls = (h.fdir / "calls.log").read_text().splitlines()
+    sid = SEND_REQ["session_id"]
+    kill_idx = next((i for i, l in enumerate(calls)
+                     if l.startswith("kill-session") and sid in l), None)
+    new_idx = next((i for i, l in enumerate(calls)
+                    if l.startswith("new-session") and sid in l), None)
+    assert kill_idx is not None, f"dead session must be killed; calls={calls}"
+    assert new_idx is not None and new_idx > kill_idx, \
+        f"must recreate AFTER killing the dead session; calls={calls}"
+
+
+def test_live_existing_session_is_reused(tmp_path):
+    # A live ❯ REPL that already exists must be reused untouched — no kill, no
+    # recreate (warm path, no added latency beyond a single readiness capture).
+    h = _make_harness(tmp_path)
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # exists + (default) ready ❯ pane
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    calls = (h.fdir / "calls.log").read_text()
+    assert "kill-session" not in calls, f"a live session must not be killed; calls={calls!r}"
+    # N3: a live ❯ session returns on the FIRST probe capture — the probe must not
+    # poll its full bound (READY_PROBE_S/POLL_S would be ~60 captures if it looped).
+    assert int((h.fdir / "capture.count").read_text()) < 10, "warm reuse must not poll the probe loop"
+
+
+def test_slow_live_existing_session_reused(tmp_path):
+    # N2: an EXISTING session briefly blank (mid-render) that shows ❯ within the
+    # probe bound must be REUSED, not killed (warm-but-rendering, the boundary the
+    # C1 hazard lives on). FAKE_COLD_CAPTURES blanks the first 2 captures, then ❯.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_COLD_CAPTURES"] = "2"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # session EXISTS
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert "kill-session" not in (h.fdir / "calls.log").read_text(), \
+        "a slow-but-live REPL (renders ❯ within the probe) must be reused, not killed"
+
+
+def test_absent_session_still_creates(tmp_path):
+    # Regression: a genuinely-absent session still takes the create + wait_ready
+    # path (Fix C must not break the original cold-create flow).
+    h = _make_harness(tmp_path)
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("1")          # session ABSENT
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert SEND_REQ["session_id"] in (h.fdir / "new.log").read_text()
+    assert "kill-session" not in (h.fdir / "calls.log").read_text()
+
+
+# --- Fix E: persistent --session-id sessions + idle /clear + 60% compaction ----
+
+def _driver_module():
+    # Import the baked driver as a module (no .py suffix → load by path) so unit
+    # tests can call its pure helpers (session_uuid, context_pct) directly. The
+    # __main__ guard prevents main() from running on import.
+    loader = importlib.machinery.SourceFileLoader("agent_session_drv", str(DRIVER))
+    spec = importlib.util.spec_from_loader("agent_session_drv", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)   # DRIVER has no .py suffix → explicit SourceFileLoader
+    return mod
+
+
+def _paste_first_lines(harness):
+    pl = harness.fdir / "pastes.log"
+    return pl.read_text().splitlines() if pl.exists() else []
+
+
+def test_session_uuid_is_deterministic():
+    import uuid
+    mod = _driver_module()
+    a = mod.session_uuid("alert-agent-tg-2034763022")
+    b = mod.session_uuid("alert-agent-tg-2034763022")
+    c = mod.session_uuid("alert-agent-ops")
+    assert a == b, "same session_id must map to the same uuid (resume across restarts)"
+    assert uuid.UUID(a), "must be a valid UUID for claude --session-id"
+    assert a != c, "different session_ids must map to different uuids"
+
+
+def test_launch_uses_session_id_uuid(harness):
+    # claude launches with --session-id <uuid5(session_id)> so the conversation
+    # persists/resumes on the PVC across pod restarts.
+    mod = _driver_module()
+    harness.run(SEND_REQ, session_exists=False)
+    newlog = (harness.fdir / "new.log").read_text()
+    expected = mod.session_uuid(SEND_REQ["session_id"])
+    assert f"--session-id {expected}" in newlog, \
+        f"launch must pin the deterministic session uuid, got: {newlog!r}"
+    assert "--permission-mode auto" in newlog
+
+
+def test_idle_over_12h_clears_first(harness):
+    # A persisted conversation idle > 12h must be /clear'd (fresh conversation,
+    # SAME uuid) BEFORE the new message, and last_activity refreshed.
+    sid = SEND_REQ["session_id"]
+    last_dir = Path(harness.env["AGENT_SESSION_LAST_DIR"]); last_dir.mkdir(parents=True, exist_ok=True)
+    la = last_dir / (sid + ".last")
+    old = time.time() - (13 * 3600)
+    la.write_text(str(old))
+    out = json.loads(harness.run(SEND_REQ).stdout)   # has.code defaults to live (0)
+    assert out["status"] == "ok"
+    pastes = _paste_first_lines(harness)
+    assert "/clear" in pastes, f"idle>12h must submit /clear; pastes={pastes}"
+    assert pastes.index("/clear") < next(i for i, l in enumerate(pastes) if l.startswith("Investigate")), \
+        f"/clear must precede the message; pastes={pastes}"
+    assert float(la.read_text()) > old, "last_activity must be refreshed after the turn"
+
+
+def test_recent_activity_no_clear(harness):
+    # Recent activity (< 12h) must NOT clear — the conversation continues.
+    sid = SEND_REQ["session_id"]
+    last_dir = Path(harness.env["AGENT_SESSION_LAST_DIR"]); last_dir.mkdir(parents=True, exist_ok=True)
+    (last_dir / (sid + ".last")).write_text(str(time.time()))
+    out = json.loads(harness.run(SEND_REQ).stdout)
+    assert out["status"] == "ok"
+    assert "/clear" not in _paste_first_lines(harness), "recent activity must not /clear"
+
+
+def test_context_pct_parses():
+    cp = _driver_module().context_pct
+    assert cp("context: 70% used\n❯ ") == 70
+    assert cp("Context left until auto-compact: 30%") == 70, "'left' wording must invert to % used"
+    assert cp("no indicator here\n❯ ") is None
+    assert cp("❯ \n⏵⏵ auto mode on\n") is None
+
+
+def test_context_pct_disambiguates_used_and_left():
+    # M1: a line carrying BOTH "used" and "left" must read the USED number (no
+    # inversion). M2: a leading token count must not derail the parse.
+    cp = _driver_module().context_pct
+    assert cp("Context: 45% used · 55% left until auto-compact") == 45
+    assert cp("context window 200000 tokens — 80% used") == 80
+
+
+def _run_with_ctx(harness, pct):
+    e = dict(harness.env)
+    if pct is not None:
+        e["FAKE_CONTEXT_PCT"] = str(pct)
+    (harness.fdir / "has.code").write_text("0")   # live session
+    return json.loads(subprocess.run(
+        [sys.executable, str(harness.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+
+
+def test_compacts_when_context_over_threshold(harness):
+    # >= 60% context used after a successful turn → proactive /compact.
+    out = _run_with_ctx(harness, 70)
+    assert out["status"] == "ok"
+    assert "/compact" in _paste_first_lines(harness), "must /compact at 70% used"
+
+
+def test_no_compact_under_threshold(harness):
+    out = _run_with_ctx(harness, 40)
+    assert out["status"] == "ok"
+    assert "/compact" not in _paste_first_lines(harness), "must NOT /compact at 40% used"
+
+
+def test_no_compact_when_indicator_absent(harness):
+    # Unparseable/absent indicator → defer to claude auto-compact (no /compact, no crash).
+    out = _run_with_ctx(harness, None)
+    assert out["status"] == "ok"
+    assert "/compact" not in _paste_first_lines(harness)
 
 
 def test_s6_service_run_gated_on_serve_flag():

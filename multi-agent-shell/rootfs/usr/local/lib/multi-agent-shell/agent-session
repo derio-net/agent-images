@@ -15,10 +15,12 @@ on the image's python3 with no extra deps.
 import fcntl
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
 import time
+import uuid
 
 
 def _env(new, old, default):
@@ -41,7 +43,24 @@ SETTLE_S = float(_env("AGENT_SESSION_SETTLE_S", "STOA_SETTLE_S", "0.5"))
 # Max wait for a freshly-created session's REPL to start accepting input before
 # the first submit (cold-start gate). On timeout we proceed best-effort.
 READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOUT_S", "30"))
+# Short bound for the liveness probe of an ALREADY-EXISTING session (Fix C). A
+# warm REPL answers on the first capture; a dead bash shell (continuum-restored)
+# or crashed claude never shows ❯, so the probe gives up fast and recreates.
+READY_PROBE_S = float(_env("AGENT_SESSION_READY_PROBE_S", "STOA_READY_PROBE_S", "3"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
+# Fix E — persistent resumable conversations. last_activity timestamps live on
+# the PVC beside the turn counter; an idle gap > IDLE_RESET_S triggers a /clear
+# (fresh conversation, SAME --session-id) before the next message. COMPACT_PCT is
+# the best-effort proactive-compaction threshold (percent of context used).
+LAST_DIR = _env("AGENT_SESSION_LAST_DIR", "STOA_LAST_DIR", os.path.join(HOME, ".agent-session", "last"))
+IDLE_RESET_S = float(_env("AGENT_SESSION_IDLE_RESET_S", "STOA_IDLE_RESET_S", str(12 * 3600)))
+COMPACT_PCT = int(_env("AGENT_SESSION_COMPACT_PCT", "STOA_COMPACT_PCT", "60"))
+
+# Fixed namespace for deriving a stable, valid UUID from a human session_id
+# (uuid5). Same session_id → same uuid → claude --session-id resumes the same
+# PVC-persisted conversation across pod restarts. Never change this constant
+# (it would orphan every existing conversation jsonl).
+SESSION_UUID_NAMESPACE = uuid.UUID("6f3b9c1e-1a2b-4c3d-8e4f-5a6b7c8d9e0f")
 
 # The claude REPL input-prompt glyph: empirically the cold→ready signal (the pane
 # is EMPTY for the first ~5s of boot, then the ❯ prompt + "auto mode" status line
@@ -64,9 +83,19 @@ LAUNCH_PROFILES = {
 DEFAULT_AGENT = "claude"
 
 
-def launch_command(agent):
-    # Unknown agent → fall back to the verified claude profile rather than
-    # launching nothing (which would leave send() to time out mysteriously).
+def session_uuid(session_id):
+    # Deterministic, valid UUID for `claude --session-id` (uuid5 → reproducible,
+    # no persisted mapping). Same session_id always resumes the same conversation.
+    return str(uuid.uuid5(SESSION_UUID_NAMESPACE, session_id))
+
+
+def launch_command(agent, session_id=None):
+    # claude gets a per-session --session-id (Fix E) so the conversation persists
+    # on the PVC and resumes across pod restarts. Other (best-effort) profiles are
+    # unchanged. Unknown agent → fall back to the verified static claude profile
+    # rather than launching nothing (which would leave send() to time out).
+    if agent == "claude" and session_id is not None:
+        return f"claude --session-id {session_uuid(session_id)} --permission-mode auto"
     return LAUNCH_PROFILES.get(agent, LAUNCH_PROFILES[DEFAULT_AGENT])
 
 
@@ -99,49 +128,76 @@ def pretrust():
 
 def ensure_session(session_id, agent=DEFAULT_AGENT):
     # Auto-create the session (interactive agent CLI, never -p) if absent, so
-    # the caller's session_id drives whatever it names. The launch command is
-    # the per-agent profile; its auto-approve flag lets the session write its
-    # per-turn output file without a prompt, short of a full permissions
-    # bypass. Unauthenticated until the operator logs the agent in. Concurrency-
-    # safe: a racing dup new-session errors harmlessly.
+    # the caller's session_id drives whatever it names. Concurrency-safe: a
+    # racing dup new-session errors harmlessly.
+    #
+    # Fix C — never trust a bare `has-session`. An EXISTING session also answers
+    # has-session when it is a continuum-restored bash shell or a crashed claude
+    # pane; pasting a DM into a dead bash shell yields `syntax error near (` and a
+    # full timeout. So probe an existing session for a LIVE REPL with a short
+    # bound; if it is not live, kill + recreate (generalizes the old
+    # creation-only readiness gate to cover dead/restored panes too).
     if tmux("has-session", "-t", session_id).returncode != 0:
-        pretrust()
-        tmux("new-session", "-d", "-s", session_id, launch_command(agent))
-        # Cold-start gate: a just-launched REPL is not yet accepting input (the
-        # pane is empty for several seconds). Block until it is, so the first
-        # submit's Enter is not dropped. Gated on creation only, to spare warm
-        # turns the poll. CAVEAT: under the threaded server a SECOND send for the
-        # same session_id may see has-session==0 (this branch just created it)
-        # and skip the gate while the pane is still booting — submit()'s verified
-        # retry is the backstop for that race (and for a genuinely-wedged session
-        # an unconditional gate would only add a dead 30s before the real timeout).
-        wait_ready(session_id)
+        _create_session(session_id, agent)
+        return
+    if not _is_live_repl(session_id):
+        tmux("kill-session", "-t", session_id)
+        _create_session(session_id, agent)
+
+
+def _create_session(session_id, agent):
+    pretrust()
+    tmux("new-session", "-d", "-s", session_id, launch_command(agent, session_id))
+    # Cold-start gate: a just-launched REPL is not yet accepting input (the pane
+    # is empty for several seconds). Block until it is, so the first submit's
+    # Enter is not dropped. CAVEAT: under the threaded server a SECOND send for
+    # the same session_id may race this create — submit()'s verified retry is the
+    # backstop (and for a genuinely-wedged session an unconditional gate would
+    # only add a dead 30s before the real timeout).
+    wait_ready(session_id)
 
 
 def _pane(session_id):
     return tmux("capture-pane", "-p", "-t", session_id).stdout or ""
 
 
-def wait_ready(session_id, timeout_s=READY_TIMEOUT_S):
-    # Poll the pane until the REPL accepts input: the ❯ prompt marker is the
-    # primary signal; a non-empty pane that is unchanged across two polls is the
-    # version-drift fallback (an agent/version that doesn't render ❯) — note it
-    # CAN return early if a version paints a static splash frame for ≥2 polls
-    # before accepting input; submit()'s verified retry backstops a too-early
-    # proceed. On timeout proceed best-effort — never hang the request.
+def _poll_ready(session_id, timeout_s, idle_fallback=True):
+    # Shared readiness poll. `idle_fallback` decides how a non-empty pane WITHOUT
+    # the ❯ marker is treated:
+    #   * True  (wait_ready / cold-create): a pane unchanged across two polls is
+    #     accepted as ready — version-drift tolerance for an agent that never
+    #     renders ❯. (CAN return early on a static splash frame; submit()'s
+    #     verified retry backstops a too-early proceed.)
+    #   * False (liveness probe of an EXISTING session): only ❯ counts as live. A
+    #     stable non-empty pane is exactly the dead-bash-shell case we must catch,
+    #     so the idle fallback is disabled — never mistake a dead shell for a REPL.
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
         pane = _pane(session_id)
         if READY_MARKER in pane:
             return True
-        if pane.strip() and pane == last:
+        if idle_fallback and pane.strip() and pane == last:
             return True
         last = pane
         time.sleep(POLL_S)
-    print(f"agent-session: session {session_id} not ready after {timeout_s}s; proceeding",
-          file=sys.stderr)
     return False
+
+
+def wait_ready(session_id, timeout_s=READY_TIMEOUT_S):
+    # Cold-create gate: proceed best-effort on timeout — never hang the request.
+    ok = _poll_ready(session_id, timeout_s, idle_fallback=True)
+    if not ok:
+        print(f"agent-session: session {session_id} not ready after {timeout_s}s; proceeding",
+              file=sys.stderr)
+    return ok
+
+
+def _is_live_repl(session_id):
+    # Quick, STRICT liveness probe for an existing session (Fix C): a live claude
+    # REPL renders ❯ within READY_PROBE_S; a dead bash shell / crashed pane never
+    # does. idle_fallback=False so a stable shell prompt is NOT counted as live.
+    return _poll_ready(session_id, READY_PROBE_S, idle_fallback=False)
 
 
 def _input_box_has_text(pane):
@@ -198,18 +254,89 @@ def bump_turn(session_id):
     return turn
 
 
+def read_last_activity(session_id):
+    # Unix timestamp of the last turn for this session, or None if there has
+    # never been one (a brand-new session must NOT be /clear'd — None, not 0).
+    path = os.path.join(LAST_DIR, session_id + ".last")
+    try:
+        with open(path) as fh:
+            return float(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def touch_last_activity(session_id):
+    os.makedirs(LAST_DIR, exist_ok=True)
+    path = os.path.join(LAST_DIR, session_id + ".last")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(str(time.time()))
+    os.replace(tmp, path)
+
+
+_CONTEXT_PCT_RE = re.compile(r"(\d{1,3})\s*%")
+
+
+def context_pct(pane):
+    # Best-effort parse of claude's context-usage indicator → percent USED (0-100)
+    # or None when absent/unparseable. The EXACT live string/location is a
+    # live-verify item (P2.T3.S2). For each "context" line, take the FIRST %-number
+    # that is <= 100 (finditer skips token counts like 200000%-of-nothing and any
+    # >100 garbage — M2); read it as % USED, unless the line says "left"/"remaining"
+    # WITHOUT "used" (then invert — M1). None → defer to claude auto-compact.
+    for line in pane.splitlines():
+        low = line.lower()
+        if "context" not in low:
+            continue
+        for m in _CONTEXT_PCT_RE.finditer(line):
+            pct = int(m.group(1))
+            if pct > 100:
+                continue
+            if "used" not in low and ("left" in low or "remaining" in low):
+                return 100 - pct
+            return pct
+    return None
+
+
 def response(session_id, agent, status, turn, payload):
     return {"session_id": session_id, "agent": agent, "status": status,
             "turn": turn, "payload": payload}
 
 
 def send(req):
+    # Serialize WHOLE turns per session_id across THREADS and PROCESSES (C1): the
+    # served endpoint is a ThreadingHTTPServer and the CLI `send` is a separate
+    # process, so without this a concurrent same-session call would run
+    # ensure_session's liveness probe against a MID-TURN REPL (no ❯ while it streams)
+    # and kill the in-flight session. flock (not threading.Lock) covers BOTH
+    # consumers; a different session_id locks a different file → no contention.
+    session_id = req["session_id"]
+    os.makedirs(TURN_DIR, exist_ok=True)
+    lockpath = os.path.join(TURN_DIR, session_id + ".send.lock")
+    with open(lockpath, "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        return _send_locked(req)
+
+
+def _send_locked(req):
     session_id = req["session_id"]
     agent = req.get("agent", "claude")
     message = req["message"]
     timeout_s = float(req.get("timeout_s", 300))
 
     ensure_session(session_id, agent)
+
+    # Idle reset (Fix E): a persisted conversation idle > IDLE_RESET_S is /clear'd
+    # first (fresh conversation, SAME --session-id) so a stale/huge context does not
+    # bleed into the new ask. A brand-new session (last_activity None) is left alone.
+    # NB: if Fix C just recreated a dead session this may /clear an already-fresh
+    # conversation — a harmless no-op (I1).
+    last = read_last_activity(session_id)
+    if last is not None and (time.time() - last) > IDLE_RESET_S:
+        submit(session_id, "/clear")
+        # Re-gate: confirm the prompt returned before pasting the real message, so a
+        # slow /clear can't concatenate with the message in the input box (I3).
+        wait_ready(session_id, READY_PROBE_S)
 
     # Per-turn output file (unique nonce → no stale-reply ambiguity).
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -243,7 +370,20 @@ def send(req):
                 os.remove(outfile)
             except OSError:
                 pass
-            return response(session_id, agent, "ok", bump_turn(session_id), payload)
+            turn = bump_turn(session_id)
+            # Touch on SUCCESS only (I2): a stuck/timing-out session is NOT marked
+            # active, so after IDLE_RESET_S it trips the idle /clear recovery above —
+            # "last conversation" = the last real exchange, per the operator's intent.
+            touch_last_activity(session_id)
+            # Proactive compaction (Fix E, best-effort): if the context indicator reads
+            # >= COMPACT_PCT used, /compact to bound growth; None/unparseable → defer to
+            # claude's near-limit auto-compact. Safe: payload already read+removed and
+            # turn bumped, so /compact can't corrupt THIS turn; the per-session flock
+            # serializes the NEXT turn so its ensure_session won't probe mid-compaction (N1).
+            pct = context_pct(_pane(session_id))
+            if pct is not None and pct >= COMPACT_PCT:
+                submit(session_id, "/compact")
+            return response(session_id, agent, "ok", turn, payload)
         time.sleep(POLL_S)
 
     return response(session_id, agent, "timeout", read_turn(session_id), None)
