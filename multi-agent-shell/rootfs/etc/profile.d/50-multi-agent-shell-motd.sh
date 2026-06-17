@@ -31,7 +31,7 @@ check() {
 # and the OAuth token lands at ~/.gemini/antigravity-cli/antigravity-oauth-token
 # (confirmed 2026-06-15 by completing a real login in this image — a plain file,
 # not an OS-keyring entry, so this presence check works on a headless pod).
-check claude   .claude/credentials.json
+check claude   .claude/.credentials.json
 check codex    .config/codex/auth.json
 check agy      .gemini/antigravity-cli/antigravity-oauth-token   agy
 check opencode .local/share/opencode/auth.json                   "opencode auth login"
