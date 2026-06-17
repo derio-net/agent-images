@@ -15,10 +15,12 @@ on the image's python3 with no extra deps.
 import fcntl
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
 import time
+import uuid
 
 
 def _env(new, old, default):
@@ -46,6 +48,19 @@ READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOU
 # or crashed claude never shows ❯, so the probe gives up fast and recreates.
 READY_PROBE_S = float(_env("AGENT_SESSION_READY_PROBE_S", "STOA_READY_PROBE_S", "3"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
+# Fix E — persistent resumable conversations. last_activity timestamps live on
+# the PVC beside the turn counter; an idle gap > IDLE_RESET_S triggers a /clear
+# (fresh conversation, SAME --session-id) before the next message. COMPACT_PCT is
+# the best-effort proactive-compaction threshold (percent of context used).
+LAST_DIR = _env("AGENT_SESSION_LAST_DIR", "STOA_LAST_DIR", os.path.join(HOME, ".agent-session", "last"))
+IDLE_RESET_S = float(_env("AGENT_SESSION_IDLE_RESET_S", "STOA_IDLE_RESET_S", str(12 * 3600)))
+COMPACT_PCT = int(_env("AGENT_SESSION_COMPACT_PCT", "STOA_COMPACT_PCT", "60"))
+
+# Fixed namespace for deriving a stable, valid UUID from a human session_id
+# (uuid5). Same session_id → same uuid → claude --session-id resumes the same
+# PVC-persisted conversation across pod restarts. Never change this constant
+# (it would orphan every existing conversation jsonl).
+SESSION_UUID_NAMESPACE = uuid.UUID("6f3b9c1e-1a2b-4c3d-8e4f-5a6b7c8d9e0f")
 
 # The claude REPL input-prompt glyph: empirically the cold→ready signal (the pane
 # is EMPTY for the first ~5s of boot, then the ❯ prompt + "auto mode" status line
@@ -68,9 +83,19 @@ LAUNCH_PROFILES = {
 DEFAULT_AGENT = "claude"
 
 
-def launch_command(agent):
-    # Unknown agent → fall back to the verified claude profile rather than
-    # launching nothing (which would leave send() to time out mysteriously).
+def session_uuid(session_id):
+    # Deterministic, valid UUID for `claude --session-id` (uuid5 → reproducible,
+    # no persisted mapping). Same session_id always resumes the same conversation.
+    return str(uuid.uuid5(SESSION_UUID_NAMESPACE, session_id))
+
+
+def launch_command(agent, session_id=None):
+    # claude gets a per-session --session-id (Fix E) so the conversation persists
+    # on the PVC and resumes across pod restarts. Other (best-effort) profiles are
+    # unchanged. Unknown agent → fall back to the verified static claude profile
+    # rather than launching nothing (which would leave send() to time out).
+    if agent == "claude" and session_id is not None:
+        return f"claude --session-id {session_uuid(session_id)} --permission-mode auto"
     return LAUNCH_PROFILES.get(agent, LAUNCH_PROFILES[DEFAULT_AGENT])
 
 
@@ -122,7 +147,7 @@ def ensure_session(session_id, agent=DEFAULT_AGENT):
 
 def _create_session(session_id, agent):
     pretrust()
-    tmux("new-session", "-d", "-s", session_id, launch_command(agent))
+    tmux("new-session", "-d", "-s", session_id, launch_command(agent, session_id))
     # Cold-start gate: a just-launched REPL is not yet accepting input (the pane
     # is empty for several seconds). Block until it is, so the first submit's
     # Enter is not dropped. CAVEAT: under the threaded server a SECOND send for
@@ -229,6 +254,50 @@ def bump_turn(session_id):
     return turn
 
 
+def read_last_activity(session_id):
+    # Unix timestamp of the last turn for this session, or None if there has
+    # never been one (a brand-new session must NOT be /clear'd — None, not 0).
+    path = os.path.join(LAST_DIR, session_id + ".last")
+    try:
+        with open(path) as fh:
+            return float(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def touch_last_activity(session_id):
+    os.makedirs(LAST_DIR, exist_ok=True)
+    path = os.path.join(LAST_DIR, session_id + ".last")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(str(time.time()))
+    os.replace(tmp, path)
+
+
+_CONTEXT_PCT_RE = re.compile(r"(\d{1,3})\s*%")
+
+
+def context_pct(pane):
+    # Best-effort parse of claude's context-usage indicator → percent USED (0-100)
+    # or None when absent/unparseable. The EXACT live string/location is a
+    # live-verify item (P2.T3.S2); this targets a "context … NN%" line and inverts
+    # an explicit "left"/"remaining" wording. None → defer to claude auto-compact.
+    for line in pane.splitlines():
+        low = line.lower()
+        if "context" not in low:
+            continue
+        m = _CONTEXT_PCT_RE.search(line)
+        if not m:
+            continue
+        pct = int(m.group(1))
+        if pct > 100:
+            continue
+        if "left" in low or "remaining" in low:
+            pct = 100 - pct
+        return pct
+    return None
+
+
 def response(session_id, agent, status, turn, payload):
     return {"session_id": session_id, "agent": agent, "status": status,
             "turn": turn, "payload": payload}
@@ -241,6 +310,17 @@ def send(req):
     timeout_s = float(req.get("timeout_s", 300))
 
     ensure_session(session_id, agent)
+
+    # Idle reset (Fix E): a persisted conversation idle > IDLE_RESET_S is /clear'd
+    # first (fresh conversation, SAME --session-id) so a stale/huge context does
+    # not bleed into the new ask. A brand-new session (last_activity is None) is
+    # left alone — nothing to clear.
+    last = read_last_activity(session_id)
+    if last is not None and (time.time() - last) > IDLE_RESET_S:
+        submit(session_id, "/clear")
+        time.sleep(SETTLE_S)
+    # Mark activity for this turn regardless of outcome (bounds the next idle gap).
+    touch_last_activity(session_id)
 
     # Per-turn output file (unique nonce → no stale-reply ambiguity).
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -274,7 +354,14 @@ def send(req):
                 os.remove(outfile)
             except OSError:
                 pass
-            return response(session_id, agent, "ok", bump_turn(session_id), payload)
+            turn = bump_turn(session_id)
+            # Proactive compaction (Fix E, best-effort): if the context indicator
+            # reads >= COMPACT_PCT used, /compact to bound growth. None/unparseable
+            # → defer to claude's own near-limit auto-compact (no crash).
+            pct = context_pct(_pane(session_id))
+            if pct is not None and pct >= COMPACT_PCT:
+                submit(session_id, "/compact")
+            return response(session_id, agent, "ok", turn, payload)
         time.sleep(POLL_S)
 
     return response(session_id, agent, "timeout", read_turn(session_id), None)

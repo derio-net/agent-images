@@ -59,22 +59,24 @@ tasks:
 state:
   steps:
     P2.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-17T20:40:08+00:00'
       note: null
     P2.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-17T20:40:09+00:00'
       note: null
     P2.T3.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-06-17T20:40:11+00:00'
       note: null
     P2.T3.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-06-17T20:40:12+00:00'
+      note: Live-verify deferred to operator (pod write is operator-gated); launcher
+        at /tmp/verify-e-live.sh confirms --session-id resume + captures the real
+        /context string. Code ships best-effort context_pct + auto-compact fallback.
   completion:
-    at: null
+    at: '2026-06-17T20:40:14+00:00'
     note: null
     observed_prs: []
