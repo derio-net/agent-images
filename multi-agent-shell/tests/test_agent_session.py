@@ -380,6 +380,25 @@ def test_live_existing_session_is_reused(tmp_path):
     assert out["status"] == "ok"
     calls = (h.fdir / "calls.log").read_text()
     assert "kill-session" not in calls, f"a live session must not be killed; calls={calls!r}"
+    # N3: a live ❯ session returns on the FIRST probe capture — the probe must not
+    # poll its full bound (READY_PROBE_S/POLL_S would be ~60 captures if it looped).
+    assert int((h.fdir / "capture.count").read_text()) < 10, "warm reuse must not poll the probe loop"
+
+
+def test_slow_live_existing_session_reused(tmp_path):
+    # N2: an EXISTING session briefly blank (mid-render) that shows ❯ within the
+    # probe bound must be REUSED, not killed (warm-but-rendering, the boundary the
+    # C1 hazard lives on). FAKE_COLD_CAPTURES blanks the first 2 captures, then ❯.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_COLD_CAPTURES"] = "2"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # session EXISTS
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert "kill-session" not in (h.fdir / "calls.log").read_text(), \
+        "a slow-but-live REPL (renders ❯ within the probe) must be reused, not killed"
 
 
 def test_absent_session_still_creates(tmp_path):
@@ -470,6 +489,14 @@ def test_context_pct_parses():
     assert cp("Context left until auto-compact: 30%") == 70, "'left' wording must invert to % used"
     assert cp("no indicator here\n❯ ") is None
     assert cp("❯ \n⏵⏵ auto mode on\n") is None
+
+
+def test_context_pct_disambiguates_used_and_left():
+    # M1: a line carrying BOTH "used" and "left" must read the USED number (no
+    # inversion). M2: a leading token count must not derail the parse.
+    cp = _driver_module().context_pct
+    assert cp("Context: 45% used · 55% left until auto-compact") == 45
+    assert cp("context window 200000 tokens — 80% used") == 80
 
 
 def _run_with_ctx(harness, pct):

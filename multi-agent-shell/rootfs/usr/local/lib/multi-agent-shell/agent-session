@@ -280,21 +280,21 @@ _CONTEXT_PCT_RE = re.compile(r"(\d{1,3})\s*%")
 def context_pct(pane):
     # Best-effort parse of claude's context-usage indicator → percent USED (0-100)
     # or None when absent/unparseable. The EXACT live string/location is a
-    # live-verify item (P2.T3.S2); this targets a "context … NN%" line and inverts
-    # an explicit "left"/"remaining" wording. None → defer to claude auto-compact.
+    # live-verify item (P2.T3.S2). For each "context" line, take the FIRST %-number
+    # that is <= 100 (finditer skips token counts like 200000%-of-nothing and any
+    # >100 garbage — M2); read it as % USED, unless the line says "left"/"remaining"
+    # WITHOUT "used" (then invert — M1). None → defer to claude auto-compact.
     for line in pane.splitlines():
         low = line.lower()
         if "context" not in low:
             continue
-        m = _CONTEXT_PCT_RE.search(line)
-        if not m:
-            continue
-        pct = int(m.group(1))
-        if pct > 100:
-            continue
-        if "left" in low or "remaining" in low:
-            pct = 100 - pct
-        return pct
+        for m in _CONTEXT_PCT_RE.finditer(line):
+            pct = int(m.group(1))
+            if pct > 100:
+                continue
+            if "used" not in low and ("left" in low or "remaining" in low):
+                return 100 - pct
+            return pct
     return None
 
 
@@ -304,6 +304,21 @@ def response(session_id, agent, status, turn, payload):
 
 
 def send(req):
+    # Serialize WHOLE turns per session_id across THREADS and PROCESSES (C1): the
+    # served endpoint is a ThreadingHTTPServer and the CLI `send` is a separate
+    # process, so without this a concurrent same-session call would run
+    # ensure_session's liveness probe against a MID-TURN REPL (no ❯ while it streams)
+    # and kill the in-flight session. flock (not threading.Lock) covers BOTH
+    # consumers; a different session_id locks a different file → no contention.
+    session_id = req["session_id"]
+    os.makedirs(TURN_DIR, exist_ok=True)
+    lockpath = os.path.join(TURN_DIR, session_id + ".send.lock")
+    with open(lockpath, "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        return _send_locked(req)
+
+
+def _send_locked(req):
     session_id = req["session_id"]
     agent = req.get("agent", "claude")
     message = req["message"]
@@ -312,15 +327,16 @@ def send(req):
     ensure_session(session_id, agent)
 
     # Idle reset (Fix E): a persisted conversation idle > IDLE_RESET_S is /clear'd
-    # first (fresh conversation, SAME --session-id) so a stale/huge context does
-    # not bleed into the new ask. A brand-new session (last_activity is None) is
-    # left alone — nothing to clear.
+    # first (fresh conversation, SAME --session-id) so a stale/huge context does not
+    # bleed into the new ask. A brand-new session (last_activity None) is left alone.
+    # NB: if Fix C just recreated a dead session this may /clear an already-fresh
+    # conversation — a harmless no-op (I1).
     last = read_last_activity(session_id)
     if last is not None and (time.time() - last) > IDLE_RESET_S:
         submit(session_id, "/clear")
-        time.sleep(SETTLE_S)
-    # Mark activity for this turn regardless of outcome (bounds the next idle gap).
-    touch_last_activity(session_id)
+        # Re-gate: confirm the prompt returned before pasting the real message, so a
+        # slow /clear can't concatenate with the message in the input box (I3).
+        wait_ready(session_id, READY_PROBE_S)
 
     # Per-turn output file (unique nonce → no stale-reply ambiguity).
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -355,9 +371,15 @@ def send(req):
             except OSError:
                 pass
             turn = bump_turn(session_id)
-            # Proactive compaction (Fix E, best-effort): if the context indicator
-            # reads >= COMPACT_PCT used, /compact to bound growth. None/unparseable
-            # → defer to claude's own near-limit auto-compact (no crash).
+            # Touch on SUCCESS only (I2): a stuck/timing-out session is NOT marked
+            # active, so after IDLE_RESET_S it trips the idle /clear recovery above —
+            # "last conversation" = the last real exchange, per the operator's intent.
+            touch_last_activity(session_id)
+            # Proactive compaction (Fix E, best-effort): if the context indicator reads
+            # >= COMPACT_PCT used, /compact to bound growth; None/unparseable → defer to
+            # claude's near-limit auto-compact. Safe: payload already read+removed and
+            # turn bumped, so /compact can't corrupt THIS turn; the per-session flock
+            # serializes the NEXT turn so its ensure_session won't probe mid-compaction (N1).
             pct = context_pct(_pane(session_id))
             if pct is not None and pct >= COMPACT_PCT:
                 submit(session_id, "/compact")
