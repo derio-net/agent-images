@@ -41,6 +41,10 @@ SETTLE_S = float(_env("AGENT_SESSION_SETTLE_S", "STOA_SETTLE_S", "0.5"))
 # Max wait for a freshly-created session's REPL to start accepting input before
 # the first submit (cold-start gate). On timeout we proceed best-effort.
 READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOUT_S", "30"))
+# Short bound for the liveness probe of an ALREADY-EXISTING session (Fix C). A
+# warm REPL answers on the first capture; a dead bash shell (continuum-restored)
+# or crashed claude never shows ❯, so the probe gives up fast and recreates.
+READY_PROBE_S = float(_env("AGENT_SESSION_READY_PROBE_S", "STOA_READY_PROBE_S", "3"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
 
 # The claude REPL input-prompt glyph: empirically the cold→ready signal (the pane
@@ -99,49 +103,76 @@ def pretrust():
 
 def ensure_session(session_id, agent=DEFAULT_AGENT):
     # Auto-create the session (interactive agent CLI, never -p) if absent, so
-    # the caller's session_id drives whatever it names. The launch command is
-    # the per-agent profile; its auto-approve flag lets the session write its
-    # per-turn output file without a prompt, short of a full permissions
-    # bypass. Unauthenticated until the operator logs the agent in. Concurrency-
-    # safe: a racing dup new-session errors harmlessly.
+    # the caller's session_id drives whatever it names. Concurrency-safe: a
+    # racing dup new-session errors harmlessly.
+    #
+    # Fix C — never trust a bare `has-session`. An EXISTING session also answers
+    # has-session when it is a continuum-restored bash shell or a crashed claude
+    # pane; pasting a DM into a dead bash shell yields `syntax error near (` and a
+    # full timeout. So probe an existing session for a LIVE REPL with a short
+    # bound; if it is not live, kill + recreate (generalizes the old
+    # creation-only readiness gate to cover dead/restored panes too).
     if tmux("has-session", "-t", session_id).returncode != 0:
-        pretrust()
-        tmux("new-session", "-d", "-s", session_id, launch_command(agent))
-        # Cold-start gate: a just-launched REPL is not yet accepting input (the
-        # pane is empty for several seconds). Block until it is, so the first
-        # submit's Enter is not dropped. Gated on creation only, to spare warm
-        # turns the poll. CAVEAT: under the threaded server a SECOND send for the
-        # same session_id may see has-session==0 (this branch just created it)
-        # and skip the gate while the pane is still booting — submit()'s verified
-        # retry is the backstop for that race (and for a genuinely-wedged session
-        # an unconditional gate would only add a dead 30s before the real timeout).
-        wait_ready(session_id)
+        _create_session(session_id, agent)
+        return
+    if not _is_live_repl(session_id):
+        tmux("kill-session", "-t", session_id)
+        _create_session(session_id, agent)
+
+
+def _create_session(session_id, agent):
+    pretrust()
+    tmux("new-session", "-d", "-s", session_id, launch_command(agent))
+    # Cold-start gate: a just-launched REPL is not yet accepting input (the pane
+    # is empty for several seconds). Block until it is, so the first submit's
+    # Enter is not dropped. CAVEAT: under the threaded server a SECOND send for
+    # the same session_id may race this create — submit()'s verified retry is the
+    # backstop (and for a genuinely-wedged session an unconditional gate would
+    # only add a dead 30s before the real timeout).
+    wait_ready(session_id)
 
 
 def _pane(session_id):
     return tmux("capture-pane", "-p", "-t", session_id).stdout or ""
 
 
-def wait_ready(session_id, timeout_s=READY_TIMEOUT_S):
-    # Poll the pane until the REPL accepts input: the ❯ prompt marker is the
-    # primary signal; a non-empty pane that is unchanged across two polls is the
-    # version-drift fallback (an agent/version that doesn't render ❯) — note it
-    # CAN return early if a version paints a static splash frame for ≥2 polls
-    # before accepting input; submit()'s verified retry backstops a too-early
-    # proceed. On timeout proceed best-effort — never hang the request.
+def _poll_ready(session_id, timeout_s, idle_fallback=True):
+    # Shared readiness poll. `idle_fallback` decides how a non-empty pane WITHOUT
+    # the ❯ marker is treated:
+    #   * True  (wait_ready / cold-create): a pane unchanged across two polls is
+    #     accepted as ready — version-drift tolerance for an agent that never
+    #     renders ❯. (CAN return early on a static splash frame; submit()'s
+    #     verified retry backstops a too-early proceed.)
+    #   * False (liveness probe of an EXISTING session): only ❯ counts as live. A
+    #     stable non-empty pane is exactly the dead-bash-shell case we must catch,
+    #     so the idle fallback is disabled — never mistake a dead shell for a REPL.
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
         pane = _pane(session_id)
         if READY_MARKER in pane:
             return True
-        if pane.strip() and pane == last:
+        if idle_fallback and pane.strip() and pane == last:
             return True
         last = pane
         time.sleep(POLL_S)
-    print(f"agent-session: session {session_id} not ready after {timeout_s}s; proceeding",
-          file=sys.stderr)
     return False
+
+
+def wait_ready(session_id, timeout_s=READY_TIMEOUT_S):
+    # Cold-create gate: proceed best-effort on timeout — never hang the request.
+    ok = _poll_ready(session_id, timeout_s, idle_fallback=True)
+    if not ok:
+        print(f"agent-session: session {session_id} not ready after {timeout_s}s; proceeding",
+              file=sys.stderr)
+    return ok
+
+
+def _is_live_repl(session_id):
+    # Quick, STRICT liveness probe for an existing session (Fix C): a live claude
+    # REPL renders ❯ within READY_PROBE_S; a dead bash shell / crashed pane never
+    # does. idle_fallback=False so a stable shell prompt is NOT counted as live.
+    return _poll_ready(session_id, READY_PROBE_S, idle_fallback=False)
 
 
 def _input_box_has_text(pane):

@@ -54,6 +54,17 @@ def p(n): return os.path.join(D, n)
 a = sys.argv[1:]
 cmd = a[0] if a else ""
 open(p("calls.log"), "a").write(cmd + " " + " ".join(a[1:]) + "\n")
+def _target(args):
+    if "-t" in args:
+        i = args.index("-t")
+        if i + 1 < len(args):
+            return args[i + 1]
+    return ""
+if cmd == "kill-session":
+    # Record the killed session id so capture-pane can flip a DEAD session to a
+    # ready REPL after the driver recreates it (Fix C liveness recreate path).
+    open(p("killed.log"), "a").write(_target(a) + "\n")
+    sys.exit(0)
 if cmd == "has-session":
     try: code = int((open(p("has.code")).read().strip() or "0"))
     except Exception: code = 0
@@ -88,7 +99,14 @@ if cmd == "capture-pane":
     cc = p("capture.count")
     n = int(open(cc).read() or "0") if os.path.exists(cc) else 0
     open(cc, "w").write(str(n + 1))
-    if n < int(os.environ.get("FAKE_COLD_CAPTURES", "0")):
+    tgt = _target(a)
+    killed = bool(tgt) and os.path.exists(p("killed.log")) and tgt in open(p("killed.log")).read().split()
+    if os.environ.get("FAKE_DEAD_SESSION") == "1" and not killed:
+        # An EXISTING but DEAD session (continuum-restored bash shell / crashed
+        # claude): a stable shell prompt, NO ❯, until the driver KILLS + recreates
+        # it — after the kill marker the recreated session renders the ready ❯.
+        sys.stdout.write("agent@pod:~$ \n")
+    elif n < int(os.environ.get("FAKE_COLD_CAPTURES", "0")):
         sys.stdout.write("")            # cold boot: REPL not ready → empty pane
     else:
         box = open(p("box.txt")).read() if os.path.exists(p("box.txt")) else ""
@@ -307,6 +325,60 @@ def test_pretrust_seeds_auto_mode_flag(harness):
     harness.run(SEND_REQ, session_exists=False)
     proj = json.loads((harness.home / ".claude.json").read_text()).get("projects", {})
     assert proj.get(str(harness.home), {}).get("hasSeenAutoModeEntryWarning") is True
+
+
+# --- Fix C: driver liveness check (never trust a dead existing session) -------
+
+def test_dead_existing_session_is_recreated(tmp_path):
+    # has-session reports the session EXISTS, but its pane is a dead bash shell
+    # (continuum-restored / crashed claude — no ❯). The driver must detect this,
+    # kill the dead session, recreate it, and submit to the fresh REPL.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_DEAD_SESSION"] = "1"
+    h.env["AGENT_SESSION_READY_PROBE_S"] = "0.3"   # short bound so the probe gives up fast
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # session EXISTS (but dead)
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok" and out["payload"] == PAYLOAD
+    calls = (h.fdir / "calls.log").read_text().splitlines()
+    sid = SEND_REQ["session_id"]
+    kill_idx = next((i for i, l in enumerate(calls)
+                     if l.startswith("kill-session") and sid in l), None)
+    new_idx = next((i for i, l in enumerate(calls)
+                    if l.startswith("new-session") and sid in l), None)
+    assert kill_idx is not None, f"dead session must be killed; calls={calls}"
+    assert new_idx is not None and new_idx > kill_idx, \
+        f"must recreate AFTER killing the dead session; calls={calls}"
+
+
+def test_live_existing_session_is_reused(tmp_path):
+    # A live ❯ REPL that already exists must be reused untouched — no kill, no
+    # recreate (warm path, no added latency beyond a single readiness capture).
+    h = _make_harness(tmp_path)
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # exists + (default) ready ❯ pane
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    calls = (h.fdir / "calls.log").read_text()
+    assert "kill-session" not in calls, f"a live session must not be killed; calls={calls!r}"
+
+
+def test_absent_session_still_creates(tmp_path):
+    # Regression: a genuinely-absent session still takes the create + wait_ready
+    # path (Fix C must not break the original cold-create flow).
+    h = _make_harness(tmp_path)
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("1")          # session ABSENT
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert SEND_REQ["session_id"] in (h.fdir / "new.log").read_text()
+    assert "kill-session" not in (h.fdir / "calls.log").read_text()
 
 
 def test_s6_service_run_gated_on_serve_flag():
