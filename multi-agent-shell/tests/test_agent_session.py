@@ -445,8 +445,8 @@ def test_session_uuid_is_deterministic():
 
 
 def test_launch_uses_session_id_uuid(harness):
-    # claude launches with --session-id <uuid5(session_id)> so the conversation
-    # persists/resumes on the PVC across pod restarts.
+    # A BRAND-NEW session (no transcript on disk) launches with --session-id
+    # <uuid5(session_id)> to create it; never --resume (that would picker-hang).
     mod = _driver_module()
     harness.run(SEND_REQ, session_exists=False)
     newlog = (harness.fdir / "new.log").read_text()
@@ -454,6 +454,21 @@ def test_launch_uses_session_id_uuid(harness):
     assert f"--session-id {expected}" in newlog, \
         f"launch must pin the deterministic session uuid, got: {newlog!r}"
     assert "--permission-mode auto" in newlog
+    assert "--resume" not in newlog, "a brand-new session must create with --session-id"
+
+
+def test_existing_transcript_resumes_oom_safe(harness):
+    # Fix E (OOM-safe): when the session transcript already exists (any prior boot),
+    # claude launches with --resume — which recovers the session after a graceful
+    # exit AND a hard kill/OOM, where --session-id would error "already in use".
+    u = _driver_module().session_uuid(SEND_REQ["session_id"])
+    proj = harness.home / ".claude" / "projects" / "-home-agent"
+    proj.mkdir(parents=True)
+    (proj / (u + ".jsonl")).write_text('{"type":"summary"}\n')   # a prior boot's transcript
+    harness.run(SEND_REQ, session_exists=False)
+    newlog = (harness.fdir / "new.log").read_text()
+    assert f"--resume {u}" in newlog, f"an existing transcript must launch with --resume; got {newlog!r}"
+    assert "--session-id" not in newlog, "must NOT --session-id an existing session (it may be 'in use')"
 
 
 def test_idle_over_12h_clears_first(harness):

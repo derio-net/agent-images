@@ -13,6 +13,7 @@ aliases (one migration cycle) when the new var is unset. Stdlib-only so it runs
 on the image's python3 with no extra deps.
 """
 import fcntl
+import glob
 import json
 import os
 import re
@@ -89,13 +90,27 @@ def session_uuid(session_id):
     return str(uuid.uuid5(SESSION_UUID_NAMESPACE, session_id))
 
 
+def _session_jsonl_exists(session_uuid_str):
+    # The session transcript persists on the PVC at
+    # ~/.claude/projects/<cwd-encoded>/<uuid>.jsonl. claude keys the project dir on
+    # the launch cwd (which we don't control here), so glob across project dirs —
+    # the uuid is unique, so it resolves to at most one file.
+    return bool(glob.glob(os.path.join(HOME, ".claude", "projects", "*", session_uuid_str + ".jsonl")))
+
+
 def launch_command(agent, session_id=None):
-    # claude gets a per-session --session-id (Fix E) so the conversation persists
-    # on the PVC and resumes across pod restarts. Other (best-effort) profiles are
-    # unchanged. Unknown agent → fall back to the verified static claude profile
-    # rather than launching nothing (which would leave send() to time out).
+    # claude (Fix E): an EXISTING transcript is reopened with --resume, which
+    # recovers the session after a graceful exit AND a hard kill/OOM — the latter
+    # leaves `--session-id` rejecting it as "Session ID already in use" (verified
+    # live; a graceful SIGTERM releases it, an OOM SIGKILL does NOT). A brand-NEW
+    # session uses --session-id to create it; --resume is only ever used when the
+    # jsonl exists, so the headless `--resume`-on-missing picker can never hang us.
+    # Other (best-effort) profiles unchanged; unknown agent → static claude profile.
     if agent == "claude" and session_id is not None:
-        return f"claude --session-id {session_uuid(session_id)} --permission-mode auto"
+        u = session_uuid(session_id)
+        if _session_jsonl_exists(u):
+            return f"claude --resume {u} --permission-mode auto"
+        return f"claude --session-id {u} --permission-mode auto"
     return LAUNCH_PROFILES.get(agent, LAUNCH_PROFILES[DEFAULT_AGENT])
 
 
