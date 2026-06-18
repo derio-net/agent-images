@@ -5,12 +5,20 @@ ARG AGENT_USER=agent
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 ARG AGENT_HOME=/home/agent
-# HOME tracks AGENT_HOME so supervised processes (sshd, supercronic, cont-init scripts)
-# do not silently fall back to the parent image's /home/claude.
+# HOME *and PATH* track AGENT_HOME so supervised processes (sshd, supercronic,
+# cont-init scripts, the agent-session driver) do not silently fall back to the
+# parent image's /home/claude. PATH matters specifically for the NON-login s6
+# agent-session driver: it launches `claude` via tmux with this baked PATH (not a
+# login shell, so the profile.d ~/.local/bin shim doesn't apply), and must resolve
+# the PV-installed NATIVE build at $AGENT_HOME/.local/bin — NOT the npm /usr/bin
+# shim, whose auto-updater can't write the root-owned npm prefix. (The base image
+# hardcodes /home/claude/.local/bin for its default user; re-set it here on
+# AGENT_HOME so every override — agent, or kali's claude — is correct.)
 # AGENT_GID is propagated alongside AGENT_UID so child images can reference
 # both at build time without re-declaring the ARG.
 ENV AGENT_USER=${AGENT_USER} AGENT_UID=${AGENT_UID} AGENT_GID=${AGENT_GID} \
-    AGENT_HOME=${AGENT_HOME} HOME=${AGENT_HOME}
+    AGENT_HOME=${AGENT_HOME} HOME=${AGENT_HOME} \
+    PATH=${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 USER root
 
