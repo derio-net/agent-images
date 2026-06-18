@@ -1,0 +1,8 @@
+#!/command/with-contenv bash
+# 46-agent-instructions — fan a canonical $HOME/AGENTS.md out to the per-harness
+# project-instruction filenames (CLAUDE.md, .github/copilot-instructions.md, …) so
+# every harness the driver may launch (claude / codex / opencode / antigravity / pi
+# / copilot) loads the same agent instructions. AGENTS.md-native harnesses need no
+# symlink; only claude (CLAUDE.md) and Copilot get one. Idempotent + fail-open;
+# never clobbers a real mounted file. Extend via AGENT_INSTRUCTION_LINKS.
+exec /usr/local/lib/multi-agent-shell/link-agent-instructions.sh
