@@ -1,0 +1,11 @@
+#!/command/with-contenv bash
+# 45-native-harnesses — install/refresh the PV-resident NATIVE harness builds on
+# every boot (memory-safe; idempotent — skips when already current; fail-open —
+# never blocks boot). Runs BEFORE services.d, so the native binary exists at
+# $HOME/.local/bin before the agent-session driver's first `claude` launch, and
+# PATH (set on AGENT_HOME in agent-shell-base) resolves it ahead of the npm shim.
+#
+# Currently installs: claude (the one harness with an OOM-prone native installer).
+# codex/opencode are npm (managed by 40-shell-inventory); agy is a build-time
+# binary. Extend the harness list here + add an installer in the helper.
+exec /usr/local/lib/multi-agent-shell/install-native-harness.sh claude
