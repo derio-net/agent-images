@@ -86,6 +86,7 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
       /var/lib/hermes-agent-shell \
  && chmod +x \
       /etc/cont-init.d/35-hermes-venv-seed \
+      /etc/cont-init.d/36-hermes-strict-state-perms \
       /etc/cont-init.d/40-shell-inventory \
       /etc/profile.d/40-hermes-agent-shell-paths.sh \
       /etc/profile.d/45-hermes-agent-shell-reconcile-motd.sh \
