@@ -1,0 +1,15 @@
+Port 2222
+HostKey __AGENT_HOME__/.ssh-host-keys/ssh_host_ed25519_key
+HostKey __AGENT_HOME__/.ssh-host-keys/ssh_host_rsa_key
+AuthorizedKeysFile __AGENT_HOME__/.ssh/authorized_keys
+PubkeyAuthentication yes
+PasswordAuthentication no
+UsePAM no
+StrictModes no
+PidFile __AGENT_HOME__/.ssh/sshd.pid
+# NB: `UsePrivilegeSeparation no` (used by the bookworm-based agent-shell-base)
+# is a REMOVED keyword in the OpenSSH shipped on Debian trixie — including it
+# would make sshd refuse to start. Modern OpenSSH runs privsep unconditionally;
+# a non-root sshd where the login user == the daemon user (both UID 1000 here)
+# does not need to drop privileges, so no directive is required. The CI smoke
+# test asserts sshd actually binds 2222 as UID 1000 with cap-drop=ALL.
