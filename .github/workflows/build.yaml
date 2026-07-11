@@ -179,6 +179,10 @@ jobs:
             context: hermes-agent-shell
             build_args: |
               BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+          - name: hermes-agent-shell-hindsight
+            context: hermes-agent-shell-hindsight
+            build_args: |
+              BASE_SHA=${{ needs.build-multi-agent-shell.outputs.sha }}
           - name: infra-shell
             context: infra-shell
             build_args: |
@@ -809,6 +813,84 @@ jobs:
           docker logs has-smoke
           docker rm -f has-smoke
 
+  smoke-test-hermes-agent-shell-hindsight:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HINDSIGHT_IMAGE: ghcr.io/derio-net/hermes-agent-shell-hindsight
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — PG + hindsight-api boot on an empty PVC, offline, under K8s securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Match the live sidecar securityContext (runAsUser:1000, cap-drop=ALL,
+          # no-new-privileges). The PVC is emulated by a host dir chowned to 1000
+          # (the fsGroup:1000 equivalent) mounted at /opt/hindsight, so the
+          # cont-init initdb can write PGDATA as the agent UID on an empty volume.
+          #
+          # --network none proves the embedding model loads OFFLINE from the baked
+          # HF cache (no huggingface.co fetch) and that PG/api need only loopback.
+          # Retain is unset here, so the run script defaults LLM_PROVIDER=none —
+          # no LLM client, no egress.
+          mkdir -p /tmp/hindsight-data
+          sudo chown 1000:1000 /tmp/hindsight-data
+          docker run -d --name hindsight-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --network none \
+            -v /tmp/hindsight-data:/opt/hindsight \
+            "${HINDSIGHT_IMAGE}:${IMAGE_SHA}"
+
+          # First boot does initdb + torch import + Alembic migrations + model
+          # load, so budget generously.
+          ok=0
+          for i in $(seq 1 180); do
+            code=$(docker exec hindsight-smoke \
+              curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8888/health 2>/dev/null || echo 000)
+            if [ "$code" = 200 ]; then ok=1; echo "✓ /health 200 after ${i}s"; break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then
+            echo "✗ hindsight-api /health never returned 200 within 180s"
+            docker logs hindsight-smoke
+            docker rm -f hindsight-smoke
+            exit 1
+          fi
+
+          # DB connected → Alembic migrations ran on the freshly-initdb'd empty
+          # PVC (proves pgvector + schema creation work end-to-end).
+          docker exec hindsight-smoke \
+            curl -s http://127.0.0.1:8888/health | grep -q '"database":"connected"' \
+            || { echo "✗ /health did not report database connected"; docker logs hindsight-smoke; docker rm -f hindsight-smoke; exit 1; }
+
+          # initdb initialized the empty volume (idempotent path).
+          docker exec hindsight-smoke test -s /opt/hindsight/pgdata/PG_VERSION \
+            || { echo "✗ initdb did not initialize /opt/hindsight/pgdata"; docker rm -f hindsight-smoke; exit 1; }
+
+          # Postgres accepts loopback connections on :5433.
+          docker exec hindsight-smoke \
+            /opt/micromamba/envs/hindsight-pg/bin/pg_isready -h 127.0.0.1 -p 5433 \
+            || { echo "✗ postgres not ready on 127.0.0.1:5433"; docker rm -f hindsight-smoke; exit 1; }
+
+          # pgvector extension present (hindsight-api's CREATE EXTENSION vector succeeded).
+          docker exec hindsight-smoke \
+            /opt/micromamba/envs/hindsight-pg/bin/psql -h 127.0.0.1 -p 5433 -U hindsight -d postgres \
+            -tAc "select extname from pg_extension where extname='vector'" | grep -q vector \
+            || { echo "✗ pgvector extension not installed"; docker logs hindsight-smoke; docker rm -f hindsight-smoke; exit 1; }
+
+          echo "✓ hindsight sidecar: PG 18 + pgvector up, api healthy, model loaded offline"
+          docker logs hindsight-smoke | tail -40
+          docker rm -f hindsight-smoke
+
   smoke-test-infra-shell:
     needs: build-children
     runs-on: ubuntu-latest
@@ -916,6 +998,7 @@ jobs:
       - smoke-test-ruflo-server
       - smoke-test-multi-agent-shell
       - smoke-test-hermes-agent-shell
+      - smoke-test-hermes-agent-shell-hindsight
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
     # Only notify frank when the MAIN image tag actually moved: a push to main
