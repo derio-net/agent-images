@@ -51,6 +51,17 @@ RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
 # libcurl3-gnutls 7.88.1-10+deb12u14). dpkg refuses the cross-package overwrite
 # and aborts dist-upgrade; --force-overwrite is the canonical resolution — it
 # only permits file overwrites, never dependency breakage.
+#
+# t64 config-order hardening (2026-07): even with --force-overwrite, dist-upgrade
+# can exit 100 on a dependency *configuration* ordering failure during the t64
+# transition. For example libtss2-sys1t64 / libtss2-esys-3.0.2-0t64 leave
+# `systemd` unpacked-but-unconfigured (Errors were encountered while processing:
+# systemd), and --force-overwrite only permits file overwrites, never config/dep
+# ordering. So the sequence below lets the first dist-upgrade fail, then
+# converges: `dpkg --configure -a` configures every unpacked package (ordering
+# now resolvable), `apt-get install -f` repairs broken deps, and a second
+# dist-upgrade re-runs and STILL fails the build if the tree is genuinely broken
+# rather than merely mis-ordered.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       lsb-release wget gnupg \
     && wget -qO - https://archive.kali.org/archive-key.asc \
@@ -58,6 +69,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://kali.download/kali kali-rolling main non-free contrib" \
       > /etc/apt/sources.list.d/kali.list \
     && apt-get update \
+    && { apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" || true; } \
+    && dpkg --configure -a --force-confdef --force-confold \
+    && apt-get install -f -y -o Dpkg::Options::="--force-overwrite" \
     && apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" \
     && rm -rf /var/lib/apt/lists/*
 
