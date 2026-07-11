@@ -54,10 +54,14 @@ RUN micromamba run -n "${HINDSIGHT_ENV}" pip install --no-cache-dir \
       "hindsight-api-slim[local-ml]==${HINDSIGHT_API_VERSION}" \
  && micromamba run -n "${HINDSIGHT_ENV}" hindsight-api --help >/dev/null
 
-# Pre-bake the embedding model into the IMAGE HF cache (HF_HOME) so the API
-# loads it offline, on CPU, with no network at runtime.
+# Pre-bake the embedding model into a fixed LOCAL dir (not the hub cache) so the
+# API loads it offline, on CPU, BY PATH — bypassing hub refs/revision resolution.
+# A revision-pinned snapshot_download populates snapshots/<hash>/ but writes no
+# refs/main, so loading by repo-id offline (SentenceTransformer's default `main`
+# revision) fails "not in cached files". local_dir + a path-valued model env
+# sidesteps that entirely while keeping the revision pin.
 RUN micromamba run -n "${HINDSIGHT_ENV}" python -c \
-      "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5', revision='${BGE_REVISION}')"
+      "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5', revision='${BGE_REVISION}', local_dir='/opt/hindsight-models/bge-small-en-v1.5')"
 
 # The baked stack must be readable/executable by UID 1000 (the runtime user);
 # the env is immutable at runtime, all mutable state is on the PVC.
@@ -99,12 +103,17 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight-cache \
 # Stable hindsight-api settings (pydantic-settings env). LLM/retain provider
 # vars are set by the frank manifest (claude-code), NOT baked here, so the
 # image is provider-agnostic.
+# The embedding model is a PATH (the baked local_dir), not a repo-id, so it
+# loads offline without hub resolution. HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE make
+# the sidecar strictly self-contained (no accidental huggingface.co fetch).
 ENV HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight@127.0.0.1:5433/postgres \
     HINDSIGHT_API_EMBEDDINGS_PROVIDER=local \
-    HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5 \
+    HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=/opt/hindsight-models/bge-small-en-v1.5 \
     HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=true \
     HINDSIGHT_API_RERANKER_PROVIDER=rrf \
-    HINDSIGHT_PGDATA=/opt/hindsight/pgdata
+    HINDSIGHT_PGDATA=/opt/hindsight/pgdata \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
 
 # Pre-create the PVC mount point (UID 1000 owned so initdb can write once
 # fsGroup makes the mounted volume group-writable) and make the s6 scripts
