@@ -13,15 +13,21 @@ export MAMBA_ROOT_PREFIX=/opt/micromamba
 PGDATA=${HINDSIGHT_PGDATA:-/opt/hindsight/pgdata}
 
 if [ -s "$PGDATA/PG_VERSION" ]; then
-  echo "[hindsight-initdb] $PGDATA already initialized (PG $(cat "$PGDATA/PG_VERSION")) — skipping"
-  exit 0
+  echo "[hindsight-initdb] $PGDATA already initialized (PG $(cat "$PGDATA/PG_VERSION")) — skipping initdb"
+else
+  mkdir -p "$PGDATA"
+  micromamba run -n hindsight-pg initdb \
+    -D "$PGDATA" \
+    -U hindsight \
+    --encoding=UTF8 --locale=C.UTF-8 \
+    --auth-local=trust --auth-host=trust
+  echo "[hindsight-initdb] initialized empty PGDATA at $PGDATA (role hindsight, db postgres, C.UTF-8)"
 fi
 
-mkdir -p "$PGDATA"
-micromamba run -n hindsight-pg initdb \
-  -D "$PGDATA" \
-  -U hindsight \
-  --encoding=UTF8 --locale=C.UTF-8 \
-  --auth-local=trust --auth-host=trust
-
-echo "[hindsight-initdb] initialized empty PGDATA at $PGDATA (role hindsight, db postgres, C.UTF-8)"
+# `fsGroup:1000` makes k8s recursively re-apply group perms to the PVC on EVERY
+# (re)mount (default policy Always), loosening PGDATA to g+rwx on restart —
+# PostgreSQL refuses any data dir wider than 0750 and CrashLoops. Force 0700
+# every boot (uid 1000 owns PGDATA, so this always succeeds, and it self-heals a
+# dir already loosened by a prior boot).
+chmod 700 "$PGDATA"
+echo "[hindsight-initdb] PGDATA perms normalized to 0700"
