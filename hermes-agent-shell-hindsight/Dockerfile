@@ -65,10 +65,36 @@ RUN chown -R ${AGENT_UID}:${AGENT_GID} /opt/micromamba /opt/hindsight-models
 
 COPY --chown=root:root rootfs/ /
 
-# Disable the inherited sshd longrun: the base bakes an sshd on :2222, which
-# would collide with the main pod's ssh-sidecar in the shared netns. The
-# gated-off agent-session-server longrun stays (harmless: execs sleep infinity).
-RUN rm -rf /etc/services.d/sshd
+# Strip ALL inherited agent-shell scaffolding — this is a headless Hindsight
+# backend, not an interactive shell. The base's cont-init.d/services.d assume a
+# writable MOUNTED $HOME (ssh host/authorized keys, a uv venv for cron
+# heartbeats, native-harness/claude installs, shell inventory, supercronic) and
+# hard-fail here: $HOME is an unmounted image dir (only /opt/hindsight is a PVC).
+# Keep ONLY our own 30-hindsight-initdb cont-init and the postgres/hindsight-api
+# longruns. (sshd would also collide with the main ssh-sidecar on :2222 in the
+# shared pod netns; the claude CLI *binary* stays on PATH for claude-code retain
+# — only the runtime init scripts go.)
+RUN rm -rf \
+      /etc/services.d/sshd \
+      /etc/services.d/supercronic \
+      /etc/services.d/agent-session-server \
+      /etc/cont-init.d/00-run-agent-init \
+      /etc/cont-init.d/10-ssh-host-keys \
+      /etc/cont-init.d/20-venv \
+      /etc/cont-init.d/30-authorized-keys \
+      /etc/cont-init.d/40-skel \
+      /etc/cont-init.d/40-shell-inventory \
+      /etc/cont-init.d/45-native-harnesses \
+      /etc/cont-init.d/46-agent-instructions
+
+# $HOME must be writable by UID 1000: our initdb + service run scripts call
+# `micromamba run`, which acquires a proc-lock under the XDG cache. $HOME is an
+# unmounted image dir here, so redirect the cache to a writable in-image path
+# (the CrashLoop was `micromamba run` failing to lock $HOME/.cache/mamba/proc)
+# and chown $HOME as belt-and-suspenders.
+ENV XDG_CACHE_HOME=/opt/hindsight-cache
+RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight-cache \
+ && chown -R ${AGENT_UID}:${AGENT_GID} /home/agent
 
 # Stable hindsight-api settings (pydantic-settings env). LLM/retain provider
 # vars are set by the frank manifest (claude-code), NOT baked here, so the
