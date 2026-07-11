@@ -1,0 +1,28 @@
+#!/command/with-contenv bash
+# hindsight-api (hindsight-api-slim 0.8.4) — the local_external backend Hermes
+# talks to over the pod loopback at 127.0.0.1:8888.
+#
+# Launch command + stable settings are the ground-truth recipe from the live
+# migrate pod (willikins#285). The HINDSIGHT_API_* settings are pydantic-
+# settings env (no config file). The DATABASE_URL / EMBEDDINGS / RERANKER
+# values are fixed for this image and baked as ENV in the Dockerfile; the
+# LLM_* retain vars come from the frank manifest (claude-code provider, or
+# `none` for recall-only) and are inherited here via with-contenv.
+#
+# Direct exec, no s6-setuidgid — same reason as the postgres run script.
+#
+# hindsight-api needs Postgres accepting connections before it binds, so we
+# gate on pg_isready. s6 supervises restarts; no while/sleep restart loop.
+export MAMBA_ROOT_PREFIX=/opt/micromamba
+export HF_HOME=${HF_HOME:-/opt/hindsight-models}
+: "${HINDSIGHT_API_LLM_PROVIDER:=none}"
+export HINDSIGHT_API_LLM_PROVIDER
+
+# Wait for the loopback Postgres to accept connections.
+until /opt/micromamba/envs/hindsight-pg/bin/pg_isready -h 127.0.0.1 -p 5433 -q; do
+  echo "[hindsight-api] waiting for postgres on 127.0.0.1:5433 ..."
+  sleep 1
+done
+
+exec micromamba run -n hindsight-pg \
+  hindsight-api --host 127.0.0.1 --port 8888 --log-level info

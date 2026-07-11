@@ -1,0 +1,95 @@
+ARG BASE_SHA=latest
+FROM ghcr.io/derio-net/multi-agent-shell:${BASE_SHA}
+
+# Inherit AGENT_USER=agent, AGENT_HOME=/home/agent, AGENT_UID=1000 (ENV from
+# agent-shell-base). AGENT_GID is an ARG upstream so it does not propagate —
+# re-declare it for the install -o/-g substitutions below.
+ARG AGENT_GID=1000
+
+USER root
+
+# ---------------------------------------------------------------------------
+# Hindsight backend stack — the permanent, image-baked form of the stack that
+# was hand-run on the migrate pod (derio-net/willikins#285). Ground-truth
+# recipe extracted verbatim from the live env: PostgreSQL 18.4 + pgvector 0.8.3
+# (conda-forge) and hindsight-api-slim[local-ml] 0.8.4 (public PyPI → torch-CPU
+# + sentence-transformers). Baked into the IMAGE at /opt/micromamba, so a pod
+# restart never loses the stack; only DATA lives on the PVC.
+#
+# We build FROM multi-agent-shell (not a bare micromamba base) deliberately: it
+# supplies s6-overlay, the UID-1000 `agent` user, and the baked `claude` CLI +
+# claude-agent-sdk that the `claude-code` Hindsight retain provider drives.
+# ---------------------------------------------------------------------------
+ENV MAMBA_ROOT_PREFIX=/opt/micromamba
+ENV HINDSIGHT_ENV=hindsight-pg
+ENV HF_HOME=/opt/hindsight-models
+ARG MICROMAMBA_VERSION=2.8.1
+ARG HINDSIGHT_API_VERSION=0.8.4
+ARG TORCH_VERSION=2.13.0
+# Pin the embedding-model revision so the baked snapshot is byte-reproducible.
+ARG BGE_REVISION=5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
+
+# micromamba binary (static; extracts bin/micromamba).
+RUN curl -Ls "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
+      | tar -xj -C /usr/local bin/micromamba \
+ && micromamba --version
+
+# conda-forge env: python + postgresql + pgvector extension. The env matches
+# the live `hindsight-pg` env; pgvector 0.8.3 provides vector.so/vector.control
+# so hindsight-api's Alembic `CREATE EXTENSION vector` succeeds on first boot.
+RUN micromamba create -y -n "${HINDSIGHT_ENV}" -c conda-forge \
+      "python=3.11" pip "postgresql=18.4" "pgvector=0.8.3" \
+ && micromamba clean -qya
+
+# torch first, pinned to the +cpu index so the ML stack stays CPU-only (no
+# multi-GB CUDA wheels) — matches the live torch==2.13.0+cpu.
+RUN micromamba run -n "${HINDSIGHT_ENV}" pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}"
+
+# hindsight-api-slim with the local-ml extra (sentence-transformers, onnxruntime,
+# etc.). torch is already satisfied above; the cpu extra-index keeps any
+# transitive torch resolution CPU-only.
+RUN micromamba run -n "${HINDSIGHT_ENV}" pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      "hindsight-api-slim[local-ml]==${HINDSIGHT_API_VERSION}" \
+ && micromamba run -n "${HINDSIGHT_ENV}" hindsight-api --help >/dev/null
+
+# Pre-bake the embedding model into the IMAGE HF cache (HF_HOME) so the API
+# loads it offline, on CPU, with no network at runtime.
+RUN micromamba run -n "${HINDSIGHT_ENV}" python -c \
+      "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5', revision='${BGE_REVISION}')"
+
+# The baked stack must be readable/executable by UID 1000 (the runtime user);
+# the env is immutable at runtime, all mutable state is on the PVC.
+RUN chown -R ${AGENT_UID}:${AGENT_GID} /opt/micromamba /opt/hindsight-models
+
+COPY --chown=root:root rootfs/ /
+
+# Disable the inherited sshd longrun: the base bakes an sshd on :2222, which
+# would collide with the main pod's ssh-sidecar in the shared netns. The
+# gated-off agent-session-server longrun stays (harmless: execs sleep infinity).
+RUN rm -rf /etc/services.d/sshd
+
+# Stable hindsight-api settings (pydantic-settings env). LLM/retain provider
+# vars are set by the frank manifest (claude-code), NOT baked here, so the
+# image is provider-agnostic.
+ENV HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight@127.0.0.1:5433/postgres \
+    HINDSIGHT_API_EMBEDDINGS_PROVIDER=local \
+    HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=BAAI/bge-small-en-v1.5 \
+    HINDSIGHT_API_EMBEDDINGS_LOCAL_FORCE_CPU=true \
+    HINDSIGHT_API_RERANKER_PROVIDER=rrf \
+    HINDSIGHT_PGDATA=/opt/hindsight/pgdata
+
+# Pre-create the PVC mount point (UID 1000 owned so initdb can write once
+# fsGroup makes the mounted volume group-writable) and make the s6 scripts
+# executable — under K8s the agent UID cannot chmod root-owned files at runtime.
+RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight \
+ && chmod +x \
+      /etc/cont-init.d/30-hindsight-initdb \
+      /etc/services.d/postgres/run \
+      /etc/services.d/hindsight-api/run
+
+USER ${AGENT_USER}
+WORKDIR ${AGENT_HOME}
+EXPOSE 8888
+# ENTRYPOINT inherited from agent-shell-base: /init (s6-overlay)

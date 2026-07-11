@@ -1,0 +1,27 @@
+#!/command/with-contenv bash
+# Initialize an empty Hindsight PVC on first boot, before s6 starts the
+# postgres longrun. IDEMPOTENT: if PGDATA is already initialized (PG_VERSION
+# present) it no-ops — production memory arrives via `pg_restore` on top of a
+# fresh initdb during migration, and pod restarts must never re-init.
+#
+# Ground-truth recipe (willikins#285): superuser role `hindsight`, default db
+# `postgres`, UTF8 / C.UTF-8, trust auth on loopback (the live pg_hba). Runs as
+# UID 1000; the frank pod sets fsGroup:1000 so the mounted PVC is writable.
+set -eu
+
+export MAMBA_ROOT_PREFIX=/opt/micromamba
+PGDATA=${HINDSIGHT_PGDATA:-/opt/hindsight/pgdata}
+
+if [ -s "$PGDATA/PG_VERSION" ]; then
+  echo "[hindsight-initdb] $PGDATA already initialized (PG $(cat "$PGDATA/PG_VERSION")) — skipping"
+  exit 0
+fi
+
+mkdir -p "$PGDATA"
+micromamba run -n hindsight-pg initdb \
+  -D "$PGDATA" \
+  -U hindsight \
+  --encoding=UTF8 --locale=C.UTF-8 \
+  --auth-local=trust --auth-host=trust
+
+echo "[hindsight-initdb] initialized empty PGDATA at $PGDATA (role hindsight, db postgres, C.UTF-8)"

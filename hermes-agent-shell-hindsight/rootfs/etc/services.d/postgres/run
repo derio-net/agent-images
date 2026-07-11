@@ -1,0 +1,22 @@
+#!/command/with-contenv bash
+# PostgreSQL 18.4 for the Hindsight sidecar — loopback-only on :5433.
+#
+# Launch command is the ground-truth recipe extracted from the live migrate
+# pod (willikins#285): `postgres -D <PGDATA> -p 5433 -k /tmp -c
+# listen_addresses=127.0.0.1`. PG serves ONLY the pod's loopback (shared
+# netns); no container port is declared in the frank manifest.
+#
+# Direct exec, NO s6-setuidgid: under the live K8s securityContext
+# (runAsNonRoot, runAsUser:1000, cap-drop=ALL, no-new-privileges) s6-overlay
+# already runs as UID 1000 and s6-setuidgid's setgroups() needs CAP_SETGID,
+# which is dropped — mirrors the base image's sshd / agent-session-server
+# run scripts. PostgreSQL refuses to run as root but is happy as UID 1000
+# against a 1000-owned PGDATA (that's why the sidecar can be strict non-root
+# where the root-bound main container cannot).
+#
+# initdb of an empty PVC happens earlier in cont-init.d/30-hindsight-initdb,
+# so PGDATA is always initialized by the time s6 starts this longrun.
+export MAMBA_ROOT_PREFIX=/opt/micromamba
+PGDATA=${HINDSIGHT_PGDATA:-/opt/hindsight/pgdata}
+exec micromamba run -n hindsight-pg \
+  postgres -D "$PGDATA" -p 5433 -k /tmp -c listen_addresses=127.0.0.1
