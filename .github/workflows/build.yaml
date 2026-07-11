@@ -179,6 +179,16 @@ jobs:
             context: hermes-agent-shell
             build_args: |
               BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
+          # Thin SSH/Mosh sidecar for the two-container hermes-agent-shell pod
+          # (willikins#285). Unlike its single-container sibling above, this image
+          # builds FROM the official docker.io/nousresearch/hermes-agent tag
+          # (HERMES_TAG arg, defaulted in the Dockerfile) — NOT the agent-shell-base
+          # chain — so it carries no BASE_SHA, same as ruflo-server. It still runs
+          # in build-children (which needs the base chain) for matrix uniformity;
+          # the unused base deps just mean it waits a little, harmless.
+          - name: hermes-agent-shell-ssh
+            context: hermes-agent-shell-ssh
+            build_args: ""
           - name: hermes-agent-shell-hindsight
             context: hermes-agent-shell-hindsight
             build_args: |
@@ -813,6 +823,102 @@ jobs:
           docker logs has-smoke
           docker rm -f has-smoke
 
+  smoke-test-hermes-agent-shell-ssh:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HERMES_SSH_IMAGE: ghcr.io/derio-net/hermes-agent-shell-ssh
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — sshd sidecar binds 2222 under K8s-equivalent securityContext
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # This sidecar does NOT run s6-overlay (unlike the shell-base images) —
+          # it runs sshd in the foreground as PID 1 via a custom entrypoint
+          # (hermes-ssh-sidecar-entrypoint.sh). So the readiness signal is
+          # "sshd wrote its PidFile / bound 2222", not "s6-svstat sshd up".
+          #
+          # Match the live pod securityContext (runAsUser 1000, cap-drop=ALL,
+          # no-new-privileges): the non-root sshd must bind 2222 without ever
+          # chowning /run at runtime (it pre-chowns /run/sshd at build time). The
+          # bind mount stands in for the shared /opt/data PVC (fsGroup:1000 in the
+          # pod); mount at /opt/data — not /opt/data/home — so both first-boot
+          # host-key writes AND the `hermes` CLI (which reads HERMES_HOME=/opt/data)
+          # work as UID 1000. chown to 1000 mirrors fsGroup.
+          mkdir -p /tmp/hermes-ssh-optdata
+          sudo chown 1000:1000 /tmp/hermes-ssh-optdata
+
+          docker run -d --name hermes-ssh-smoke \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            -p 12222:2222 \
+            -v /tmp/hermes-ssh-optdata:/opt/data \
+            "${HERMES_SSH_IMAGE}:${IMAGE_SHA}"
+
+          # First boot generates host keys (incl. rsa-4096, a couple seconds) then
+          # execs sshd, which writes its PidFile onto the shared PVC. 30s budget
+          # mirrors the sibling shells.
+          ready=0
+          for i in $(seq 1 30); do
+            if docker exec hermes-ssh-smoke test -f /opt/data/home/.ssh/sshd.pid 2>/dev/null; then
+              echo "✓ sshd wrote its PidFile after ${i}s"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "✗ sshd never wrote its PidFile within 30s"
+            docker logs hermes-ssh-smoke
+            docker rm -f hermes-ssh-smoke
+            exit 1
+          fi
+
+          # Host keys must land on the shared PVC (persist across restarts, same
+          # mechanism agent-shell-base's 10-ssh-host-keys uses).
+          docker exec hermes-ssh-smoke test -f /opt/data/home/.ssh-host-keys/ssh_host_ed25519_key \
+            || { echo "✗ ed25519 host key not generated on the PVC"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
+
+          # The port must actually accept TCP and speak the SSH protocol — proves
+          # the non-root sshd bound 2222 under cap-drop=ALL (the sshd_config
+          # comment's claim), not merely that some process is up.
+          bound=0
+          for i in $(seq 1 15); do
+            if banner=$(timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/12222; head -c 20 <&3' 2>/dev/null); then
+              echo "banner: ${banner}"
+              if echo "$banner" | grep -q '^SSH-2.0'; then
+                echo "✓ sshd is speaking SSH on 2222"
+                bound=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+          if [ "$bound" -ne 1 ]; then
+            echo "✗ sshd never answered with an SSH banner on 2222"
+            docker logs hermes-ssh-smoke
+            docker rm -f hermes-ssh-smoke
+            exit 1
+          fi
+
+          # The whole point of building FROM the official Hermes tag: the `hermes`
+          # CLI invoked over SSH is byte-for-byte the gateway's runtime and shares
+          # /opt/data. Assert it runs cleanly as UID 1000 in the sidecar.
+          docker exec hermes-ssh-smoke hermes --version \
+            || { echo "✗ hermes CLI not runnable as UID 1000 in the sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
+
+          docker logs hermes-ssh-smoke
+          docker rm -f hermes-ssh-smoke
+
   smoke-test-hermes-agent-shell-hindsight:
     needs: build-children
     runs-on: ubuntu-latest
@@ -998,6 +1104,7 @@ jobs:
       - smoke-test-ruflo-server
       - smoke-test-multi-agent-shell
       - smoke-test-hermes-agent-shell
+      - smoke-test-hermes-agent-shell-ssh
       - smoke-test-hermes-agent-shell-hindsight
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
