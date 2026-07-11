@@ -52,26 +52,26 @@ RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
 # and aborts dist-upgrade; --force-overwrite is the canonical resolution — it
 # only permits file overwrites, never dependency breakage.
 #
-# t64 config-order hardening (2026-07): even with --force-overwrite, dist-upgrade
-# can exit 100 on a dependency *configuration* ordering failure during the t64
-# transition. For example libtss2-sys1t64 / libtss2-esys-3.0.2-0t64 leave
-# `systemd` unpacked-but-unconfigured (Errors were encountered while processing:
-# systemd), and --force-overwrite only permits file overwrites, never config/dep
-# ordering. So the sequence below lets the first dist-upgrade fail, then
-# converges: `dpkg --configure -a` configures every unpacked package (ordering
-# now resolvable), `apt-get install -f` repairs broken deps, and a second
-# dist-upgrade re-runs and STILL fails the build if the tree is genuinely broken
-# rather than merely mis-ordered.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# REAL cause of the 2026-07 dist-upgrade failure (misdiagnosed as config-ordering
+# in #138 — that convergence hardening did NOT fix it): the base lineage
+# (base/Dockerfile, agent-shell-base/Dockerfile) sets a PATH WITHOUT /usr/sbin or
+# /sbin. The t64 library renames make dpkg run the maintainer scripts of
+# tpm-udev / libtss2* / systemd, which invoke `ldconfig` and `start-stop-daemon`
+# (both in /usr/sbin). dpkg can't find them ("dpkg: error: 2 expected programs
+# not found in PATH", "Package tpm-udev is not configured yet"), so every
+# configure fails and dist-upgrade cascades to exit 100. No amount of
+# --force-overwrite or `dpkg --configure -a` fixes a missing PATH. Prepend the
+# sbin dirs for this RUN so the maintainer scripts resolve. (The proper root fix
+# is to add sbin to the base images' ENV PATH — larger blast radius since it
+# changes every descendant's runtime PATH, so it's a separate follow-up.)
+RUN export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH" \
+    && apt-get update && apt-get install -y --no-install-recommends \
       lsb-release wget gnupg \
     && wget -qO - https://archive.kali.org/archive-key.asc \
       | gpg --dearmor -o /usr/share/keyrings/kali-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://kali.download/kali kali-rolling main non-free contrib" \
       > /etc/apt/sources.list.d/kali.list \
     && apt-get update \
-    && { apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" || true; } \
-    && dpkg --configure -a --force-confdef --force-confold \
-    && apt-get install -f -y -o Dpkg::Options::="--force-overwrite" \
     && apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" \
     && rm -rf /var/lib/apt/lists/*
 
