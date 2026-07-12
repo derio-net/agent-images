@@ -64,6 +64,14 @@ RUN sed -i "s|/home/agent|${AGENT_HOME}|g" /opt/sshd_config \
 # sbin dirs for this RUN so the maintainer scripts resolve. (The proper root fix
 # is to add sbin to the base images' ENV PATH — larger blast radius since it
 # changes every descendant's runtime PATH, so it's a separate follow-up.)
+#
+# AND /run ownership (2026-07): agent-shell-base chowns /run to the agent uid
+# (1000) so s6-overlay can write its supervisor sockets there at runtime. But
+# systemd 261's tmpfiles refuses an "unsafe path transition" when creating
+# root-owned /run/systemd under a non-root /run, so `systemd` fails to configure
+# during dist-upgrade — and tpm-udev (depends on systemd) → libtss2* (depend on
+# tpm-udev) cascade to exit 100. Reset /run to root just for the upgrade so
+# systemd configures, then restore agent ownership (1000:1000) for the s6 runtime.
 RUN export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH" \
     && apt-get update && apt-get install -y --no-install-recommends \
       lsb-release wget gnupg \
@@ -72,7 +80,9 @@ RUN export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH" \
     && echo "deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] https://kali.download/kali kali-rolling main non-free contrib" \
       > /etc/apt/sources.list.d/kali.list \
     && apt-get update \
+    && chown root:root /run \
     && apt-get dist-upgrade -y -o Dpkg::Options::="--force-overwrite" \
+    && chown -R 1000:1000 /run \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Kali tooling + logrotate (openssh-server/tmux/mosh inherited from agent-shell-base) ──
