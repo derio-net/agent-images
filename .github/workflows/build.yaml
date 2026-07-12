@@ -148,6 +148,16 @@ jobs:
   build-children:
     needs: [build-base, build-shell-base, build-multi-agent-shell]
     runs-on: ubuntu-latest
+    # secure-agent-kali is the one child that periodically breaks on Kali-rolling
+    # transitions (t64, GCC churn) — a flake unrelated to every other image. Make
+    # ONLY its matrix leg soft (fail-fast:false above already keeps a kali failure
+    # from cancelling the sibling builds) so a broken kali build no longer fails
+    # build-children and starves the downstream smokes + the frank auto-bump. The
+    # kali SMOKE stays hard (a real regression still reds the run), and
+    # dispatch-frank no longer needs it (see its needs: below); frank's bump
+    # handler pins per-image by GHCR tag existence, so it skips any image not
+    # actually published at the SHA.
+    continue-on-error: ${{ matrix.image.name == 'secure-agent-kali' }}
     strategy:
       # One child's external flake (e.g. ruflo-server's build-time
       # router.huggingface.co fetch returning 429, #115) must not cancel the
@@ -1105,7 +1115,13 @@ jobs:
       - test-multi-agent-shell
       - build-children
       - smoke-test-vk-local
-      - smoke-test-secure-agent-kali
+      # NOT smoke-test-secure-agent-kali (deliberately dropped): kali is the
+      # known-flaky Kali-rolling leg (t64 / GCC churn). Gating the frank bump on
+      # it means one kali break starves EVERY image's delivery to frank. The kali
+      # build leg is soft (build-children.continue-on-error) and its smoke stays a
+      # hard signal, but the bump no longer waits on it. Safe because frank's
+      # agent-images-bump handler pins per-image by GHCR tag existence, so it
+      # skips kali at a SHA where kali did not publish (no ImagePullBackOff).
       - smoke-test-paperclip-shell
       - smoke-test-ruflo-shell
       - smoke-test-ruflo-server
