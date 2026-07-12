@@ -849,12 +849,18 @@ jobs:
           # Match the live pod securityContext (runAsUser 1000, cap-drop=ALL,
           # no-new-privileges): the non-root sshd must bind 2222 without ever
           # chowning /run at runtime (it pre-chowns /run/sshd at build time). The
-          # bind mount stands in for the shared /opt/data PVC (fsGroup:1000 in the
-          # pod); mount at /opt/data — not /opt/data/home — so both first-boot
-          # host-key writes AND the `hermes` CLI (which reads HERMES_HOME=/opt/data)
-          # work as UID 1000. chown to 1000 mirrors fsGroup.
-          mkdir -p /tmp/hermes-ssh-optdata
-          sudo chown 1000:1000 /tmp/hermes-ssh-optdata
+          # bind mounts stand in for the pod's PVCs (fsGroup:1000). The live pod
+          # mounts TWO volumes — the data PVC at /opt/data AND the tool-home PVC
+          # at /opt/data/home — so the smoke must too. The official base declares
+          # `VOLUME /opt/data` (HERMES_HOME=/opt/data), and a single 1000-owned
+          # bind at /opt/data alone leaves /opt/data/home NOT agent-writable, so
+          # the entrypoint's first-boot `mkdir ~/.ssh-host-keys` dies Permission
+          # denied (this smoke never ran until kali unblocked build-children, so
+          # the gap only surfaced now). Mounting /opt/data/home explicitly, 1000-
+          # owned like its PVC, is what makes the host-key + sshd.pid writes work
+          # as UID 1000.
+          mkdir -p /tmp/hermes-ssh-optdata /tmp/hermes-ssh-home
+          sudo chown 1000:1000 /tmp/hermes-ssh-optdata /tmp/hermes-ssh-home
 
           docker run -d --name hermes-ssh-smoke \
             --user 1000:1000 \
@@ -862,6 +868,7 @@ jobs:
             --security-opt=no-new-privileges \
             -p 12222:2222 \
             -v /tmp/hermes-ssh-optdata:/opt/data \
+            -v /tmp/hermes-ssh-home:/opt/data/home \
             "${HERMES_SSH_IMAGE}:${IMAGE_SHA}"
 
           # First boot generates host keys (incl. rsa-4096, a couple seconds) then
