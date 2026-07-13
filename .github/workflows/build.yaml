@@ -941,6 +941,13 @@ jobs:
           docker exec hermes-ssh-smoke hermes --version \
             || { echo "✗ hermes CLI not runnable as UID 1000 in the sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
 
+          # Operator-side runtime prerequisites: `gh` for GitHub auth / PR work,
+          # and `rsync` for hermes-brain sync + snapshot flows.
+          docker exec hermes-ssh-smoke sh -c 'command -v gh >/dev/null' \
+            || { echo "✗ gh not present in the Hermes SSH sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
+          docker exec hermes-ssh-smoke sh -c 'command -v rsync >/dev/null' \
+            || { echo "✗ rsync not present in the Hermes SSH sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
+
           docker logs hermes-ssh-smoke
           docker rm -f hermes-ssh-smoke
 

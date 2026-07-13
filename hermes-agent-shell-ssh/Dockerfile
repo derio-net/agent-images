@@ -26,13 +26,18 @@ ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 ARG AGENT_HOME=/opt/data/home
 
-# sshd + mosh + tmux only. C.UTF-8 (glibc built-in) covers mosh's UTF-8
-# requirement, so we skip the ~200MB locales-all the old base pulled in.
+# sshd + mosh + tmux for terminal access, plus the operator-side prerequisites
+# the Hermes shell workflows assume: `gh` for GitHub auth / PR work and `rsync`
+# for hermes-brain sync + snapshot scripts. C.UTF-8 (glibc built-in) covers
+# mosh's UTF-8 requirement, so we skip the ~200MB locales-all the old base
+# pulled in.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssh-server \
       mosh \
       tmux \
       passwd \
+      gh \
+      rsync \
     && rm -rf /var/lib/apt/lists/*
 
 # Create the login identity. The official image has no UID-1000 user; mirror
