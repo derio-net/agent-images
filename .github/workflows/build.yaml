@@ -775,6 +775,14 @@ jobs:
           # so a green `--version` also proves the relocatable copy works.
           docker exec has-smoke hermes --version
 
+          # Runtime prerequisites used by hermes-brain maintenance and general
+          # operator workflows must remain present in the shell image. In
+          # particular, rsync backs the hermes-brain sync/snapshot scripts and
+          # gh provides the documented git-credential helper path used across
+          # derio-net repos.
+          docker exec has-smoke sh -c 'command -v rsync >/dev/null'
+          docker exec has-smoke sh -c 'command -v gh >/dev/null'
+
           # frank#496 — PVC-resident venv: the live venv must be on the PVC,
           # uid-1000-owned and WRITABLE (the whole point: the in-pod operator
           # can patch Hermes in place). The image seed at /opt is just a

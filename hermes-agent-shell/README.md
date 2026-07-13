@@ -150,7 +150,9 @@ the standard's smoke contract: sshd up under K8s-equivalent
 securityContext, `hermes --version` runs cleanly as UID 1000, and
 `hermes-agent-shell-reconcile` produces a clean exit and a non-empty MOTD
 against an empty inventory. The BYOK MOTD drop-in is asserted present and
-runnable.
+runnable. The smoke path also asserts `rsync` and `gh` remain on PATH,
+because hermes-brain maintenance and the documented git credential-helper
+flow depend on them.
 
 Local bats coverage:
 
