@@ -14,6 +14,7 @@ on the image's python3 with no extra deps.
 """
 import fcntl
 import glob
+import hmac
 import json
 import os
 import re
@@ -27,11 +28,30 @@ import uuid
 def _env(new, old, default):
     # Read the genericized AGENT_SESSION_* var, falling back to the deprecated
     # STOA_* alias if unset, then the default. Keeps a consumer mid-migration
-    # working for one cycle without setting the new name.
+    # working for one cycle without setting the new name. `old=None` skips the
+    # alias lookup (for vars that never had a STOA_* name).
     val = os.environ.get(new)
-    if val is None:
+    if val is None and old is not None:
         val = os.environ.get(old)
     return val if val is not None else default
+
+
+def _runner_token():
+    # The per-runner service credential that authenticates cncd -> node on the
+    # /v1 contract. Read from AGENT_SESSION_RUNNER_TOKEN, else the file named by
+    # AGENT_SESSION_RUNNER_TOKEN_FILE (a mounted secret). Empty/unset => no auth
+    # (dev/loopback only — serve() refuses a non-loopback bind without it).
+    tok = os.environ.get("AGENT_SESSION_RUNNER_TOKEN")
+    if tok:
+        return tok.strip()
+    path = os.environ.get("AGENT_SESSION_RUNNER_TOKEN_FILE")
+    if path:
+        try:
+            with open(path) as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+    return ""
 
 
 HOME = os.path.expanduser("~")
@@ -49,6 +69,26 @@ READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOU
 # or crashed claude never shows ❯, so the probe gives up fast and recreates.
 READY_PROBE_S = float(_env("AGENT_SESSION_READY_PROBE_S", "STOA_READY_PROBE_S", "3"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
+# Bind address (CNC /v1 upgrade). Default STAYS 127.0.0.1 — existing consumers
+# (n8n, alert-agent) rely on the loopback-only posture, so the shared image's
+# default is never loosened. A consumer that needs cross-container/pod reach
+# (cncd on the runner network) OPTS IN by setting AGENT_SESSION_BIND explicitly,
+# and serve() REFUSES any non-loopback bind unless a runner token is also
+# configured (fail-closed — the endpoint can never be exposed unauthenticated).
+BIND = _env("AGENT_SESSION_BIND", None, "127.0.0.1")
+# Per-turn CNC run capability (spec b Scope 2 broker) written mode-0600 here; the
+# launch profile's credential helper reads it, and it is deleted at turn end. The
+# token is NEVER placed in the turn message (only the file path is).
+CRED_DIR = _env("AGENT_SESSION_CRED_DIR", None, os.path.join(HOME, ".agent-session", "cred"))
+# Idempotency store (spec b Scope 5 / AF-7): a wake-stable Idempotency-Key maps to
+# its completed response so a cncd retry after restart returns the first result
+# instead of firing a duplicate turn. Best-effort on-disk cache, TTL-swept.
+IDEM_DIR = _env("AGENT_SESSION_IDEM_DIR", None, os.path.join(HOME, ".agent-session", "idem"))
+IDEM_TTL_S = float(_env("AGENT_SESSION_IDEM_TTL_S", None, str(24 * 3600)))
+# session_id is used in tmux target names and filesystem paths — constrain it so a
+# caller can't traverse paths or inject tmux target syntax (colon/dot are tmux
+# session:window.pane separators; the node login shell uses the `node-` convention).
+_SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # Fix E — persistent resumable conversations. last_activity timestamps live on
 # the PVC beside the turn counter; an idle gap > IDLE_RESET_S triggers a /clear
 # (fresh conversation, SAME --session-id) before the next message. COMPACT_PCT is
@@ -79,6 +119,10 @@ READY_MARKER = "❯"
 LAUNCH_PROFILES = {
     "claude": "claude --permission-mode auto",
     "codex": "codex --full-auto",
+    "agy": "agy --yolo",
+    "opencode": "opencode",
+    # deprecated alias for one migration cycle (gemini-cli retired 2026-06-18; the
+    # CNC harness enum is claude-code|codex|opencode|agy — spec a §5).
     "antigravity": "agy --yolo",
 }
 DEFAULT_AGENT = "claude"
@@ -313,9 +357,85 @@ def context_pct(pane):
     return None
 
 
-def response(session_id, agent, status, turn, payload):
+def response(session_id, agent, status, turn, payload, started, error_code=None):
+    # `started` is the AF-7 retry discriminator: False ONLY when the turn was
+    # rejected before any harness process/session began (safe to retry); True once
+    # the message was submitted (including a subsequent timeout/disconnect — NOT
+    # retryable). `error_code` is a stable machine value (not_started, timeout,
+    # harness_failed, canceled, unavailable) or None on success.
     return {"session_id": session_id, "agent": agent, "status": status,
-            "turn": turn, "payload": payload}
+            "turn": turn, "payload": payload, "started": started,
+            "error_code": error_code}
+
+
+def _write_capability(session_id, nonce, capability):
+    # Broker the per-turn CNC run token to a mode-0600 file the launch profile's
+    # credential helper reads (never the turn message). Returns the path.
+    os.makedirs(CRED_DIR, exist_ok=True)
+    path = os.path.join(CRED_DIR, "{}.{}.cred".format(session_id, nonce))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(capability)
+    return path
+
+
+def _idem_path(key):
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", key)[:200]
+    return os.path.join(IDEM_DIR, safe + ".json")
+
+
+def _idem_get(key):
+    # Return the cached completed response for a wake-stable key, or None. Sweeps
+    # its own entry if past TTL so a reused key eventually re-runs.
+    path = _idem_path(key)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if time.time() - st.st_mtime > IDEM_TTL_S:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _idem_put(key, resp):
+    os.makedirs(IDEM_DIR, exist_ok=True)
+    path = _idem_path(key)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(resp, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def send_idempotent(req, idempotency_key):
+    # Dedup a wake-stable key: a completed result is returned as-is; a concurrent
+    # duplicate serializes on the key lock then sees the cached result. Without a
+    # key, plain send() (existing behavior).
+    if not idempotency_key:
+        return send(req)
+    os.makedirs(IDEM_DIR, exist_ok=True)
+    lockpath = _idem_path(idempotency_key) + ".lock"
+    with open(lockpath, "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        cached = _idem_get(idempotency_key)
+        if cached is not None:
+            return cached
+        resp = send(req)
+        # Cache only STARTED turns — an un-started rejection (auth/validation) is
+        # safe to retry, so it must not be pinned to the key.
+        if resp.get("started"):
+            _idem_put(idempotency_key, resp)
+        return resp
 
 
 def send(req):
@@ -325,7 +445,13 @@ def send(req):
     # ensure_session's liveness probe against a MID-TURN REPL (no ❯ while it streams)
     # and kill the in-flight session. flock (not threading.Lock) covers BOTH
     # consumers; a different session_id locks a different file → no contention.
-    session_id = req["session_id"]
+    session_id = req.get("session_id", "")
+    agent = req.get("agent", "claude")
+    # Validate session_id BEFORE it is used to build any tmux target or filesystem
+    # path (it is interpolated into the lock path just below). A malformed value is
+    # refused pre-start (started=False → retryable), never mangled or traversed.
+    if not _SAFE_SESSION_RE.match(session_id or ""):
+        return response(session_id, agent, "failed", 0, None, False, "not_started")
     os.makedirs(TURN_DIR, exist_ok=True)
     lockpath = os.path.join(TURN_DIR, session_id + ".send.lock")
     with open(lockpath, "w") as lk:
@@ -338,6 +464,10 @@ def _send_locked(req):
     agent = req.get("agent", "claude")
     message = req["message"]
     timeout_s = float(req.get("timeout_s", 300))
+    capability = req.get("capability")
+    # session_id is validated in send() before any path is built. The agent-enum
+    # check is cncd's adapter's job (spec b Scope 1); the node keeps
+    # launch_command's lenient fallback so existing image consumers are unaffected.
 
     ensure_session(session_id, agent)
 
@@ -362,50 +492,87 @@ def _send_locked(req):
     except OSError:
         pass
 
+    # Broker the run capability to a mode-0600 file and tell the harness the PATH
+    # (never the token itself — spec b Scope 2). Deleted in the finally below.
+    cred_path = None
+    cred_note = ""
+    if capability:
+        cred_path = _write_capability(session_id, nonce, capability)
+        cred_note = (
+            "\n[agent-session] Your CNC API token is in the file "
+            + cred_path
+            + " (mode 0600). Read it via your credential helper to call the CNC API "
+            + "as yourself; never echo the token itself into output or this transcript."
+        )
+
     driven = (
         message
+        + cred_note
         + "\n\n[agent-session] When done, write ONLY the JSON result to the file "
         + outfile
         + " — raw JSON, overwrite it, nothing else in that file."
     )
-    submit(session_id, driven)
+    # Past this point a harness turn has begun: started=True (not retryable).
+    try:
+        submit(session_id, driven)
 
-    # The file appearing + parsing IS the completion signal (robust to TUI
-    # rendering / soft-wrapping). Tolerate a partial write by retrying.
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if os.path.exists(outfile):
+        # The file appearing + parsing IS the completion signal (robust to TUI
+        # rendering / soft-wrapping). Tolerate a partial write by retrying.
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if os.path.exists(outfile):
+                try:
+                    with open(outfile) as fh:
+                        payload = json.load(fh)
+                except (OSError, json.JSONDecodeError):
+                    time.sleep(POLL_S)
+                    continue
+                try:
+                    os.remove(outfile)
+                except OSError:
+                    pass
+                turn = bump_turn(session_id)
+                # Touch on SUCCESS only (I2): a stuck/timing-out session is NOT marked
+                # active, so after IDLE_RESET_S it trips the idle /clear recovery above —
+                # "last conversation" = the last real exchange, per the operator's intent.
+                touch_last_activity(session_id)
+                # Proactive compaction (Fix E, best-effort): if the context indicator reads
+                # >= COMPACT_PCT used, /compact to bound growth; None/unparseable → defer to
+                # claude's near-limit auto-compact. Safe: payload already read+removed and
+                # turn bumped, so /compact can't corrupt THIS turn; the per-session flock
+                # serializes the NEXT turn so its ensure_session won't probe mid-compaction (N1).
+                pct = context_pct(_pane(session_id))
+                if pct is not None and pct >= COMPACT_PCT:
+                    submit(session_id, "/compact")
+                return response(session_id, agent, "ok", turn, payload, True)
+            time.sleep(POLL_S)
+
+        # Timed out with the turn already in flight — started=True → NOT retried.
+        return response(session_id, agent, "timeout", read_turn(session_id), None,
+                        True, "timeout")
+    finally:
+        if cred_path:
             try:
-                with open(outfile) as fh:
-                    payload = json.load(fh)
-            except (OSError, json.JSONDecodeError):
-                time.sleep(POLL_S)
-                continue
-            try:
-                os.remove(outfile)
+                os.remove(cred_path)
             except OSError:
                 pass
-            turn = bump_turn(session_id)
-            # Touch on SUCCESS only (I2): a stuck/timing-out session is NOT marked
-            # active, so after IDLE_RESET_S it trips the idle /clear recovery above —
-            # "last conversation" = the last real exchange, per the operator's intent.
-            touch_last_activity(session_id)
-            # Proactive compaction (Fix E, best-effort): if the context indicator reads
-            # >= COMPACT_PCT used, /compact to bound growth; None/unparseable → defer to
-            # claude's near-limit auto-compact. Safe: payload already read+removed and
-            # turn bumped, so /compact can't corrupt THIS turn; the per-session flock
-            # serializes the NEXT turn so its ensure_session won't probe mid-compaction (N1).
-            pct = context_pct(_pane(session_id))
-            if pct is not None and pct >= COMPACT_PCT:
-                submit(session_id, "/compact")
-            return response(session_id, agent, "ok", turn, payload)
-        time.sleep(POLL_S)
-
-    return response(session_id, agent, "timeout", read_turn(session_id), None)
 
 
 def serve():
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    runner_token = _runner_token()
+    is_loopback = BIND in ("127.0.0.1", "::1", "localhost")
+    # Fail-closed: never expose the code-execution endpoint on a routable address
+    # without a runner token. Loopback keeps the legacy netns-sharing posture.
+    if not is_loopback and not runner_token:
+        print("agent-session serve: refusing to bind non-loopback address "
+              "{!r} without AGENT_SESSION_RUNNER_TOKEN[_FILE]".format(BIND),
+              file=sys.stderr)
+        raise SystemExit(1)
+
+    # Accept both the versioned CNC path and the legacy path (one migration cycle).
+    send_paths = ("/v1/session/send", "/session/send")
 
     class Handler(BaseHTTPRequestHandler):
         def _json(self, code, obj):
@@ -416,37 +583,56 @@ def serve():
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self):
+            # Constant-time bearer check. No configured token => auth disabled
+            # (only reachable on loopback per the bind guard above).
+            if not runner_token:
+                return True
+            got = self.headers.get("Authorization", "")
+            if not got.startswith("Bearer "):
+                return False
+            return hmac.compare_digest(got[7:], runner_token)
+
         def do_GET(self):
+            # /healthz is unauthenticated but leaks no runner/harness metadata.
             if self.path == "/healthz":
                 self._json(200, {"status": "ok"})
             else:
                 self._json(404, {"status": "error", "error": "not found"})
 
         def do_POST(self):
-            if self.path != "/session/send":
+            if self.path not in send_paths:
                 self._json(404, {"status": "error", "error": "not found"})
+                return
+            if not self._authorized():
+                # 401 BEFORE any session is created (started=false semantics).
+                self._json(401, {"status": "error", "error": "unauthorized",
+                                 "started": False, "error_code": "not_started"})
                 return
             n = int(self.headers.get("Content-Length", "0") or 0)
             try:
                 req = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
-                self._json(400, {"status": "error", "error": "bad json"})
+                self._json(400, {"status": "error", "error": "bad json",
+                                 "started": False, "error_code": "not_started"})
                 return
-            self._json(200, send(req))
+            idem = self.headers.get("Idempotency-Key", "")
+            self._json(200, send_idempotent(req, idem))
 
         def log_message(self, *a):  # quiet
             pass
 
-    # Pod-local only: the consumer shares the pod netns — bind loopback, never
-    # the wildcard address. Threaded so a long send() never head-of-line-blocks
-    # /healthz or a concurrent request.
+    # Threaded so a long send() never head-of-line-blocks /healthz or a
+    # concurrent request. Bind is configurable (default loopback); a routable
+    # bind is gated on a runner token by the fail-closed guard above.
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+        server = ThreadingHTTPServer((BIND, PORT), Handler)
     except OSError as exc:
         # Surface bind failures (handler logs are silenced, not stderr). Under
         # the baked s6 longrun this stderr lands in the agent-session-server
         # service / container logs (`docker logs` / `kubectl logs`).
-        print(f"agent-session serve: bind 127.0.0.1:{PORT} failed: {exc}", file=sys.stderr)
+        print("agent-session serve: bind {}:{} failed: {}".format(BIND, PORT, exc),
+              file=sys.stderr)
         raise
     server.daemon_threads = True
     server.serve_forever()

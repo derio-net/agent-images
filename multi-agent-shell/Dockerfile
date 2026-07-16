@@ -79,6 +79,14 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 \
  && ln -sf /usr/local/lib/multi-agent-shell/agent-session \
            /usr/local/bin/agent-session
 
+# Own the whole home tree as the agent UID (CNC node fix). install-base-runtimes.sh
+# and other root-stage steps above create dirs under ${AGENT_HOME} (~/.cache,
+# ~/.config, ~/.local, ~/.npm) owned by root. When a CNC node mounts a NAMED or PV
+# volume at ${AGENT_HOME}, first-use copy-up PRESERVES that root ownership, and s6
+# cont-init (running as the agent UID) then fails to mkdir under them — the node
+# exits before it boots. Chowning here makes copy-up inherit agent ownership.
+RUN chown -R ${AGENT_UID}:${AGENT_GID} ${AGENT_HOME}
+
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}
 EXPOSE 2222

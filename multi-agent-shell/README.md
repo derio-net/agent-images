@@ -224,22 +224,49 @@ there is no postStart hook or restart loop to wire up. `agent-session send
 ### API
 
 ```
-POST /session/send   {session_id, agent, message, timeout_s?}
-                  -> {session_id, agent, status, turn, payload}
-GET  /healthz        -> 200 {"status":"ok"}
+POST /v1/session/send   Authorization: Bearer <runner-token>   (when a token is configured)
+                        Idempotency-Key: <wake-stable-key>      (optional; de-dups a retry)
+                        {session_id, agent, message, timeout_s?, capability?}
+                     -> {session_id, agent, status, turn, payload, started, error_code}
+POST /session/send      (legacy alias of /v1/session/send — kept one migration cycle)
+GET  /healthz           -> 200 {"status":"ok"}   (unauthenticated; leaks no metadata)
 ```
 
-Bound on `127.0.0.1:${AGENT_SESSION_PORT:-8765}` (pod-local; same netns as the
-consumer — never the wildcard address). `status` is `ok` or `timeout` (the
-per-turn file never appeared); on timeout `payload` is `null`, so a consumer
-can fall back to a deterministic render.
+`status` is `ok`, `timeout`, or `failed`. **`started`** is the retry
+discriminator: `false` *only* when the turn was rejected before any harness
+session began (bad auth, malformed `session_id`, bad JSON) — safe to retry;
+`true` once the message was submitted (a later timeout/disconnect is **not**
+retryable). **`error_code`** is a stable machine value
+(`not_started`/`timeout`/…) or `null` on success. A repeated **`Idempotency-Key`**
+returns the first turn's cached result instead of firing a duplicate turn.
+
+**Auth & bind (CNC /v1 upgrade).** The bind defaults to `127.0.0.1` — the legacy
+pod-local posture — so existing loopback consumers are unchanged. A consumer that
+needs cross-container/pod reach (e.g. cncd on a runner network) sets
+`AGENT_SESSION_BIND` explicitly **and** supplies a runner token
+(`AGENT_SESSION_RUNNER_TOKEN[_FILE]`); the server **refuses to bind a non-loopback
+address without a token** (fail-closed). When a token is set, every
+`/v1/session/send` (and legacy) POST needs a constant-time-checked
+`Authorization: Bearer`, else `401` before any session is created.
+
+**Run capability.** An optional `capability` in the body (a run-scoped CNC token)
+is written to a **mode-0600 file** in the turn cwd; the turn message tells the
+harness the file *path* (never the token) so its credential helper can call the
+CNC API as the agent. The file is deleted when the turn ends and the token is
+never echoed into the message or transcript.
 
 ### Environment
 
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `AGENT_SESSION_SERVE` | `0` | `1` starts the baked serve longrun |
-| `AGENT_SESSION_PORT` | `8765` | loopback port the HTTP server binds |
+| `AGENT_SESSION_PORT` | `8765` | port the HTTP server binds |
+| `AGENT_SESSION_BIND` | `127.0.0.1` | bind address; a non-loopback value requires a runner token |
+| `AGENT_SESSION_RUNNER_TOKEN` | — | bearer token the server checks (constant-time); empty ⇒ no auth (loopback only) |
+| `AGENT_SESSION_RUNNER_TOKEN_FILE` | — | read the runner token from a mounted secret file instead |
+| `AGENT_SESSION_CRED_DIR` | `~/.agent-session/cred` | where the per-turn 0600 capability file is brokered |
+| `AGENT_SESSION_IDEM_DIR` | `~/.agent-session/idem` | idempotency-key result cache |
+| `AGENT_SESSION_IDEM_TTL_S` | `86400` | idempotency cache TTL (s) |
 | `AGENT_SESSION_TURN_DIR` | `~/.agent-session` | per-session turn counters |
 | `AGENT_SESSION_OUT_DIR` | `~/.agent-session/out` | per-turn output files |
 | `AGENT_SESSION_POLL_S` | `2` | output-file poll interval (s) |
@@ -259,12 +286,17 @@ cycle** so a consumer mid-migration never breaks.
 |---------|----------------|--------|
 | `claude` (default) | `claude --permission-mode auto` | wired + verified |
 | `codex` | `codex --full-auto` | config-selectable — **auto-approve invocation not yet verified live (follow-up)** |
-| `antigravity` | `agy --yolo` | config-selectable — **auto-approve invocation not yet verified live (follow-up)** |
+| `agy` | `agy --yolo` | config-selectable — **not yet verified live (follow-up)** |
+| `opencode` | `opencode` | config-selectable — **not yet verified live (follow-up)** |
+| `antigravity` | `agy --yolo` | deprecated alias of `agy` (one migration cycle; gemini-cli retired) |
 
-An unrecognized `agent` falls back to the verified `claude` profile. The auto-
-approve flag lets the session write its per-turn output file without a prompt
-(short of a full permissions bypass). Correcting a `codex`/`antigravity` flag
-is a one-line edit to the `LAUNCH_PROFILES` table in the driver.
+These match the CNC harness enum `claude-code|codex|opencode|agy` (spec a §5),
+mapped to launch-profile names by the caller (`claude-code`→`claude`). An
+unrecognized `agent` falls back to the verified `claude` profile — the node is
+lenient; cncd's adapter is the component that rejects an unknown harness value.
+The auto-approve flag lets the session write its per-turn output file without a
+prompt (short of a full permissions bypass). Correcting a flag is a one-line
+edit to the `LAUNCH_PROFILES` table in the driver.
 
 ## Plan / spec
 
