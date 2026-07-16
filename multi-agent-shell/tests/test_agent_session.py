@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 import types
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -43,7 +44,7 @@ SEND_REQ = {
     "message": "Investigate the surge and write a structured finding.",
     "timeout_s": 300,
 }
-RECV_KEYS = {"session_id", "agent", "status", "turn", "payload"}
+RECV_KEYS = {"session_id", "agent", "status", "turn", "payload", "started", "error_code"}
 PAYLOAD = {"finding": "traffic surge", "severity": "info", "sources": []}
 
 # Fake tmux: load-buffer stages the message, paste-buffer holds it, send-keys
@@ -96,6 +97,17 @@ if cmd == "send-keys":
         else:
             open(p("box.txt"), "w").write("")   # submitted → input box clears
             msg = open(p("pending.txt")).read() if os.path.exists(p("pending.txt")) else ""
+            # Witness a brokered capability file (content + octal mode) BEFORE the
+            # driver deletes it, so the broker test can assert 0600 + exact content.
+            cm = re.search(r"token is in the file (\S+)", msg)
+            if cm:
+                try:
+                    cpath = cm.group(1)
+                    st = os.stat(cpath)
+                    open(p("cred_mode.txt"), "w").write(oct(st.st_mode & 0o777))
+                    open(p("cred_witness.txt"), "w").write(open(cpath).read())
+                except OSError:
+                    pass
             m = re.search(r"to the file (\S+)", msg)
             if m:
                 outfile = m.group(1)
@@ -591,3 +603,143 @@ def test_http_server_serves_session_send(harness):
         assert out["status"] == "ok" and out["payload"] == PAYLOAD
     finally:
         proc.terminate(); proc.wait(timeout=5)
+
+
+# ── CNC /v1 contract upgrade (spec b Scope 8) ────────────────────────────────
+
+def _start_server(harness, port, extra_env=None):
+    (harness.fdir / "has.code").write_text("0")
+    env = dict(harness.env); env["AGENT_SESSION_PORT"] = str(port)
+    if extra_env:
+        env.update(extra_env)
+    proc = subprocess.Popen([sys.executable, str(harness.drv), "serve"],
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc
+
+
+def _wait_healthz(base, proc=None):
+    for _ in range(50):
+        if proc is not None and proc.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(base + "/healthz", timeout=1) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.1)
+    return False
+
+
+def _post(base, path, req, headers=None):
+    h = {"Content-Type": "application/json"}
+    if headers:
+        h.update(headers)
+    r = urllib.request.Request(base + path, data=json.dumps(req).encode(),
+                               headers=h, method="POST")
+    try:
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+def test_started_and_error_code_on_success(harness):
+    out = json.loads(harness.run(SEND_REQ).stdout)
+    assert out["status"] == "ok"
+    assert out["started"] is True, "a completed turn must report started=True"
+    assert out["error_code"] is None
+
+
+def test_bad_session_id_rejected_before_start(harness):
+    bad = dict(SEND_REQ, session_id="../../etc/evil")
+    out = json.loads(harness.run(bad).stdout)
+    assert out["status"] == "failed"
+    assert out["started"] is False, "a malformed session_id must be rejected pre-start (retryable)"
+    assert out["error_code"] == "not_started"
+
+
+def test_v1_path_is_served(harness):
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        code, out = _post(base, "/v1/session/send", SEND_REQ)
+        assert code == 200 and out["status"] == "ok" and out["started"] is True
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+
+
+def test_v1_requires_bearer_when_token_configured(harness):
+    port = _free_port()
+    token = "runner-secret-abc123"
+    proc = _start_server(harness, port, {"AGENT_SESSION_RUNNER_TOKEN": token})
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        # No credential → 401, no session created.
+        code, out = _post(base, "/v1/session/send", SEND_REQ)
+        assert code == 401 and out["started"] is False
+        # Wrong token → 401.
+        code, _ = _post(base, "/v1/session/send", SEND_REQ,
+                        {"Authorization": "Bearer wrong"})
+        assert code == 401
+        # Correct token → 200.
+        code, out = _post(base, "/v1/session/send", SEND_REQ,
+                          {"Authorization": "Bearer " + token})
+        assert code == 200 and out["status"] == "ok"
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+
+
+def test_idempotency_key_dedups_the_turn(harness):
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        hdr = {"Idempotency-Key": "wake-42"}
+        code1, out1 = _post(base, "/v1/session/send", SEND_REQ, hdr)
+        code2, out2 = _post(base, "/v1/session/send", SEND_REQ, hdr)
+        assert code1 == 200 and code2 == 200
+        # The second call returns the FIRST result (same turn) instead of firing a
+        # duplicate turn — the AF-7 wake-stable-key guarantee.
+        assert out2 == out1, "a repeated idempotency key must return the cached result"
+        pastes = (harness.fdir / "pastes.log").read_text().splitlines()
+        assert len(pastes) == 1, f"the message must be submitted exactly once, got {pastes}"
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+
+
+def test_capability_brokered_to_0600_file_then_removed(harness):
+    cred_dir = harness.home / "creddir"
+    token = "CNC-RUN-TOKEN-do-not-leak"
+    env = dict(harness.env); env["AGENT_SESSION_CRED_DIR"] = str(cred_dir)
+    req = dict(SEND_REQ, capability=token)
+    (harness.fdir / "has.code").write_text("0")
+    out = json.loads(subprocess.run(
+        [sys.executable, str(harness.drv), "send", json.dumps(req)],
+        capture_output=True, text=True, env=env, timeout=30).stdout)
+    assert out["status"] == "ok"
+    # The token was written to a mode-0600 file (witnessed before deletion)…
+    assert (harness.fdir / "cred_witness.txt").read_text() == token
+    assert (harness.fdir / "cred_mode.txt").read_text() == "0o600"
+    # …the turn message referenced the PATH, never the token itself…
+    pasted = (harness.fdir / "buffer.txt").read_text()
+    assert token not in pasted, "the capability token must never appear in the turn message"
+    assert "token is in the file" in pasted
+    # …and the cred file is deleted when the turn ends.
+    assert not list(cred_dir.glob("*.cred")), "the brokered cred file must be removed after the turn"
+
+
+def test_serve_refuses_nonloopback_bind_without_token(harness):
+    port = _free_port()
+    proc = _start_server(harness, port, {"AGENT_SESSION_BIND": "0.0.0.0"})
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.terminate(); proc.wait(timeout=5)
+        raise AssertionError("serve must exit (fail-closed), not bind 0.0.0.0 without a token")
+    assert proc.returncode != 0, "non-loopback bind without a runner token must fail-closed"
+    err = proc.stderr.read().decode()
+    assert "refusing to bind" in err
