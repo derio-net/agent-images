@@ -26,10 +26,18 @@ lands on the PV. For the npm harnesses, updates flow via `<h> update` (CLI
 self-update) or the inventory `harnesses:` key on each reconcile; `agy` is the
 exception — it has no self-update and is refreshed by image rebuild (see note).
 
+The npm harnesses self-update by running `npm install -g` under the hood.
+`NPM_CONFIG_PREFIX` is pinned to `$HOME/.local` (login env,
+`rootfs/etc/profile.d/40-multi-agent-shell-paths.sh`) so those installs land on
+the **PV-resident, agent-owned** `~/.local` (PATH-preferred over the `/usr`
+bootstrap) instead of failing `EACCES` against the root-owned global prefix.
+The self-updated build then persists across restarts and image bumps — the
+`/usr` install is only the offline first-boot bootstrap.
+
 | Harness | Bootstrap | Auth command | Credential file (on PV) | Update command |
 |---|---|---|---|---|
 | `claude` | `npm i -g @anthropic-ai/claude-code` (inherited from `agent-base`) | `claude login` | `~/.claude/.credentials.json` | `claude update` |
-| `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login --device-auth` | `~/.config/codex/auth.json` | `codex update` (or inventory `harnesses: codex: <ver>`) |
+| `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login --device-auth` | `~/.codex/auth.json` (CODEX_HOME) | `codex update` → `~/.local` (or inventory `harnesses: codex: <ver>`) |
 | `agy` (antigravity) | `curl -fsSL …/install.sh \| bash -s -- --dir /usr/local/bin` (replaces gemini CLI) | `agy` (first run prompts the OAuth flow) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | **image rebuild** (no self-update; not inventory-managed) |
 | `opencode` | `npm i -g opencode-ai@${OPENCODE_VERSION}` | `opencode auth login` | `~/.local/share/opencode/auth.json` | inventory `harnesses: opencode: <ver>` |
 
