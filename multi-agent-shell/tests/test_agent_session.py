@@ -253,9 +253,12 @@ def test_deprecated_stoa_aliases_still_drive(tmp_path):
 @pytest.mark.parametrize("agent,expected_tokens", [
     # claude embeds a per-session --session-id uuid (Fix E); codex/antigravity
     # profiles are unchanged. Token-list assertion tolerates the injected uuid.
-    ("claude", ["claude", "--session-id", "--permission-mode auto"]),
-    ("codex", ["codex --full-auto"]),
-    ("antigravity", ["agy --yolo"]),
+    # `-c` guards the session-cwd fix: the session must start in HOME, not the
+    # inherited s6 service scandir, or the harness writes its completion file
+    # where the driver never polls and every turn times out (turn=0).
+    ("claude", ["-c", "claude", "--session-id", "--permission-mode auto"]),
+    ("codex", ["-c", "codex --full-auto"]),
+    ("antigravity", ["-c", "agy --yolo"]),
 ])
 def test_per_agent_launch_profile(harness, agent, expected_tokens):
     # ensure_session dispatches on the `agent` field via the launch-profile
