@@ -206,7 +206,15 @@ def ensure_session(session_id, agent=DEFAULT_AGENT):
 
 def _create_session(session_id, agent):
     pretrust()
-    tmux("new-session", "-d", "-s", session_id, launch_command(agent, session_id))
+    # Start the session in HOME (-c). Without it the session inherits the tmux
+    # server's cwd, which under s6 is the service scandir
+    # (/run/s6/legacy-services/agent-session-server) — NOT a real workspace. The
+    # harness then resolves the per-turn output-file path against that scandir and
+    # the completion JSON never lands at OUT_DIR (HOME/.agent-session/out), so the
+    # driver's poll never sees it and EVERY turn times out (turn=0, started=True).
+    # It also mismatches pretrust()'s trusted project (HOME). Verified: launching
+    # with -c HOME lands the completion file; without it, it never appears.
+    tmux("new-session", "-d", "-c", HOME, "-s", session_id, launch_command(agent, session_id))
     # Cold-start gate: a just-launched REPL is not yet accepting input (the pane
     # is empty for several seconds). Block until it is, so the first submit's
     # Enter is not dropped. CAVEAT: under the threaded server a SECOND send for
