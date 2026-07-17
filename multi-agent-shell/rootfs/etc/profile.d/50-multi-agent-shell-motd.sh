@@ -35,6 +35,8 @@ check claude   .claude/.credentials.json
 # codex: plain `codex login` starts a browser-based LOCAL login server
 # (localhost:1455) that is useless on a headless pod/container — the device flow
 # is the correct headless path (codex prints this hint itself on failure).
-check codex    .config/codex/auth.json   "codex login --device-auth"
+# Creds live at CODEX_HOME (default ~/.codex/auth.json), NOT ~/.config/codex —
+# the old path silently reported an authenticated codex as "not logged in".
+check codex    .codex/auth.json          "codex login --device-auth"
 check agy      .gemini/antigravity-cli/antigravity-oauth-token   agy
 check opencode .local/share/opencode/auth.json                   "opencode auth login"
