@@ -43,6 +43,16 @@ teardown() { rm -rf "$TMP_HOME"; }
   [[ "$output" == *"✗ codex"* ]]
 }
 
+@test "codex creds present at ~/.codex/auth.json: shows ✓ for codex" {
+  # Regression guard: codex writes CODEX_HOME (~/.codex), not ~/.config/codex.
+  # The old path made an authenticated codex read as "not logged in".
+  mkdir -p "$TMP_HOME/.codex"
+  echo '{}' > "$TMP_HOME/.codex/auth.json"
+  run bash "$MOTD"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ codex"* ]]
+}
+
 @test "agy creds present: shows ✓ for agy" {
   mkdir -p "$TMP_HOME/.gemini/antigravity-cli"
   echo 'token' > "$TMP_HOME/.gemini/antigravity-cli/antigravity-oauth-token"
