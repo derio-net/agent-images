@@ -27,6 +27,13 @@ teardown() { rm -rf "$TMP_HOME"; }
   [[ "$output" != *"run: agy login"* ]]
 }
 
+@test "codex hint is the headless device flow, not the browser login server" {
+  run bash "$MOTD"
+  [ "$status" -eq 0 ]
+  # plain 'codex login' spins a localhost login server useless on a headless pod.
+  [[ "$output" == *"run: codex login --device-auth"* ]]
+}
+
 @test "claude creds present: shows ✓ for claude only" {
   mkdir -p "$TMP_HOME/.claude"
   echo '{}' > "$TMP_HOME/.claude/credentials.json"
