@@ -29,7 +29,7 @@ exception — it has no self-update and is refreshed by image rebuild (see note)
 | Harness | Bootstrap | Auth command | Credential file (on PV) | Update command |
 |---|---|---|---|---|
 | `claude` | `npm i -g @anthropic-ai/claude-code` (inherited from `agent-base`) | `claude login` | `~/.claude/.credentials.json` | `claude update` |
-| `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login` | `~/.config/codex/auth.json` | `codex update` (or inventory `harnesses: codex: <ver>`) |
+| `codex` | `npm i -g @openai/codex@${CODEX_VERSION}` | `codex login --device-auth` | `~/.config/codex/auth.json` | `codex update` (or inventory `harnesses: codex: <ver>`) |
 | `agy` (antigravity) | `curl -fsSL …/install.sh \| bash -s -- --dir /usr/local/bin` (replaces gemini CLI) | `agy` (first run prompts the OAuth flow) | `~/.gemini/antigravity-cli/antigravity-oauth-token` | **image rebuild** (no self-update; not inventory-managed) |
 | `opencode` | `npm i -g opencode-ai@${OPENCODE_VERSION}` | `opencode auth login` | `~/.local/share/opencode/auth.json` | inventory `harnesses: opencode: <ver>` |
 

@@ -32,6 +32,9 @@ check() {
 # (confirmed 2026-06-15 by completing a real login in this image — a plain file,
 # not an OS-keyring entry, so this presence check works on a headless pod).
 check claude   .claude/.credentials.json
-check codex    .config/codex/auth.json
+# codex: plain `codex login` starts a browser-based LOCAL login server
+# (localhost:1455) that is useless on a headless pod/container — the device flow
+# is the correct headless path (codex prints this hint itself on failure).
+check codex    .config/codex/auth.json   "codex login --device-auth"
 check agy      .gemini/antigravity-cli/antigravity-oauth-token   agy
 check opencode .local/share/opencode/auth.json                   "opencode auth login"
