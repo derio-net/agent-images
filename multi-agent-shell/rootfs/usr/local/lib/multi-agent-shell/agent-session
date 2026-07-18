@@ -206,15 +206,24 @@ def ensure_session(session_id, agent=DEFAULT_AGENT):
 
 def _create_session(session_id, agent):
     pretrust()
-    # Start the session in HOME (-c). Without it the session inherits the tmux
-    # server's cwd, which under s6 is the service scandir
-    # (/run/s6/legacy-services/agent-session-server) — NOT a real workspace. The
-    # harness then resolves the per-turn output-file path against that scandir and
-    # the completion JSON never lands at OUT_DIR (HOME/.agent-session/out), so the
-    # driver's poll never sees it and EVERY turn times out (turn=0, started=True).
-    # It also mismatches pretrust()'s trusted project (HOME). Verified: launching
-    # with -c HOME lands the completion file; without it, it never appears.
-    tmux("new-session", "-d", "-c", HOME, "-s", session_id, launch_command(agent, session_id))
+    # Start the session in HOME, with a matching PWD in its environment.
+    #
+    #   -c HOME sets the pane's working directory, but the harness reads $PWD and
+    #   chdir()s to it — and $PWD is inherited from THIS process, the s6
+    #   agent-session-server longrun, whose PWD is the service scandir
+    #   (/run/s6/legacy-services/agent-session-server), NOT a workspace. So with
+    #   only -c the pane cwd is HOME yet claude's own cwd is the scandir; it then
+    #   resolves the per-turn output-file path there and the completion JSON never
+    #   lands at OUT_DIR (HOME/.agent-session/out). The driver's poll never sees
+    #   it and EVERY turn times out (turn=0, started=True). It also mismatches
+    #   pretrust()'s trusted project (HOME).
+    #
+    #   -e PWD=HOME overrides the inherited scandir PWD for the session, so the
+    #   harness chdir()s to HOME. Verified live (default socket, polluted PWD):
+    #   -c HOME + -e PWD=HOME → claude cwd = HOME and the completion file lands;
+    #   -c HOME alone → claude cwd = the scandir and the file never appears.
+    tmux("new-session", "-d", "-c", HOME, "-e", "PWD=" + HOME,
+         "-s", session_id, launch_command(agent, session_id))
     # Cold-start gate: a just-launched REPL is not yet accepting input (the pane
     # is empty for several seconds). Block until it is, so the first submit's
     # Enter is not dropped. CAVEAT: under the threaded server a SECOND send for
