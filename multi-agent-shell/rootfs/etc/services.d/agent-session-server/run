@@ -13,6 +13,16 @@
 # Gated on AGENT_SESSION_SERVE=1 — DEFAULT OFF. A plain interactive shell is
 # unaffected; consumers (n8n, the alert-agent) opt in by setting the env var.
 if [ "${AGENT_SESSION_SERVE:-0}" = 1 ]; then
+  # Run the server from HOME, not the s6 service scandir it inherits as cwd
+  # (/run/s6/legacy-services/agent-session-server). The FIRST session the driver
+  # opens starts the tmux SERVER as a child of this process, so the tmux server —
+  # and hence the harness pane it spawns — inherits THIS cwd. Left at the scandir
+  # the harness (claude) runs there and resolves its per-turn output-file path
+  # against it, so the completion JSON never lands at OUT_DIR (HOME/.agent-session
+  # /out) and every turn times out. (new-session's -c/-e set the pane cwd/env but
+  # not the tmux server's, so they can't fix the first pane — the server cwd is
+  # the root.) cd HOME here fixes it for every session the server ever opens.
+  cd "$HOME" || cd / || true
   # Pre-trust the workspace in ~/.claude.json so claude never blocks on the
   # folder-trust gate before the session is driven (matches the driver's
   # pretrust(); belt-and-suspenders here, before serve binds).
