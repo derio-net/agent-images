@@ -48,6 +48,15 @@ from pathlib import Path
 # anchor (optional) - the pin must track a piece of LIVE infrastructure rather
 #   than the newest upstream release. See the module docstring.
 
+# The cluster's Talos version, last measured 2026-07-23 (all 7 Frank nodes on
+# v1.12.6). This is the TARGET for TALOSCTL_VERSION - not upstream latest.
+#
+# When the cluster is upgraded, update this constant; `test_talosctl_pin_parity`
+# then tells you which Dockerfiles still need the bump. That is the whole
+# mechanism keeping the client inside Talos's supported +/-1 minor skew, which
+# is what silently broke: the shells sat at v1.9.5 against v1.12.6.
+LAST_MEASURED_CLUSTER_TALOS = "v1.12.6"
+
 PIN_SPECS: dict[str, dict] = {
     # --- rebuild-only, anchored to live infrastructure ---------------------
     "TALOSCTL_VERSION": {

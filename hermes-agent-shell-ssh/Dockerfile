@@ -12,7 +12,7 @@
 # official image. The sidecar shares its /opt/data layout, HERMES_HOME, PATH and
 # CLI — building FROM the same tag guarantees that; agent-shell-base would
 # reintroduce a divergent /home/agent world.
-ARG HERMES_TAG=v2026.7.7.2
+ARG HERMES_TAG=v2026.7.20
 FROM docker.io/nousresearch/hermes-agent:${HERMES_TAG}
 
 # The official image is Debian trixie and runs as root with HERMES_HOME=/opt/data
