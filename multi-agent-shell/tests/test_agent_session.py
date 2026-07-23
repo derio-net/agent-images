@@ -473,18 +473,61 @@ def test_launch_uses_session_id_uuid(harness):
     assert "--resume" not in newlog, "a brand-new session must create with --session-id"
 
 
+def _project_dir(home) -> str:
+    # claude encodes a project dir by replacing every '/' of the absolute launch cwd
+    # with '-' (verified live 2026-07-23: /home/agent -> -home-agent, and
+    # /run/s6/legacy-services/agent-session-server ->
+    # -run-s6-legacy-services-agent-session-server). Spelled out here independently of
+    # the driver's own helper, so these tests don't agree with the code by construction.
+    return str(home).replace("/", "-")
+
+
 def test_existing_transcript_resumes_oom_safe(harness):
     # Fix E (OOM-safe): when the session transcript already exists (any prior boot),
     # claude launches with --resume — which recovers the session after a graceful
     # exit AND a hard kill/OOM, where --session-id would error "already in use".
+    #
+    # The transcript MUST live in the project dir derived from the launch cwd (= HOME;
+    # _create_session passes -c HOME and -e PWD=HOME). This used to write a literal
+    # "-home-agent" while the harness HOME is a tmp_path — it passed only because the old
+    # predicate globbed projects/*, i.e. the test was quietly asserting that a transcript
+    # in an UNRELATED project dir counts. It does not: see the regression test below.
     u = _driver_module().session_uuid(SEND_REQ["session_id"])
-    proj = harness.home / ".claude" / "projects" / "-home-agent"
+    proj = harness.home / ".claude" / "projects" / _project_dir(harness.home)
     proj.mkdir(parents=True)
     (proj / (u + ".jsonl")).write_text('{"type":"summary"}\n')   # a prior boot's transcript
     harness.run(SEND_REQ, session_exists=False)
     newlog = (harness.fdir / "new.log").read_text()
     assert f"--resume {u}" in newlog, f"an existing transcript must launch with --resume; got {newlog!r}"
     assert "--session-id" not in newlog, "must NOT --session-id an existing session (it may be 'in use')"
+
+
+def test_transcript_in_stale_project_dir_does_not_resume(harness):
+    # Regression, frank incident 2026-07-23: claude resolves --resume WITHIN the single
+    # project dir derived from the launch cwd. A transcript stranded in some OTHER project
+    # dir is invisible to it, so choosing --resume on that basis is fatal:
+    #
+    #   $ claude --resume <uuid>
+    #   No conversation found with session ID: <uuid>
+    #   EXIT=1
+    #
+    # -> the pane dies on launch, tmux tears down its last session, wait_ready burns its
+    # full 30s, every turn times out, and the caller falls back FOREVER. Nothing self-heals.
+    #
+    # Real trigger: the '-e PWD=HOME' fix corrected where NEW transcripts are written and
+    # migrated none of the existing ones, so a long-lived session's transcript stayed under
+    # the s6-scandir project dir while the session began launching from HOME.
+    u = _driver_module().session_uuid(SEND_REQ["session_id"])
+    stale = (harness.home / ".claude" / "projects"
+             / "-run-s6-legacy-services-agent-session-server")
+    stale.mkdir(parents=True)
+    (stale / (u + ".jsonl")).write_text('{"type":"summary"}\n')
+    harness.run(SEND_REQ, session_exists=False)
+    newlog = (harness.fdir / "new.log").read_text()
+    assert "--resume" not in newlog, (
+        "a transcript in a project dir claude will never search must NOT trigger --resume "
+        f"(it exits 1 and wedges the session forever); got {newlog!r}")
+    assert f"--session-id {u}" in newlog, "must fall through to creating the session"
 
 
 def test_idle_over_12h_clears_first(harness):
