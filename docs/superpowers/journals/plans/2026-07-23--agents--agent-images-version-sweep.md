@@ -45,3 +45,8 @@ Investigated rather than rebased: upstream 0.19.0 REPLACED the hardcoded api_mod
 CONSEQUENCE FOR FRANK: config.yaml needs agent.intent_ack_continuation: true to keep pre-0.19.0 behaviour. config.yaml is PVC state (manual-op orch-hermes-config-provider), so this is a manual follow-up, added to frank's plan. Without it Hermes silently reverts to codex-only continuation on the chat_completions path.
 
 Verified locally: image builds, 'Hermes Agent v0.19.0 (2026.7.20)' (which also confirms the calver/semver mapping), marker 0.19.0+nopatches1, knob present in site-packages.
+
+<!-- fr:journal kind=finding scope=plan id=f8-stale-smoke-assertion created=2026-07-23T19:35:44 phase=6 state=fixed -->
+### f8-stale-smoke-assertion · finding [fixed] · The hermes smoke test asserted the retired patch - updated to check the config knob (phase 6)
+
+After the image built, smoke-test-hermes-agent-shell failed on '✗ auto-continue patch not present in live venv': it grepped the live venv for the patched string api_mode in ("codex_responses", "chat_completions"), which is exactly what I removed. The test was verifying the OLD mechanism. Rewrote it to assert the replacement - def intent_ack_continuation_mode in agent_runtime_helpers.py - at the same $LIVE PVC-venv path the surrounding (passing) assertions use. The behaviour itself is now config (agent.intent_ack_continuation: true), PVC state Frank owns, so the image smoke can only prove the knob exists, not that it is set. Knob confirmed present at the baked seed path locally.
