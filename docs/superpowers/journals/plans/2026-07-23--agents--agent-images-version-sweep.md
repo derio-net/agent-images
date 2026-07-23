@@ -34,3 +34,14 @@ test_major_only_pin_is_not_dropped asserted current == '22', so the Node 24 bump
 ### f6-node24-clean · finding [fixed] · Node 24 built clean; local build also live-confirmed the wave 1 + 2 bumps (phase 5)
 
 base built on Node 24.18.0 with npm 11.16.0; claude-code 2.1.218 installed against it fine. The same build confirmed supercronic v0.2.47 and yq v4.53.3 in a real image. agent-shell-base stacked on top installed s6-overlay 3.2.3.2 (/package/admin/s6-overlay-3.2.3.2) and its /init booted the FULL service tree - sshd and supercronic started, cont-init and cont-finish hooks ran, services stopped in order - which is what the CI smoke jobs assert. So wave 3b did not need dropping.
+
+<!-- fr:journal kind=finding scope=plan id=f7-hermes-patch-obsolete created=2026-07-23T19:21:51 phase=6 state=fixed -->
+### f7-hermes-patch-obsolete · finding [fixed] · Branch build caught a THIRD local patch the risk assessment missed - now obsolete (phase 6)
+
+The dispatched branch build failed on build-children(hermes-agent-shell): 'patch failed: agent/conversation_loop.py:4180 ... patch does not apply'. hermes-agent-shell carried a local hermes-autocontinue-chat-completions.patch that the spec's risk assessment never inventoried (it covered the seed marker and config schema, not the patch). The zero-fuzz git apply failed loudly exactly as its Dockerfile comment says it is designed to.
+
+Investigated rather than rebased: upstream 0.19.0 REPLACED the hardcoded api_mode=='codex_responses' gate with a real config knob, intent_ack_continuation (agent_runtime_helpers.intent_ack_continuation_mode), four modes mirroring tool_use_enforcement - auto->codex_only (old behaviour), true/always->all (what our patch forced), false->off, list->per-model. So the patch is OBSOLETE, not broken: dropped it rather than rebasing.
+
+CONSEQUENCE FOR FRANK: config.yaml needs agent.intent_ack_continuation: true to keep pre-0.19.0 behaviour. config.yaml is PVC state (manual-op orch-hermes-config-provider), so this is a manual follow-up, added to frank's plan. Without it Hermes silently reverts to codex-only continuation on the chat_completions path.
+
+Verified locally: image builds, 'Hermes Agent v0.19.0 (2026.7.20)' (which also confirms the calver/semver mapping), marker 0.19.0+nopatches1, knob present in site-packages.

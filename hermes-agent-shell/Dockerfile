@@ -49,28 +49,42 @@ ARG HERMES_VERSION=0.19.0
 # /usr/bin/python3 is externally-managed). uv is provided by agent-base; `uv
 # venv` omits pip (uv writes wheels directly), so no ensurepip bootstrap.
 #
-# Auto-continue patch (frank#496): Hermes v0.15.2 gates its "announce-only
-# turn" countermeasure (inject `[System: Continue now…]`) on
-# api_mode == "codex_responses", so it never fires on the OpenAI-compatible
-# LiteLLM path Frank uses (api_mode "chat_completions"). The patch widens that
-# gate; the detection heuristic is provider-agnostic. We apply with `git apply`
-# (git is in agent-base; `patch` is not) — it tolerates ZERO context fuzz and
-# FAILS the build if the surrounding lines drift, a hard signal to refresh the
-# patch on the next HERMES_VERSION bump.
+# NO LOCAL PATCHES as of HERMES_VERSION 0.19.0 — upstream shipped the feature.
+#
+# History (frank#496): Hermes 0.15.2 hardcoded its "announce-only turn"
+# countermeasure (inject `[System: Continue now…]`) to
+# `api_mode == "codex_responses"`, so it never fired on the OpenAI-compatible
+# LiteLLM path Frank uses (api_mode "chat_completions"). We carried a one-line
+# `git apply` patch widening that gate.
+#
+# In 0.19.0 upstream replaced the hardcoded gate with a real config knob,
+# `intent_ack_continuation` (agent/agent_runtime_helpers.py:
+# intent_ack_continuation_mode), with four modes mirroring
+# `tool_use_enforcement`:
+#     "auto" (default) -> codex_only  — the OLD hardcoded behaviour
+#     true/always/yes/on -> all       — fires on EVERY api_mode  <-- our patch
+#     false/never/no/off -> off
+#     [list]             -> all when a substring matches the active model
+# So the patch is obsolete: the code it targeted no longer exists (the build
+# failed loudly, exactly as the zero-fuzz `git apply` was designed to), and the
+# behaviour it forced is now reachable by configuration.
+#
+# ==> CONSUMERS MUST SET IT: to keep the pre-0.19.0 Frank behaviour, the agent
+#     config.yaml needs `agent.intent_ack_continuation: true`. That file is PVC
+#     state (manual-op `orch-hermes-config-provider`), NOT something this image
+#     can set. Without it Hermes silently reverts to codex-only continuation on
+#     the chat_completions path.
 #
 # .seed-version stamps the seed so the first-boot hook re-seeds on an
-# image/Hermes bump (and no-ops — preserving in-pod patches — when unchanged).
-# Bump the +autocontinueN suffix whenever the patch set changes.
-COPY patches/ /tmp/hermes-patches/
+# image/Hermes bump (and no-ops — preserving in-pod edits — when unchanged).
+# The suffix records the LOCAL PATCH SET; bump it whenever that set changes.
+# It is now `+nopatches1` because the set is empty.
 RUN uv venv --relocatable --python 3.11 /opt/hermes-agent \
  && uv pip install --python /opt/hermes-agent/bin/python \
       "hermes-agent==${HERMES_VERSION}" \
- && site="$(/opt/hermes-agent/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
- && ( cd "$site" && git apply -p1 /tmp/hermes-patches/hermes-autocontinue-chat-completions.patch ) \
- && printf '%s+autocontinue1\n' "${HERMES_VERSION}" > /opt/hermes-agent/.seed-version \
+ && printf '%s+nopatches1\n' "${HERMES_VERSION}" > /opt/hermes-agent/.seed-version \
  && ln -sf /home/agent/.local/opt/hermes-agent/bin/hermes /usr/local/bin/hermes \
  && chown -R ${AGENT_UID}:${AGENT_GID} /opt/hermes-agent \
- && rm -rf /tmp/hermes-patches \
  && /opt/hermes-agent/bin/hermes --version
 
 COPY --chown=root:root rootfs/ /
