@@ -848,9 +848,17 @@ jobs:
           docker exec has-smoke bash /etc/cont-init.d/35-hermes-venv-seed
           docker exec has-smoke sh -c "! test -e $LIVE/.smoke-sentinel" \
             || { echo "✗ re-seed did not replace the live venv on version mismatch"; docker rm -f has-smoke; exit 1; }
-          docker exec has-smoke sh -c "grep -q autocontinue1 $LIVE/.seed-version" \
-            || { echo "✗ live seed marker not restored after re-seed"; docker rm -f has-smoke; exit 1; }
-          echo "✓ frank#496: PVC venv writable, patch baked, version-aware re-seed OK"
+          # The restored marker must match the SEED's marker exactly. Assert
+          # equality against the seed rather than a hardcoded suffix string:
+          # the suffix records the local patch set and changes when that set
+          # does (it was `+autocontinue1`, now `+nopatches1` since the
+          # auto-continue patch was retired into upstream config). Pinning the
+          # literal here is what made this assertion go stale on the 0.19.0 bump.
+          want="$(docker exec has-smoke cat /opt/hermes-agent/.seed-version)"
+          got="$(docker exec has-smoke cat $LIVE/.seed-version)"
+          [ -n "$want" ] && [ "$got" = "$want" ] \
+            || { echo "✗ live seed marker not restored after re-seed (want '$want', got '$got')"; docker rm -f has-smoke; exit 1; }
+          echo "✓ frank#496: PVC venv writable, intent_ack knob present, version-aware re-seed OK"
 
           # Inventory installer reconciles cleanly against the empty inventory
           # and writes a MOTD drop-in. failed=0 proves no section errored.
