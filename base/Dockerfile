@@ -1,7 +1,12 @@
 FROM debian:bookworm-slim
 
 ARG TARGETARCH
-ARG NODE_MAJOR=22
+# Node 24 (LTS). This rebases the runtime under EVERY shell and under the
+# npm-global harnesses installed against it (claude-code here; codex/opencode
+# in multi-agent-shell). It is the only pin in the 2026-07-23 sweep with no
+# correctness driver behind it - both 22 and 24 are supported LTS lines - so if
+# it ever causes trouble, reverting it is cheaper than debugging it.
+ARG NODE_MAJOR=24
 ARG SUPERCRONIC_VERSION=0.2.47
 
 ENV DEBIAN_FRONTEND=noninteractive \

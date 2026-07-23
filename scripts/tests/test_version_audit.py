@@ -57,9 +57,16 @@ def test_hermes_tag_is_sourced_from_dockerhub(pins):
 
 
 def test_major_only_pin_is_not_dropped(pins):
-    """NODE_MAJOR=22 has no dots. A semver-shaped regex silently loses it."""
+    """NODE_MAJOR has no dots. A semver-shaped regex silently loses it.
+
+    Asserts the SHAPE, not a specific major - pinning the value here would make
+    this test fail on every legitimate Node bump, which trains people to edit
+    the test rather than read it.
+    """
     assert "NODE_MAJOR" in pins
-    assert pins["NODE_MAJOR"].current == "22"
+    assert pins["NODE_MAJOR"].current.isdigit(), (
+        f"NODE_MAJOR should be a bare major, got {pins['NODE_MAJOR'].current!r}"
+    )
 
 
 def test_unpinned_claude_code_is_reported_not_omitted(pins):

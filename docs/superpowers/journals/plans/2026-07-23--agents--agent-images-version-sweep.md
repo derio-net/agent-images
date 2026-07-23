@@ -24,3 +24,13 @@ hermes_cli/config.py grew 5849 -> 9232 lines (+58%) across the range, so the jum
 ### f4-ruflo-patches-apply · finding [fixed] · Both ruflo local patches apply cleanly at the new ref (locally proven) (phase 4)
 
 docker build --target source at 26c35b5 succeeded: the sed wasm allow-line applied and its grep guard passed (step 4/6), and git apply of rvf-gridfs-parity.patch succeeded with all three grep guards passing (step 6/6). Premises independently re-verified before the bump: sed anchor present, wasm: still rejected upstream, rvf.ts still lacks new Writable / Readable.from / next: async, PR 2293 still open+unmerged. Blast radius re-measured by blob SHA: 501->501 blobs, zero paths added/removed, one content change (mcp-bridge/index.js). New ref is the 'bump ruflo to 3.32.9' release commit.
+
+<!-- fr:journal kind=finding scope=plan id=f5-overspecific-test created=2026-07-23T18:57:20 phase=5 state=fixed -->
+### f5-overspecific-test · finding [fixed] · The audit's own NODE_MAJOR test hardcoded the current value (phase 5)
+
+test_major_only_pin_is_not_dropped asserted current == '22', so the Node 24 bump failed it. The test's real intent is that a bare major (no dots) survives extraction where a semver-shaped regex would drop it - that is a SHAPE claim. Pinning the value makes the test fail on every legitimate bump, which trains people to edit tests rather than read them. Changed to assert .isdigit().
+
+<!-- fr:journal kind=finding scope=plan id=f6-node24-clean created=2026-07-23T18:57:21 phase=5 state=fixed -->
+### f6-node24-clean · finding [fixed] · Node 24 built clean; local build also live-confirmed the wave 1 + 2 bumps (phase 5)
+
+base built on Node 24.18.0 with npm 11.16.0; claude-code 2.1.218 installed against it fine. The same build confirmed supercronic v0.2.47 and yq v4.53.3 in a real image. agent-shell-base stacked on top installed s6-overlay 3.2.3.2 (/package/admin/s6-overlay-3.2.3.2) and its /init booted the FULL service tree - sshd and supercronic started, cont-init and cont-finish hooks ran, services stopped in order - which is what the CI smoke jobs assert. So wave 3b did not need dropping.
