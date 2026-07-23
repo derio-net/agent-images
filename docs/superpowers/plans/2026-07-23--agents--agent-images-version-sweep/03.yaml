@@ -1,0 +1,88 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Wave 2 — s6-overlay and the Hermes venv
+  tag: agentic
+  depends_on:
+  - 2
+  tracking_issue: null
+tasks:
+- number: 1
+  title: s6-overlay patch bump
+  steps:
+  - id: P3.T1.S1
+    text: |
+      Bump `S6_OVERLAY_VERSION=3.2.0.2` to `3.2.3.2` in `agent-shell-base/Dockerfile`. Both
+      tarballs (`-noarch`, `-x86_64`) come from the same release, so one ARG covers both ADDs;
+      the hardcoded `x86_64` is correct because the build publishes amd64 only.
+  - id: P3.T1.S2
+    text: |
+      Re-read the s6 contract this image depends on and confirm the bump does not disturb it:
+      `S6_KEEP_ENV=1`, `S6_VERBOSITY=2`, `S6_BEHAVIOUR_IF_STAGE2_FAILS=2`, `with-contenv`
+      shebangs pointing at `/command/` (not `/usr/bin/`), and `/run` chowned to AGENT_UID at
+      build time. These are all v3 semantics that a patch release should preserve — verifying
+      rather than assuming is the point, since s6 is PID 1 in every shell.
+  - id: P3.T1.S3
+    text: |
+      Run `uv run pytest agent-shell-base/tests/` and confirm green.
+- number: 2
+  title: Hermes PyPI bump and the seed-marker check
+  steps:
+  - id: P3.T2.S1
+    text: |
+      RED. Add a test asserting the seed marker written by `hermes-agent-shell/Dockerfile`
+      embeds the current `HERMES_VERSION`. This is the mechanism that decides whether a live pod
+      actually picks up the new venv (a PVC-resident venv is skipped when the marker is
+      unchanged), so it is guarded rather than trusted. Confirm red once the version moves.
+  - id: P3.T2.S2
+    text: |
+      GREEN. Bump `HERMES_VERSION=0.15.2` to `0.19.0` in `hermes-agent-shell/Dockerfile` and
+      confirm the `.seed-version` marker (currently `${HERMES_VERSION}+autocontinue1`) therefore
+      changes, so the first boot after the bump re-seeds the PVC venv. Re-run the test.
+  - id: P3.T2.S3
+    text: |
+      Review the 0.15.2 -> 0.19.0 upstream changes for anything that invalidates how Frank drives
+      Hermes: the `model:` MAPPING that pins the provider (prefixes do NOT pin it), the
+      `context_length` overrides that must equal live reality, and the >=64k context requirement.
+      Record what you find in the plan journal with `fr journal add --scope plan --kind finding`
+      — Frank's `config.yaml` is PVC state, so a config-schema change becomes a manual operation
+      rather than something this image can fix.
+  - id: P3.T2.S4
+    text: |
+      Confirm the in-Dockerfile `hermes --version` assertion still passes conceptually at the new
+      version (the build runs `/opt/hermes-agent/bin/hermes --version`), then run
+      `uv run pytest scripts/tests/` green.
+state:
+  steps:
+    P3.T1.S1:
+      state: x
+      ticked_at: '2026-07-23T16:49:14+00:00'
+      note: null
+    P3.T1.S2:
+      state: x
+      ticked_at: '2026-07-23T16:49:15+00:00'
+      note: null
+    P3.T1.S3:
+      state: x
+      ticked_at: '2026-07-23T16:49:16+00:00'
+      note: null
+    P3.T2.S1:
+      state: x
+      ticked_at: '2026-07-23T16:49:17+00:00'
+      note: null
+    P3.T2.S2:
+      state: x
+      ticked_at: '2026-07-23T16:49:18+00:00'
+      note: null
+    P3.T2.S3:
+      state: x
+      ticked_at: '2026-07-23T16:49:20+00:00'
+      note: null
+    P3.T2.S4:
+      state: x
+      ticked_at: '2026-07-23T16:49:21+00:00'
+      note: null
+  completion:
+    at: '2026-07-23T16:49:22+00:00'
+    note: null
+    observed_prs: []

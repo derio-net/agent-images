@@ -1,0 +1,48 @@
+schema_version: 2
+phase:
+  number: 5
+  title: Wave 3b — Node 24 (droppable)
+  tag: agentic
+  depends_on:
+  - 3
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Move the base image to Node 24
+  steps:
+  - id: P5.T1.S1
+    text: |
+      Bump `NODE_MAJOR=22` to `24` in `base/Dockerfile`. This rebases the runtime under every
+      shell and under the npm-global harnesses installed against it, and it is the only pin in
+      this sweep with no correctness driver behind it — so if anything below fails, prefer
+      dropping this phase over debugging it under time pressure (spec §4 sanctions shipping
+      waves 0-3a without it).
+  - id: P5.T1.S2
+    text: |
+      Build `base` and then `agent-shell-base` locally and confirm both complete, that `node
+      --version` reports v24 in the built image, and that the npm-global installs
+      (`@anthropic-ai/claude-code` in base, codex/opencode in multi-agent-shell) still resolve
+      against the new major.
+  - id: P5.T1.S3
+    text: |
+      Run the full test suite (`uv run pytest`) plus every per-image suite. If any failure traces
+      to the Node major rather than to a real defect, record a finding and drop this phase rather
+      than forcing it through.
+state:
+  steps:
+    P5.T1.S1:
+      state: x
+      ticked_at: '2026-07-23T16:57:22+00:00'
+      note: null
+    P5.T1.S2:
+      state: x
+      ticked_at: '2026-07-23T16:57:24+00:00'
+      note: null
+    P5.T1.S3:
+      state: x
+      ticked_at: '2026-07-23T16:57:25+00:00'
+      note: null
+  completion:
+    at: '2026-07-23T16:57:27+00:00'
+    note: null
+    observed_prs: []

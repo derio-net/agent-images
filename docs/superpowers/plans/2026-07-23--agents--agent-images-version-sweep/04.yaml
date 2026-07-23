@@ -1,0 +1,75 @@
+schema_version: 2
+phase:
+  number: 4
+  title: Wave 3a — ruflo re-vendor
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Re-verify the patch premises before moving the pin
+  steps:
+  - id: P4.T1.S1
+    text: |
+      Re-confirm (do not take the spec on trust — it was measured on 2026-07-23 and upstream
+      moves) that at the new ref `26c35b59b40a`: the `const hostname = url.hostname.toLowerCase();`
+      anchor still exists in `ruflo/src/ruvocal/src/lib/server/urlSafety.ts`; `wasm:` is still
+      rejected upstream; and `rvf.ts` still lacks `new Writable` / `Readable.from` / `next: async`.
+      If any premise has changed, STOP and record a finding — the patches, not the pin, are the
+      risk here.
+  - id: P4.T1.S2
+    text: |
+      Re-confirm the blast radius by diffing the built subtree blob-by-blob rather than trusting
+      the compare API: enumerate `git/trees/<ref>:ruflo/src/ruvocal?recursive=1` at both the old
+      and new ref and diff the path->sha maps. Expect exactly one changed file
+      (`mcp-bridge/index.js`). Note that `.files[]` on the compare endpoint caps at 300 entries
+      and will report a **false** "no ruvocal changes" — that trap is why this step exists.
+- number: 2
+  title: Move the pin and prove the patches still apply
+  steps:
+  - id: P4.T2.S1
+    text: |
+      Bump `RUFLO_GIT_REF` from `a6dd4ab3d527fbba3e7202741c9479315cc56a0b` to
+      `26c35b59b40a...` (full 40-hex SHA) in `ruflo-server/Dockerfile`. Update the surrounding
+      comment to record what the re-vendor actually brings in: ADR-166 security hardening in
+      `mcp-bridge/index.js` (default-deny `terminal_execute`, loopback bind, bearer auth, CORS
+      allowlist) closing a disclosed unauthenticated RCE chain.
+  - id: P4.T2.S2
+    text: |
+      Correct the two stale comments in `ruflo-server/Dockerfile` that say the patches were
+      "Filed upstream as ruvnet/ruflo#TBD": the real reference is `ruvnet/ruflo#2293`, and it is
+      **open, not merged** — so both local modifications remain required. Leave the post-apply
+      `grep` guards untouched; they are what makes a future silent no-op fail the build.
+  - id: P4.T2.S3
+    text: |
+      Build `ruflo-server` locally (`docker build -f ruflo-server/Dockerfile ruflo-server/`) far
+      enough to prove the `sed` wasm patch and `git apply` of `patches/rvf-gridfs-parity.patch`
+      both succeed at the new ref, and that the four post-apply `grep` guards pass. This is the
+      load-bearing local check — CI will repeat it, but a patch failure should be caught here.
+state:
+  steps:
+    P4.T1.S1:
+      state: x
+      ticked_at: '2026-07-23T16:52:37+00:00'
+      note: null
+    P4.T1.S2:
+      state: x
+      ticked_at: '2026-07-23T16:52:39+00:00'
+      note: null
+    P4.T2.S1:
+      state: x
+      ticked_at: '2026-07-23T16:52:40+00:00'
+      note: null
+    P4.T2.S2:
+      state: x
+      ticked_at: '2026-07-23T16:52:41+00:00'
+      note: null
+    P4.T2.S3:
+      state: x
+      ticked_at: '2026-07-23T16:52:43+00:00'
+      note: null
+  completion:
+    at: '2026-07-23T16:52:44+00:00'
+    note: null
+    observed_prs: []

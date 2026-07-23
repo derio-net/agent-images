@@ -17,7 +17,15 @@ USER root
 # version pins. Pentest packages (nmap, kali-tools-top10, etc.) are
 # intentionally NOT included — infra-shell is cluster-ops only.
 ARG TARGETARCH
-ARG TALOSCTL_VERSION=v1.9.5
+# talosctl tracks the CLUSTER's Talos version (measured v1.12.6, 2026-07-23) -
+# NOT the newest upstream release (v1.13.7 at time of writing). Talos supports
+# only +/-1 minor of client skew, and this pin had drifted three minors behind
+# (v1.9.5) with no alert and no symptom until a command needed the newer API.
+# Pinning to "latest" instead would put the client AHEAD of the nodes and
+# re-create the same skew the moment the cluster lags.
+# Guarded by scripts/tests/test_talosctl_pin_parity.py against
+# LAST_MEASURED_CLUSTER_TALOS in scripts/version_audit.py.
+ARG TALOSCTL_VERSION=v1.12.6
 ARG OMNICTL_VERSION=v0.45.1
 RUN curl -fsSL -o /usr/local/bin/kubectl \
       "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \

@@ -62,6 +62,25 @@ jobs:
         working-directory: multi-agent-shell
         run: uv run pytest tests/ -v
 
+  # scripts/version_audit.py is the on-demand upstream-drift report. Its
+  # coverage test (a version-shaped ARG with no PIN_SPECS entry fails the build)
+  # is the thing that keeps the registry honest, so it has to actually run.
+  test-scripts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Sync Python deps
+        run: uv sync --group dev
+      - name: Run scripts tests
+        working-directory: scripts
+        run: uv run pytest tests/ -v
+
   build-base:
     runs-on: ubuntu-latest
     outputs:
@@ -803,10 +822,20 @@ jobs:
           docker exec has-smoke sh -c 'readlink -f "$(command -v hermes)"' | grep -q "^$LIVE/" \
             || { echo "✗ hermes launcher does not resolve into the PVC venv"; docker rm -f has-smoke; exit 1; }
 
-          # frank#496 — the auto-continue patch is BAKED into the live venv:
-          # the announce-only countermeasure gate is widened to chat_completions.
-          docker exec has-smoke grep -q 'api_mode in ("codex_responses", "chat_completions")' "$CL" \
-            || { echo "✗ auto-continue patch not present in live venv"; docker rm -f has-smoke; exit 1; }
+          # frank#496 — auto-continue on the chat_completions path.
+          # 0.15.2 hardcoded the announce-only countermeasure to
+          # api_mode == "codex_responses" and we carried a local patch widening
+          # it. 0.19.0 replaced that hardcoded gate with the config knob
+          # `intent_ack_continuation` (auto->codex_only, true->all, false->off),
+          # so the patch was RETIRED. Assert the KNOB exists in the live venv;
+          # the "fire on every api_mode" behaviour is now selected via
+          # config.yaml (agent.intent_ack_continuation: true) — PVC state Frank
+          # owns, not something the image bakes. If this grep fails, upstream
+          # likely moved the auto-continue config yet again — re-check before
+          # editing.
+          HELPERS="$LIVE/lib/python3.11/site-packages/agent/agent_runtime_helpers.py"
+          docker exec has-smoke grep -q 'def intent_ack_continuation_mode' "$HELPERS" \
+            || { echo "✗ intent_ack_continuation knob absent in live venv"; docker logs has-smoke; docker rm -f has-smoke; exit 1; }
 
           # Version-aware re-seed: a changed seed marker replaces the live venv.
           # Drop a sentinel + corrupt the live marker, re-run the hook, and
@@ -819,9 +848,17 @@ jobs:
           docker exec has-smoke bash /etc/cont-init.d/35-hermes-venv-seed
           docker exec has-smoke sh -c "! test -e $LIVE/.smoke-sentinel" \
             || { echo "✗ re-seed did not replace the live venv on version mismatch"; docker rm -f has-smoke; exit 1; }
-          docker exec has-smoke sh -c "grep -q autocontinue1 $LIVE/.seed-version" \
-            || { echo "✗ live seed marker not restored after re-seed"; docker rm -f has-smoke; exit 1; }
-          echo "✓ frank#496: PVC venv writable, patch baked, version-aware re-seed OK"
+          # The restored marker must match the SEED's marker exactly. Assert
+          # equality against the seed rather than a hardcoded suffix string:
+          # the suffix records the local patch set and changes when that set
+          # does (it was `+autocontinue1`, now `+nopatches1` since the
+          # auto-continue patch was retired into upstream config). Pinning the
+          # literal here is what made this assertion go stale on the 0.19.0 bump.
+          want="$(docker exec has-smoke cat /opt/hermes-agent/.seed-version)"
+          got="$(docker exec has-smoke cat $LIVE/.seed-version)"
+          [ -n "$want" ] && [ "$got" = "$want" ] \
+            || { echo "✗ live seed marker not restored after re-seed (want '$want', got '$got')"; docker rm -f has-smoke; exit 1; }
+          echo "✓ frank#496: PVC venv writable, intent_ack knob present, version-aware re-seed OK"
 
           # Inventory installer reconciles cleanly against the empty inventory
           # and writes a MOTD drop-in. failed=0 proves no section errored.

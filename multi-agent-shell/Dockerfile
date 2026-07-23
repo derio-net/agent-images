@@ -23,8 +23,8 @@ USER root
 # Pins captured during plan execution (npm view <pkg> version on
 # 2026-06-01). These pins float forward via the inventory `harnesses:`
 # key; the Dockerfile shim is only a bootstrap.
-ARG CODEX_VERSION=0.136.0
-ARG OPENCODE_VERSION=1.15.13
+ARG CODEX_VERSION=0.145.0
+ARG OPENCODE_VERSION=1.18.4
 RUN npm install -g --omit=dev \
       @openai/codex@${CODEX_VERSION} \
       opencode-ai@${OPENCODE_VERSION}

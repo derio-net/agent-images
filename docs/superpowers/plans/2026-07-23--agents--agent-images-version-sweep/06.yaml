@@ -1,0 +1,54 @@
+schema_version: 2
+phase:
+  number: 6
+  title: Branch build validation
+  tag: agentic
+  depends_on:
+  - 2
+  - 3
+  - 4
+  - 5
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Dispatch the branch build CI cannot run by itself
+  steps:
+  - id: P6.T1.S1
+    text: |
+      Push the branch, then dispatch the build explicitly:
+      `gh workflow run build.yaml --ref feat/upstream-version-sweep`.
+      This is mandatory, not belt-and-braces: `build.yaml` triggers on push **to main only**
+      (with `paths-ignore: docs/**`), `workflow_dispatch` and `repository_dispatch` — never on
+      `pull_request` — so neither opening the PR nor pushing the branch builds anything. Without
+      this dispatch the PR is green-looking and completely unverified.
+  - id: P6.T1.S2
+    text: |
+      Watch the run to completion (`gh run watch`) and confirm every per-image smoke job is
+      green: `smoke-test-vk-local`, `-secure-agent-kali`, `-paperclip-shell`, `-ruflo-shell`,
+      `-ruflo-server`, `-multi-agent-shell`, `-hermes-agent-shell`, `-hermes-agent-shell-ssh`,
+      `-hermes-agent-shell-hindsight`, `-infra-shell`. These smoke jobs assert `/init` boots
+      under a K8s-equivalent securityContext — precisely the failure an s6 or Node bump would
+      cause — so they are the control that makes waves 2 and 3 acceptable.
+  - id: P6.T1.S3
+    text: |
+      If a wave's images fail, split that wave out of the branch rather than blocking the rest
+      (spec §4 permits shipping 0-3a and carrying the remainder into a follow-up PR). Record the
+      split and its reason as a plan-scope finding.
+state:
+  steps:
+    P6.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P6.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P6.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

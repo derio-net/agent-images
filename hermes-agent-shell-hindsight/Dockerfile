@@ -24,7 +24,7 @@ ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ENV HINDSIGHT_ENV=hindsight-pg
 ENV HF_HOME=/opt/hindsight-models
 ARG MICROMAMBA_VERSION=2.8.1
-ARG HINDSIGHT_API_VERSION=0.8.4
+ARG HINDSIGHT_API_VERSION=0.8.5
 ARG TORCH_VERSION=2.13.0
 # Pin the embedding-model revision so the baked snapshot is byte-reproducible.
 ARG BGE_REVISION=5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
