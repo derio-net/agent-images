@@ -13,7 +13,6 @@ aliases (one migration cycle) when the new var is unset. Stdlib-only so it runs
 on the image's python3 with no extra deps.
 """
 import fcntl
-import glob
 import hmac
 import json
 import os
@@ -134,12 +133,38 @@ def session_uuid(session_id):
     return str(uuid.uuid5(SESSION_UUID_NAMESPACE, session_id))
 
 
+def _project_dir(cwd):
+    # claude derives a project dir from the absolute launch cwd by replacing every '/'
+    # with '-' (verified live: /home/agent -> -home-agent;
+    # /run/s6/legacy-services/agent-session-server ->
+    # -run-s6-legacy-services-agent-session-server).
+    return cwd.replace("/", "-")
+
+
 def _session_jsonl_exists(session_uuid_str):
     # The session transcript persists on the PVC at
-    # ~/.claude/projects/<cwd-encoded>/<uuid>.jsonl. claude keys the project dir on
-    # the launch cwd (which we don't control here), so glob across project dirs —
-    # the uuid is unique, so it resolves to at most one file.
-    return bool(glob.glob(os.path.join(HOME, ".claude", "projects", "*", session_uuid_str + ".jsonl")))
+    # ~/.claude/projects/<cwd-encoded>/<uuid>.jsonl, and `claude --resume` searches ONLY
+    # the project dir for its own launch cwd.
+    #
+    # This used to glob `projects/*`, on the premise that we don't control the launch
+    # cwd. We DO: _create_session passes `-c HOME` AND `-e PWD=HOME`, so the launch cwd is
+    # always HOME. The wildcard outlived the reason for it, and the mismatch is fatal
+    # (frank incident 2026-07-23): a transcript stranded in ANOTHER project dir made this
+    # answer True, launch_command chose --resume, and claude answered
+    #
+    #     No conversation found with session ID: <uuid>     (exit 1)
+    #
+    # -> pane dies on launch -> tmux tears down its last session -> wait_ready burns 30s
+    # -> every turn times out, forever, with nothing self-healing. The stranding was
+    # created by the `-e PWD=HOME` fix itself, which changed where NEW transcripts are
+    # written and migrated none of the existing ones.
+    #
+    # A predicate whose whole job is to forecast claude's behaviour must use claude's own
+    # scoping rule. Degradation if the encoding ever drifts is safe-ish and one-directional:
+    # we'd answer False and create with --session-id, which works except against a
+    # hard-killed session — never the permanent wedge above.
+    return os.path.isfile(os.path.join(HOME, ".claude", "projects",
+                                       _project_dir(HOME), session_uuid_str + ".jsonl"))
 
 
 def launch_command(agent, session_id=None):
