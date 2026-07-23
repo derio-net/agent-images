@@ -1,0 +1,42 @@
+schema_version: 2
+phase:
+  number: 7
+  title: '[manual] omnictl target discovery'
+  tag: manual
+  depends_on:
+  - 6
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Discover the live Omni server version and pin omnictl to it
+  steps:
+  - id: P7.T1.S1
+    text: |
+      MANUAL — needs operator access to the Omni host. `omnictl` must track the **server**, not
+      GitHub's latest: upstream is at v1.9.3 while Frank's server was last documented at v1.5.0,
+      so a bump to latest would very likely break against the running server. The server's
+      version is not recorded in this repo — `omni/omni/compose.yaml` interpolates
+      `${OMNI_IMG_TAG}` from an `omni.env` that lives out-of-band on the Omni host.
+      Read the running server's version (from that `omni.env`, or from `omnictl`'s own
+      client/server version report), then set `OMNICTL_VERSION` to it in **both**
+      `infra-shell/Dockerfile` and `kali/Dockerfile` and push to this PR.
+  - id: P7.T1.S2
+    text: |
+      MANUAL — if the version cannot be established, leave `OMNICTL_VERSION` at `v0.45.1` and
+      note why on the PR. A deliberately-stale omnictl is better than a guessed one: it is the
+      client for the single control plane that manages machine config, and a wrong version fails
+      against exactly the thing you would need it for during a recovery.
+state:
+  steps:
+    P7.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P7.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

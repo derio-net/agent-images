@@ -1,0 +1,165 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Version-audit script
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Extract every version-bearing pin from the Dockerfiles
+  steps:
+  - id: P1.T1.S1
+    text: |
+      RED. Create `scripts/tests/test_version_audit.py` with a test asserting that
+      `version_audit.extract_pins(repo_root)` returns a pin for every version-bearing
+      `ARG`/`FROM` in the repo. Assert on the hard cases specifically, because these are
+      what a naive regex misses:
+        - `TALOSCTL_VERSION` and `OMNICTL_VERSION` appear in **two** files each
+          (`infra-shell/Dockerfile`, `kali/Dockerfile`) — the result must carry both
+          locations, not collapse to one.
+        - `HERMES_TAG` is consumed by a `FROM docker.io/nousresearch/hermes-agent:${HERMES_TAG}`
+          line, so its *source* is Docker Hub, not a bare ARG default.
+        - `NODE_MAJOR=22` is a major-only pin (no dots) and must not be dropped by a
+          semver-shaped regex.
+        - `@anthropic-ai/claude-code` in `base/Dockerfile` is installed **unpinned** and must be
+          reported as such, not omitted.
+      Run `uv run pytest scripts/tests/test_version_audit.py` and confirm it fails with
+      `ModuleNotFoundError` / `ImportError` — that is the red state.
+  - id: P1.T1.S2
+    text: |
+      GREEN. Create `scripts/version_audit.py` with `extract_pins(repo_root)` returning a list of
+      pin records `{name, current, files[], source, classification}`. Parse `ARG <NAME>=<value>`
+      and version-bearing `FROM` lines across `*/Dockerfile`. Re-run
+      `uv run pytest scripts/tests/test_version_audit.py` until green.
+  - id: P1.T1.S3
+    text: |
+      REFACTOR (optional). If the extraction grew duplicated regex/branching, factor the
+      per-source parsing into small named helpers. Stay green; add no behaviour.
+- number: 2
+  title: Classify each pin bootstrap vs rebuild-only
+  steps:
+  - id: P1.T2.S1
+    text: |
+      RED. Extend the test module: assert `CODEX_VERSION`, `OPENCODE_VERSION` and the unpinned
+      `@anthropic-ai/claude-code` classify as `bootstrap`, while `TALOSCTL_VERSION`,
+      `S6_OVERLAY_VERSION`, `SUPERCRONIC_VERSION`, `RUFLO_GIT_REF` and `NODE_MAJOR` classify as
+      `rebuild-only`. This is the distinction the whole report ranks by (spec §2), so it is
+      asserted rather than left implicit. Confirm red.
+  - id: P1.T2.S2
+    text: |
+      GREEN. Add the classification table to `version_audit.py`. Keep it an explicit, commented
+      mapping keyed by pin name — a heuristic would silently mis-rank a future pin, and the
+      Dockerfile comments (not the pin syntax) are the only real evidence for which class a pin
+      is in. Re-run the tests until green.
+- number: 3
+  title: Resolve upstream versions per source type
+  steps:
+  - id: P1.T3.S1
+    text: |
+      RED. Add tests for the resolvers using **recorded fixtures, no live network** (the test
+      suite must stay hermetic and offline-runnable). Cover one case per source: npm registry,
+      PyPI, GitHub releases, GitHub **tags**, Docker Hub. Include a regression test that the
+      GitHub resolver falls back to tags when `/releases/latest` 404s — `tmux-resurrect` and
+      `tmux-continuum` publish tags but no releases, and a releases-only lookup 404s on both.
+      Confirm red.
+  - id: P1.T3.S2
+    text: |
+      GREEN. Implement the resolvers in `version_audit.py` behind one `resolve_latest(pin)`
+      entry point, with the GitHub releases-then-tags fallback. Network calls go through a
+      single injectable fetch function so the fixtures can replace it. Re-run tests until green.
+- number: 4
+  title: Anchor talosctl and omnictl to live infrastructure, not GitHub latest
+  steps:
+  - id: P1.T4.S1
+    text: |
+      RED. Add tests asserting that `talosctl`'s target is the **cluster** version and `omnictl`'s
+      is the **Omni server** version — not the newest upstream release — and that when either
+      probe is unreachable the pin is reported `target: unknown` rather than silently falling
+      back to latest. This encodes spec §3.1/§3.2: for these two, "latest" is the wrong answer,
+      and a confident wrong answer is worse than an honest gap. Confirm red.
+  - id: P1.T4.S2
+    text: |
+      GREEN. Implement the cluster/server probes (`kubectl get nodes` osImage for Talos; the Omni
+      server version for omnictl) behind the same injectable fetch seam, with the
+      unreachable -> `unknown` behaviour. Re-run tests until green.
+- number: 5
+  title: Report output and first live run
+  steps:
+  - id: P1.T5.S1
+    text: |
+      RED. Add a test for `render_report(pins)`: groups by classification, marks each pin
+      current/behind/unknown, and the process exits 0 by default (a report, not a gate).
+      Confirm red.
+  - id: P1.T5.S2
+    text: |
+      GREEN. Implement `render_report` plus a `__main__` entry point. Re-run the full
+      `uv run pytest scripts/tests/` until green.
+  - id: P1.T5.S3
+    text: |
+      Run the script live once (`uv run python scripts/version_audit.py`) and confirm its output
+      reproduces the spec §1 table — same pins, same current values, and micromamba / torch /
+      tmux-resurrect / tmux-continuum reported as already-current. Any disagreement means either
+      the script or the spec table is wrong; reconcile before completing the phase.
+  - id: P1.T5.S4
+    text: |
+      Add a short `## Version audit` section to `README.md` documenting how to run the script and
+      stating explicitly that talosctl/omnictl target live infrastructure rather than latest.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

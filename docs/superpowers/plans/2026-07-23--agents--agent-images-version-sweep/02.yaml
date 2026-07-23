@@ -1,0 +1,93 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Wave 1 — correctness fix plus low-risk pin bumps
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: talosctl to the cluster version (the correctness fix)
+  steps:
+  - id: P2.T1.S1
+    text: |
+      RED. Add `scripts/tests/test_talosctl_pin_parity.py` asserting that `infra-shell/Dockerfile`
+      and `kali/Dockerfile` pin the **same** `TALOSCTL_VERSION`, and that the value equals the
+      cluster version recorded in the repo docs. The parity half is the durable guard: the two
+      files drifting apart is the silent failure this pin invites. Confirm red against the
+      current `v1.9.5`.
+  - id: P2.T1.S2
+    text: |
+      GREEN. Set `TALOSCTL_VERSION=v1.12.6` in both `infra-shell/Dockerfile` and
+      `kali/Dockerfile`, with a comment naming the rule: this tracks the CLUSTER's Talos version
+      (measured v1.12.6, 2026-07-23), NOT the newest upstream release (v1.13.7) — Talos supports
+      only +/-1 minor of skew, so chasing latest re-creates the drift in the other direction.
+      Re-run the test until green.
+- number: 2
+  title: supercronic, hindsight-api and the Hermes container tag
+  steps:
+  - id: P2.T2.S1
+    text: |
+      Bump `SUPERCRONIC_VERSION=0.2.33` to `0.2.47` in `base/Dockerfile`. The install is a plain
+      release-URL fetch with no checksum, so the edit is the whole change. Confirm the release
+      asset name for `supercronic-linux-amd64` still matches the URL pattern at the new version
+      before moving on.
+  - id: P2.T2.S2
+    text: |
+      Bump `HINDSIGHT_API_VERSION=0.8.4` to `0.8.5` in
+      `hermes-agent-shell-hindsight/Dockerfile`. Verify the boot-time `chmod 700 $PGDATA` fix is
+      still present in the same image — the Postgres permission trap must not regress on a
+      rebuild.
+  - id: P2.T2.S3
+    text: |
+      Bump `HERMES_TAG=v2026.7.7.2` to `v2026.7.20` in `hermes-agent-shell-ssh/Dockerfile`, and
+      confirm that tag exists on Docker Hub for `nousresearch/hermes-agent` before committing.
+- number: 3
+  title: Bootstrap harness pins
+  steps:
+  - id: P2.T3.S1
+    text: |
+      Bump `CODEX_VERSION` to `0.145.0` and `OPENCODE_VERSION` to `1.18.4` in
+      `multi-agent-shell/Dockerfile`. Keep the existing comment explaining that these float
+      forward via the inventory `harnesses:` key and that the Dockerfile is only a bootstrap —
+      it is the reason these are low-value, and the next maintainer needs it.
+  - id: P2.T3.S2
+    text: |
+      Run `uv run pytest scripts/tests/` and every existing per-image test suite
+      (`agent-shell-base/tests/`, `kali/tests/`, `multi-agent-shell/tests/`). All green before
+      completing the phase.
+state:
+  steps:
+    P2.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P2.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
