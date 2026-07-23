@@ -32,7 +32,7 @@ USER root
 # during the implementation of derio-net/agent-images#99 (P2.T1.S1).
 # Floats forward via the inventory `harnesses:` key once an operator
 # overrides it on first reconcile.
-ARG HERMES_VERSION=0.15.2
+ARG HERMES_VERSION=0.19.0
 
 # Build a RELOCATABLE SEED venv at /opt/hermes-agent (a read-only build
 # artifact, NOT the live runtime). `--relocatable` writes console scripts with
