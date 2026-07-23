@@ -1,6 +1,25 @@
 # syntax=docker/dockerfile:1
 # Pinned to ruvnet/ruflo SHA — bump deliberately when re-vendoring.
-ARG RUFLO_GIT_REF=a6dd4ab3d527fbba3e7202741c9479315cc56a0b
+# Re-vendored a6dd4ab -> 26c35b5 (2026-07-23).
+#
+# "607 commits behind" is a MONOREPO artifact - we build only the
+# ruflo/src/ruvocal subtree. Measured there by tree/blob SHA: 501 blobs at both
+# refs, no paths added or removed, exactly ONE changed file
+# (mcp-bridge/index.js). Do NOT measure this with the compare API: its
+# .files[] caps at 300 entries and reports a false "no ruvocal changes".
+#
+# That one file is ADR-166 security hardening closing a disclosed
+# UNAUTHENTICATED RCE chain: terminal_execute-family tools are now deny-by-
+# default (MCP_ENABLE_TERMINAL opt-in), the bridge binds 127.0.0.1 instead of
+# every interface, it refuses to bind a public interface without
+# MCP_AUTH_TOKEN, bearer auth uses timingSafeEqual, and CORS is an allowlist
+# rather than an unconditional "*". mcp-bridge is not shipped in our runtime
+# stage, so this is close to a functional no-op for the deployed artifact - it
+# removes a known-vulnerable file from the build context.
+#
+# Both local modifications below still apply: their targets are byte-identical
+# across the range, and upstream PR ruvnet/ruflo#2293 is still OPEN.
+ARG RUFLO_GIT_REF=26c35b59b40a0a95b286ccf5ac675a15edcc995f
 
 # --- source: shallow-clone the upstream repo at the pinned SHA. Single source
 #     of truth for both the builder and runtime stages so we never drift.
@@ -58,7 +77,8 @@ RUN git init \
 # OFF (which bypasses the MCP/tools code path entirely) allowed chat to
 # proceed against local LiteLLM models. This patch removes the autopilot
 # precondition for fresh deployments that don't ship server-side MCP_SERVERS.
-# Filed against upstream as ruvnet/ruflo#TBD; apply locally for now.
+# Filed upstream as ruvnet/ruflo#2293, which is still OPEN (not merged) -
+# so this patch remains REQUIRED. Re-verified at the pinned ref 2026-07-23.
 RUN sed -i \
       -e 's|const hostname = url\.hostname\.toLowerCase();|if (url.protocol === "wasm:") return true;\n\t\tconst hostname = url.hostname.toLowerCase();|' \
       ruflo/src/ruvocal/src/lib/server/urlSafety.ts \
@@ -81,7 +101,9 @@ RUN sed -i \
 # makes the shim faithfully honor the GridFS contract (real Writable via
 # objectMode, real Readable via Readable.from, sync find cursor). Verified to
 # apply cleanly at this pinned RUFLO_GIT_REF; the grep guards fail the build if
-# the patch silently no-ops after a future bump. Filed upstream as ruvnet/ruflo#TBD.
+# the patch silently no-ops after a future bump. Filed upstream as
+# ruvnet/ruflo#2293, still OPEN (not merged) - upstream HEAD carries none of
+# `new Writable` / `Readable.from` / `next: async`, so this stays REQUIRED.
 COPY patches/rvf-gridfs-parity.patch /tmp/rvf-gridfs-parity.patch
 RUN git apply /tmp/rvf-gridfs-parity.patch \
  && grep -q 'new Writable'  ruflo/src/ruvocal/src/lib/server/database/rvf.ts \
