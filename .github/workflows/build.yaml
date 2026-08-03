@@ -992,8 +992,11 @@ jobs:
           # would be hidden here and fail this check instead of reaching prod.
           docker exec hermes-ssh-smoke bun --version \
             || { echo "✗ bun not runnable as UID 1000 in the sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
-          docker exec hermes-ssh-smoke sh -c 'case "$(command -v bun)" in /opt/data/*) exit 1;; *) exit 0;; esac' \
-            || { echo "✗ bun resolves under a PVC mount — it would vanish when the volume mounts"; docker rm -f hermes-ssh-smoke; exit 1; }
+          # `command -v` prints nothing when bun is absent, and "" falls through
+          # to the *) branch — so without the first clause this check PASSES on
+          # an image with no bun at all.
+          docker exec hermes-ssh-smoke sh -c 'p="$(command -v bun)"; [ -n "$p" ] || exit 1; case "$p" in /opt/data/*) exit 1;; *) exit 0;; esac' \
+            || { echo "✗ bun missing, or resolving under a PVC mount where it would vanish when the volume mounts"; docker rm -f hermes-ssh-smoke; exit 1; }
 
           # The profile.d PATH shim, asserted in a LOGIN shell specifically. The
           # `docker exec … bun --version` above proves nothing about the shim:

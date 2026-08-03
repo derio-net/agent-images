@@ -123,7 +123,10 @@ PIN_SPECS: dict[str, dict] = {
         "tag_prefix": "bun-",
         "note": "The JS runtime in the hermes ssh sidecar (frank#759). Nothing "
                 "self-updates it in-pod, so a rebuild is the only refresh path. "
-                "The CLI that USES it is deliberately NOT pinned here - it is "
+                "COVERS ONE OF TWO BUNS: base/Dockerfile also installs bun, via "
+                "an unpinned `curl | bash` with no ARG, so it is invisible to "
+                "find_uncovered_version_args and NOT tracked here. "
+                "The CLI that USES bun is deliberately not pinned at all - it is "
                 "installed onto the home PVC at runtime, so its name stays out "
                 "of this public repo.",
     },
@@ -489,8 +492,15 @@ def render_report(pins, targets: dict, with_exit_code: bool = False):
         for pin in sorted(group, key=lambda p: p.name):
             target = targets.get(pin.name)
             status = classify_status(pin, target)
+            # Render the target with its declared tag prefix removed, so a
+            # correctly-pinned bun reads `1.3.14 -> v1.3.14 [ok]` rather than
+            # `1.3.14 -> bun-v1.3.14 [ok]`, which looks like drift to a skimmer
+            # and invites a no-op "fix".
+            shown = target
+            if shown and pin.tag_prefix and shown.startswith(pin.tag_prefix):
+                shown = shown[len(pin.tag_prefix):]
             row = (f"  [{_STATUS_MARK[status]:>8}]  {pin.name:<24} "
-                   f"{pin.current or '(none)':<44} -> {target or '?'}")
+                   f"{pin.current or '(none)':<44} -> {shown or '?'}")
             if pin.anchor:
                 # Without this a reader "helpfully" bumps talosctl to latest.
                 row += f"   (target: {pin.anchor}, NOT upstream latest)"

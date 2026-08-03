@@ -48,20 +48,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # runtime, which keeps a private tool's name out of this public repo and puts
 # its bytes on the home PVC, where they survive a pod restart.
 #
-# INSTALLED TO /usr/local/bin, AS ROOT, DELIBERATELY. Bun's own installer
-# targets `~/.bun`, and ${AGENT_HOME} here is /opt/data/home — a Longhorn PVC
-# MOUNT at runtime. Anything baked under that path is hidden the moment the
-# volume mounts, so the obvious install command yields an image that builds
-# clean and a container with no `bun` on it. Only the operator's later
-# `bun install -g` belongs under $HOME — and there it is wanted, because that
-# is precisely what makes it persist.
+# INSTALLED TO /usr/local/bin, AS ROOT, DELIBERATELY. ${AGENT_HOME} here is
+# /opt/data/home — a Longhorn PVC MOUNT at runtime — and the ENV below sets
+# HOME to it, so `$HOME` IS the mount. Anything baked under that path is hidden
+# the moment the volume mounts. Bun's installer defaults to `~/.bun`, i.e.
+# straight into the mount; `BUN_INSTALL=/usr/local` fixes that (base/Dockerfile
+# does exactly this), so the trap is real but cheap to avoid. Only the
+# operator's later `bun install -g` belongs under $HOME — there it is WANTED,
+# because that is precisely what makes it persist across restarts.
 #
-# The architecture is derived, not hardcoded: this image builds amd64 today,
-# and a hardcoded x64 asset is how a future multi-arch build ships a silently
-# broken image. Verification uses the release's OWN SHASUMS256.txt rather than
-# a digest pinned here, so a version bump is a one-line change that cannot
-# accidentally skip the check. `bun --version` at the end fails the BUILD if
-# the binary does not run, rather than deferring that to a smoke test.
+# What this block buys over `curl … | bash` is the PINNING and the CHECKSUM,
+# not the install path.
+#
+# Verification uses the release's own SHASUMS256.txt. Be clear about what that
+# is worth: the sums are fetched unauthenticated from the same origin as the
+# asset, so this defends against a corrupted or truncated download, NOT against
+# a replaced release. A pinned digest would be strictly stronger; the checksum
+# file is chosen for bump ergonomics, and that is a convenience argument, not a
+# security one. `sha256sum --check` fails the build when the asset is absent,
+# misnamed or unlisted ("no file was verified" → exit 1).
+#
+# ARCHITECTURE is derived, not hardcoded — a hardcoded x64 asset is how a
+# future multi-arch build ships a silently broken image. NOTE the limit of
+# that: we derive the architecture but not the MICROarchitecture. `bun-linux-x64`
+# requires AVX2 (bun's own installer falls back to `-baseline` when
+# /proc/cpuinfo lacks it). This image therefore assumes an AVX2 host. That
+# holds today because the pod is pinned `nodeSelector: kubernetes.io/hostname:
+# gpu-1`, a modern i9 — but Frank's fleet includes pc-1 (i5-3570K, Ivy Bridge,
+# no AVX2), where this binary would die with SIGILL at runtime while the build
+# stayed green on an AVX2 CI runner. If this image is ever scheduled anywhere
+# but gpu-1, switch to `bun-linux-x64-baseline`.
+#
+# `bun --version` at the end fails the BUILD if the binary does not run, rather
+# than deferring that to a smoke test.
 ARG BUN_VERSION=1.3.14
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
@@ -107,7 +126,7 @@ COPY rootfs/ /
 RUN sed -i "s|__AGENT_HOME__|${AGENT_HOME}|g" /opt/sshd_config \
  && chmod 0644 /opt/sshd_config \
  && chmod +x /usr/local/bin/hermes-ssh-sidecar-entrypoint.sh \
- && chmod 0644 /etc/profile.d/36-hermes-bun-path.sh
+ && chmod +x /etc/profile.d/36-hermes-bun-path.sh
 
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}

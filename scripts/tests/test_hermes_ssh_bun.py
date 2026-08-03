@@ -144,57 +144,111 @@ def test_bun_is_installed_as_root_before_the_user_switch():
     )
 
 
+# Every path that IS the PVC mount at runtime. `$HOME` belongs here and is easy
+# to miss: the Dockerfile sets `ENV … HOME=${AGENT_HOME}`, so from that line on
+# `$HOME` and the PVC mount are the same directory. A guard that watches only
+# `$AGENT_HOME` waves through `curl … | bash`, whose installer targets `$HOME/.bun`
+# - which is the single most likely way this gets "simplified" later.
+_PVC_TOKENS = (AGENT_HOME, "${AGENT_HOME}", "$AGENT_HOME", "${HOME}", "$HOME")
+
+
+# bun's official installer. It writes to `$BUN_INSTALL`, defaulting to
+# `$HOME/.bun` - so a line invoking it lands in the PVC mount WITHOUT ever
+# naming it. Token matching alone cannot see that, and `curl … | bash` is by
+# far the likeliest way this gets "simplified" later.
+_INSTALLER_URL = "bun.sh/install"
+_BUN_INSTALL_RE = re.compile(r"BUN_INSTALL=(\S+)")
+
+
+def _pvc_violations(text: str) -> list[str]:
+    """Lines that put something bun-related under the PVC mount.
+
+    Extracted so the guard and its mutation check run the SAME code. A mutation
+    test that re-implements the predicate inline proves only that Python's `in`
+    operator works - it passes even if the guard it claims to check is deleted.
+
+    Two rules, because there are two ways to land in the mount:
+      1. naming it outright (`${AGENT_HOME}/…`, `$HOME/…`);
+      2. invoking the official installer, whose DEFAULT target is `$HOME/.bun`.
+         That one names nothing, so rule 1 is blind to it - which is exactly
+         how a "simplification" back to `curl | bash` would sail through.
+    """
+    out: list[str] = []
+    for line in text.splitlines():
+        if "bun" not in line.lower():
+            continue
+        if any(tok in line for tok in _PVC_TOKENS):
+            out.append(line)
+            continue
+        if _INSTALLER_URL in line:
+            m = _BUN_INSTALL_RE.search(line)
+            # No explicit destination -> defaults into the mount. An explicit
+            # one still has to point outside it.
+            if not m or any(tok in m.group(1) for tok in _PVC_TOKENS):
+                out.append(line)
+    return out
+
+
 def test_bun_is_not_installed_under_the_pvc_mount():
     """The trap. `$AGENT_HOME` is a PVC mount at runtime: anything baked under
     it is hidden the moment the volume mounts, so the image would build clean
     and the container would have no bun."""
-    text = _dockerfile_instructions()
-    for line in text.splitlines():
-        if "bun" not in line.lower():
-            continue
-        assert AGENT_HOME not in line, (
-            f"bun must not be installed under the PVC mount {AGENT_HOME}: {line!r}"
-        )
-        assert "${AGENT_HOME}" not in line and "$AGENT_HOME" not in line, (
-            f"bun must not be installed under $AGENT_HOME (a PVC mount): {line!r}"
-        )
-    assert "/usr/local/bin/bun" in text, (
+    violations = _pvc_violations(_dockerfile_instructions())
+    assert not violations, (
+        "bun must not be installed under the PVC mount - these lines do:\n"
+        + "\n".join(violations)
+    )
+    assert "/usr/local/bin/bun" in _dockerfile_instructions(), (
         "bun belongs in /usr/local/bin - outside every PVC mount in this pod"
     )
 
 
 def test_the_pvc_mount_guard_actually_catches_a_violation():
-    """Mutation check on the guard above, in-process: a guard that has never
-    seen a failing input is a claim, not a check."""
-    offending = 'RUN curl -o ${AGENT_HOME}/.bun/bin/bun https://example.invalid'
-    hits = [
-        line for line in offending.splitlines()
-        if "bun" in line.lower() and "${AGENT_HOME}" in line
-    ]
-    assert hits, "the guard's own matching logic must flag an install under $AGENT_HOME"
+    """Mutation check wired to the REAL guard: this calls `_pvc_violations`,
+    the same function the guard above calls, so deleting or weakening it fails
+    here too."""
+    # The realistic regression: bun's own installer, which targets $HOME/.bun.
+    offending = "RUN curl -fsSL https://bun.sh/install | bash\n"
+    assert _pvc_violations(offending), (
+        "the guard must flag `curl | bash`, whose installer writes to $HOME/.bun"
+    )
+    assert _pvc_violations('RUN install -m0755 bun ${AGENT_HOME}/.bun/bin/bun')
+    assert _pvc_violations('RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=$HOME bash')
+    # And it must not cry wolf: neither over the legitimate install here, nor
+    # over base/Dockerfile's installer call, which redirects outside the mount
+    # (that line has a PINNING problem, not a path problem - see PIN_SPECS).
+    assert not _pvc_violations('RUN install -m 0755 "${tmp}/bun" /usr/local/bin/bun')
+    assert not _pvc_violations(
+        'RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash'
+    )
 
 
 def test_the_download_is_checksum_verified():
-    text = _dockerfile()
-    assert "SHASUMS256.txt" in text, (
-        "verify against the release's own checksum file, so a version bump is "
-        "one line and cannot silently skip verification"
+    """Reads INSTRUCTIONS, not raw text: the comment above the install names
+    SHASUMS256.txt, so a raw-text scan passes even with verification deleted."""
+    text = _dockerfile_instructions()
+    assert "SHASUMS256.txt" in text, "the checksum file must be fetched"
+    assert "sha256sum" in text and "--check" in text, (
+        "the checksum file must actually be checked, not merely downloaded"
     )
-    assert "sha256sum" in text and "--check" in text
 
 
 def test_the_architecture_is_derived_not_hardcoded():
     """This image builds amd64 today. A hardcoded x64 asset is how a future
     multi-arch build produces a silently broken image."""
-    text = _dockerfile()
+    text = _dockerfile_instructions()
     assert "dpkg --print-architecture" in text, (
         "derive the bun asset from the build architecture"
     )
     assert "bun-linux-aarch64" in text, "the arm64 asset name must be handled"
 
 
-def test_unzip_is_available_for_the_bun_archive():
-    assert re.search(r"^\s+unzip \\$", _dockerfile(), re.MULTILINE), (
+def test_unzip_is_installed_for_the_bun_archive():
+    """The build needs `unzip` (bun publishes zips). This asserts it is present
+    in the apt list, NOT that it must remain there forever - if a future change
+    installs and purges it inside the bun layer instead, update this guard
+    rather than keeping dead tooling in the runtime image to satisfy it."""
+    assert re.search(r"^\s+unzip \\$", _dockerfile_instructions(), re.MULTILINE), (
         "unzip belongs in the existing apt list, not a second apt-get layer"
     )
 
@@ -245,7 +299,20 @@ def test_the_path_shim_survives_a_missing_bun_dir():
     assert proc.stderr == "", f"the shim wrote to stderr: {proc.stderr!r}"
 
 
-def test_the_shim_is_made_executable_by_the_build():
-    assert "36-hermes-bun-path.sh" in _dockerfile(), (
-        "the Dockerfile must chmod the shim alongside the entrypoint"
-    )
+def test_the_shim_mode_is_set_by_the_build():
+    """Asserts the actual `chmod`, not that the filename appears somewhere.
+
+    The earlier version of this test matched the bare filename against raw
+    Dockerfile text, so it passed on a mention inside a COMMENT - and it was
+    named "…is_made_executable…" while the line it inspected set 0644. Every
+    sibling image in this repo (`hermes-agent-shell`, `ruflo-shell`,
+    `infra-shell`) chmod +x its profile.d drop-ins, so this one does too.
+
+    Mode is not strictly required for correctness - Debian's /etc/profile
+    sources drop-ins via `run-parts --list --regex`, which tests `-r`, not `-x`
+    - but an unexplained deviation from a family convention is a trap for the
+    next reader.
+    """
+    assert re.search(
+        r"chmod \+x [^\n]*36-hermes-bun-path\.sh", _dockerfile_instructions()
+    ), "the Dockerfile must `chmod +x` the shim, matching the sibling images"
