@@ -38,7 +38,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       passwd \
       gh \
       rsync \
+      curl \
+      unzip \
+      ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Bun — the JavaScript runtime the client CLI needs (derio-net/frank#759). The
+# image ships the RUNTIME ONLY; the CLI itself is installed by the operator at
+# runtime, which keeps a private tool's name out of this public repo and puts
+# its bytes on the home PVC, where they survive a pod restart.
+#
+# INSTALLED TO /usr/local/bin, AS ROOT, DELIBERATELY. Bun's own installer
+# targets `~/.bun`, and ${AGENT_HOME} here is /opt/data/home — a Longhorn PVC
+# MOUNT at runtime. Anything baked under that path is hidden the moment the
+# volume mounts, so the obvious install command yields an image that builds
+# clean and a container with no `bun` on it. Only the operator's later
+# `bun install -g` belongs under $HOME — and there it is wanted, because that
+# is precisely what makes it persist.
+#
+# The architecture is derived, not hardcoded: this image builds amd64 today,
+# and a hardcoded x64 asset is how a future multi-arch build ships a silently
+# broken image. Verification uses the release's OWN SHASUMS256.txt rather than
+# a digest pinned here, so a version bump is a one-line change that cannot
+# accidentally skip the check. `bun --version` at the end fails the BUILD if
+# the binary does not run, rather than deferring that to a smoke test.
+ARG BUN_VERSION=1.3.14
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) bun_asset=bun-linux-x64 ;; \
+      arm64) bun_asset=bun-linux-aarch64 ;; \
+      *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    tmp="$(mktemp -d)"; \
+    base="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}"; \
+    curl -fsSL -o "${tmp}/${bun_asset}.zip" "${base}/${bun_asset}.zip"; \
+    curl -fsSL -o "${tmp}/SHASUMS256.txt" "${base}/SHASUMS256.txt"; \
+    (cd "${tmp}" && sha256sum --check --ignore-missing SHASUMS256.txt); \
+    unzip -q "${tmp}/${bun_asset}.zip" -d "${tmp}"; \
+    install -m 0755 "${tmp}/${bun_asset}/bun" /usr/local/bin/bun; \
+    rm -rf "${tmp}"; \
+    bun --version
 
 # Create the login identity. The official image has no UID-1000 user; mirror
 # agent-shell-base's idempotent handling in case a future base ships one.
@@ -67,7 +106,8 @@ ENV AGENT_USER=${AGENT_USER} AGENT_UID=${AGENT_UID} AGENT_GID=${AGENT_GID} \
 COPY rootfs/ /
 RUN sed -i "s|__AGENT_HOME__|${AGENT_HOME}|g" /opt/sshd_config \
  && chmod 0644 /opt/sshd_config \
- && chmod +x /usr/local/bin/hermes-ssh-sidecar-entrypoint.sh
+ && chmod +x /usr/local/bin/hermes-ssh-sidecar-entrypoint.sh \
+ && chmod 0644 /etc/profile.d/36-hermes-bun-path.sh
 
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}

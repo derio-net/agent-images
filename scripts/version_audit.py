@@ -116,6 +116,17 @@ PIN_SPECS: dict[str, dict] = {
         "source_ref": "nousresearch/hermes-agent",
         "classification": "rebuild-only",
     },
+    "BUN_VERSION": {
+        "source": "github-release",
+        "source_ref": "oven-sh/bun",
+        "classification": "rebuild-only",
+        "tag_prefix": "bun-",
+        "note": "The JS runtime in the hermes ssh sidecar (frank#759). Nothing "
+                "self-updates it in-pod, so a rebuild is the only refresh path. "
+                "The CLI that USES it is deliberately NOT pinned here - it is "
+                "installed onto the home PVC at runtime, so its name stays out "
+                "of this public repo.",
+    },
     "TMUX_RESURRECT_REF": {
         "source": "github-tag",
         "source_ref": "tmux-plugins/tmux-resurrect",
@@ -210,6 +221,7 @@ class Pin:
     frozen: bool = False
     unpinned: bool = False
     note: str | None = None
+    tag_prefix: str | None = None
 
 
 def _dockerfiles(repo_root: Path) -> list[Path]:
@@ -282,6 +294,7 @@ def extract_pins(repo_root: Path) -> list[Pin]:
             subtree=spec.get("subtree"),
             frozen=spec.get("frozen", False),
             note=spec.get("note"),
+            tag_prefix=spec.get("tag_prefix"),
         ))
     return pins
 
@@ -430,6 +443,14 @@ def classify_status(pin: "Pin", target: str | None) -> Status:
         return Status.FROZEN
     if target is None or pin.current is None:
         return Status.UNKNOWN
+    # Some upstreams tag releases with the project name (bun ships `bun-v1.3.14`,
+    # not `v1.3.14`). `_normalise` only strips a leading `v`, so without this the
+    # pin `1.3.14` never equals its own release tag and reads BEHIND forever -
+    # the false positive this module's docstring says stops a report being read.
+    # Stripping only a DECLARED prefix keeps real drift visible: `bun-v1.3.15`
+    # still differs from `1.3.14` after the prefix comes off.
+    if pin.tag_prefix and target.startswith(pin.tag_prefix):
+        target = target[len(pin.tag_prefix):]
     if _normalise(pin.current) == _normalise(target):
         return Status.CURRENT
     return Status.BEHIND

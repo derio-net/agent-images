@@ -140,30 +140,32 @@ tasks:
 state:
   steps:
     P1.T1.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-08-03T15:37:00+00:00'
       note: null
     P1.T1.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-08-03T15:37:02+00:00'
       note: null
     P1.T1.S3:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-08-03T15:37:04+00:00'
       note: null
     P1.T2.S1:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-08-03T15:37:06+00:00'
       note: null
     P1.T2.S2:
-      state: ' '
-      ticked_at: null
+      state: x
+      ticked_at: '2026-08-03T15:37:09+00:00'
       note: null
     P1.T2.S3:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: '-'
+      ticked_at: '2026-08-03T15:37:16+00:00'
+      note: 'No extraction earned its place: the Dockerfile has one apt layer and
+        one download layer, both readable. A build script existing only to shorten
+        a Dockerfile is a second place to look.'
   completion:
-    at: null
+    at: '2026-08-03T15:37:19+00:00'
     note: null
     observed_prs: []
