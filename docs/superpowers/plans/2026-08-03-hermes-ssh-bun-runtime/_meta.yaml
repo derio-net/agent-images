@@ -1,0 +1,6 @@
+schema_version: 2
+plan: 2026-08-03-hermes-ssh-bun-runtime
+spec: derio-net/frank:docs/superpowers/specs/2026-08-03--orch--hermes-retrieval-store-sidecar-design.md
+target_repo: derio-net/agent-images
+fr_version: '>=3.7.0,<4.0.0'
+created: '2026-08-03'

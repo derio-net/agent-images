@@ -1,0 +1,50 @@
+schema_version: 2
+phase:
+  number: 3
+  title: '[manual] Operator: build the branch, merge, hand the SHA to frank'
+  tag: manual
+  depends_on:
+  - 1
+  - 2
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Steps that need CI and a merge
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Trigger a branch build: `gh workflow run build.yaml --ref feat/hermes-ssh-bun-runtime`.
+
+      This is mandatory, not belt-and-braces. This repo's CI does NOT run on
+      `pull_request`, and its `push` trigger is restricted to `main` — so a
+      PR here is green-looking and entirely unbuilt, and pushing the branch
+      does not build it either. Merging on a green checkmark alone is
+      merging blind.
+
+      Confirm the run passes, including the extended
+      `smoke-test-hermes-agent-shell-ssh` job.
+  - id: P3.T1.S2
+    text: |-
+      After merge, take the `main` build's published tag for
+      `ghcr.io/derio-net/hermes-agent-shell-ssh` and re-pin it in frank's
+      `apps/hermes-agent-shell/manifests/deployment.yaml`, pushing to
+      frank's open PR (frank plan phase 4).
+
+      If nobody does this, the scheduled agent-images bump re-pins it
+      eventually — `hermes-agent-shell-ssh` is in that workflow's
+      `AGENT_IMAGES` allowlist. The only consequence of waiting is that
+      `bun --version` does not answer on the cluster until then.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

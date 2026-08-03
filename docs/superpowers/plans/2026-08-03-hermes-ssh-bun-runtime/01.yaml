@@ -1,0 +1,169 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Bun in the ssh sidecar image — pin, install, PATH shim (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+tasks:
+- number: 1
+  title: The pin, and the registry that keeps it honest (red -> green)
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      RED — write the Dockerfile contract first.
+
+      Create `scripts/tests/test_hermes_ssh_bun.py`, following the style of
+      `scripts/tests/test_talosctl_pin_parity.py` (plain pytest, read the
+      Dockerfile text, assert on it). Assert against
+      `hermes-agent-shell-ssh/Dockerfile`:
+
+      - it declares `ARG BUN_VERSION=` with a bare semver value (no `v`
+        prefix — match what you actually write, and keep the assertion on
+        the SHAPE so a bump does not break the test)
+      - the install runs as `root` — i.e. the `ARG BUN_VERSION` and the
+        install RUN both appear BEFORE the final `USER ${AGENT_USER}` line
+      - the install target is under `/usr/local`, and the Dockerfile does
+        NOT install into `$AGENT_HOME` / `/opt/data` anywhere
+
+      That last assertion is the important one and deserves a comment in
+      the test: `$AGENT_HOME` is `/opt/data/home`, which is a **PVC mount at
+      runtime**, so anything the image bakes under it is hidden the moment
+      the volume mounts. Bun's own installer defaults to `~/.bun`, which is
+      exactly that path — so the obvious install command is the wrong one.
+
+      Run: `uv run pytest scripts/tests/test_hermes_ssh_bun.py -q`
+      Expected: FAILS — no BUN_VERSION in the Dockerfile.
+  - id: P1.T1.S2
+    text: |-
+      RED — assert the version-pin registry covers it.
+
+      `scripts/version_audit.py` scans every Dockerfile for versionish
+      `ARG`s and `find_uncovered_version_args` fails loudly on any pin
+      missing from `PIN_SPECS` — "adding a pin to a Dockerfile would be a
+      quiet omission" otherwise. So the registry entry is not optional
+      bookkeeping; without it the suite goes red.
+
+      Add a test asserting `BUN_VERSION` is in `PIN_SPECS` with
+      `source: github-release`, `source_ref: oven-sh/bun`, and
+      `classification: rebuild-only` (the image rebuild is the only refresh
+      path — nothing self-updates Bun in-pod).
+
+      Run the audit tests. Expected: FAILS — not in the registry.
+  - id: P1.T1.S3
+    text: |-
+      GREEN — add the pin, the registry entry, and the install.
+
+      Registry: add `BUN_VERSION` to `PIN_SPECS` in
+      `scripts/version_audit.py`, under the plain-upstream `rebuild-only`
+      group, with a `note` recording WHY it is rebuild-only and that the
+      client CLI itself is NOT pinned here (it is installed by the operator
+      onto the home PVC — see the frank spec's decision 2).
+
+      Dockerfile (`hermes-agent-shell-ssh/Dockerfile`), before the
+      `USER ${AGENT_USER}` switch:
+
+      - `ARG BUN_VERSION=1.3.14` (current stable, released 2026-05-13)
+      - add `unzip` and `ca-certificates` to the existing apt list rather
+        than a second `apt-get` layer
+      - derive the asset name from the build architecture rather than
+        hardcoding x64: `dpkg --print-architecture` gives `amd64`/`arm64`,
+        which map to Bun's `bun-linux-x64` / `bun-linux-aarch64`. The image
+        builds amd64 today; a hardcoded URL is how a future multi-arch
+        build produces a silently broken image.
+      - download the zip AND the release's `SHASUMS256.txt` from
+        `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/`,
+        verify with `sha256sum --check --ignore-missing`, unzip, install the
+        binary to `/usr/local/bin/bun`, `chmod 0755`, and delete the
+        download dir in the same layer.
+
+      Verifying against the release's own checksum file — rather than a
+      digest hardcoded here — means a bump changes one line and cannot
+      silently skip verification.
+
+      Run both test files. Expected: PASS.
+- number: 2
+  title: The PATH shim, without which none of it is reachable (red -> green)
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      RED — assert the shim exists and is sane.
+
+      Extend `test_hermes_ssh_bun.py` to assert
+      `hermes-agent-shell-ssh/rootfs/etc/profile.d/36-hermes-bun-path.sh`
+      exists, adds `$HOME/.bun/bin` to `PATH`, and is idempotent (re-running
+      it must not append a duplicate entry — login shells and `bash -lc`
+      can both source profile.d in one session).
+
+      Also assert the Dockerfile `chmod`s it, alongside the existing
+      `chmod` of the entrypoint.
+
+      Number rationale, worth a comment in the test: this container's
+      `/etc/profile.d` holds only `35-hermes-agent-shell-byok-env.sh`
+      (mounted by frank, not baked) and `70-systemd-shell-extra.sh`. There
+      is NO `50-…-motd.sh` here — that belongs to the sibling
+      `hermes-agent-shell` image — so the usual "number below the MOTD"
+      rule is about a file this image does not contain. 36 sits after
+      frank's mounted shim and clear of 70.
+
+      Expected: FAILS.
+  - id: P1.T2.S2
+    text: |-
+      GREEN — write the shim and wire it in.
+
+      Create `rootfs/etc/profile.d/36-hermes-bun-path.sh`: guard on
+      `case ":$PATH:" in *":$HOME/.bun/bin:"*) ;; *) export PATH=...;; esac`
+      so it is idempotent, and do NOT fail if the directory does not exist
+      yet — before the operator's first global install it legitimately
+      does not.
+
+      Head-comment it: sshd scrubs the container environment, so a login
+      shell's PATH comes from /etc/profile.d or from nowhere; `$HOME` is a
+      PVC, so `bun install -g` persists across pod restarts, which is the
+      entire basis of the design's decision to install the CLI at runtime
+      rather than bake it.
+
+      Add the `chmod +x` to the existing `RUN sed -i … && chmod …` block.
+
+      Run the tests. Expected: PASS.
+  - id: P1.T2.S3
+    text: |-
+      OPTIONAL REFACTOR — skip unless there is something real to clean.
+
+      The Dockerfile now has one apt layer and one download layer; if the
+      download RUN has grown past readable, extract it to a small
+      `rootfs/usr/local/bin/`-adjacent build script ONLY if that genuinely
+      reads better. Otherwise leave it and say so — a build script that
+      exists to shorten a Dockerfile is a second place to look.
+
+      Stay green; add no behaviour.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
