@@ -985,6 +985,33 @@ jobs:
           docker exec hermes-ssh-smoke sh -c 'command -v rsync >/dev/null' \
             || { echo "✗ rsync not present in the Hermes SSH sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
 
+          # Bun — the JS runtime for the client CLI (derio-net/frank#759). Assert
+          # it resolves OUTSIDE the PVC mounts: $AGENT_HOME (/opt/data/home) is a
+          # PVC at runtime, and this smoke bind-mounts over it exactly like the
+          # pod does — so a bun installed under $HOME by a future "simplification"
+          # would be hidden here and fail this check instead of reaching prod.
+          docker exec hermes-ssh-smoke bun --version \
+            || { echo "✗ bun not runnable as UID 1000 in the sidecar"; docker logs hermes-ssh-smoke; docker rm -f hermes-ssh-smoke; exit 1; }
+          # `command -v` prints nothing when bun is absent, and "" falls through
+          # to the *) branch — so without the first clause this check PASSES on
+          # an image with no bun at all.
+          docker exec hermes-ssh-smoke sh -c 'p="$(command -v bun)"; [ -n "$p" ] || exit 1; case "$p" in /opt/data/*) exit 1;; *) exit 0;; esac' \
+            || { echo "✗ bun missing, or resolving under a PVC mount where it would vanish when the volume mounts"; docker rm -f hermes-ssh-smoke; exit 1; }
+
+          # The profile.d PATH shim, asserted in a LOGIN shell specifically. The
+          # `docker exec … bun --version` above proves nothing about the shim:
+          # neither it nor `ssh host -- cmd` sources /etc/profile.d, and this repo
+          # has already been bitten by exactly that (the BYOK env shim). A smoke
+          # test that repeats the mistake passes while what it claims to prove is
+          # broken.
+          docker exec hermes-ssh-smoke bash -lc 'case ":$PATH:" in *":$HOME/.bun/bin:"*) exit 0;; *) echo "PATH=$PATH"; exit 1;; esac' \
+            || { echo "✗ \$HOME/.bun/bin missing from the LOGIN-shell PATH — operator-installed CLIs would not resolve"; docker rm -f hermes-ssh-smoke; exit 1; }
+
+          # Idempotent: login shells and `bash -lc` can both source profile.d in
+          # one session, so a blind append grows PATH without bound.
+          docker exec hermes-ssh-smoke bash -lc '. /etc/profile.d/36-hermes-bun-path.sh; n=$(printf "%s" "$PATH" | tr ":" "\n" | grep -c "\.bun/bin$"); [ "$n" = 1 ] || { echo "occurrences=$n"; exit 1; }' \
+            || { echo "✗ the bun PATH shim is not idempotent"; docker rm -f hermes-ssh-smoke; exit 1; }
+
           docker logs hermes-ssh-smoke
           docker rm -f hermes-ssh-smoke
 

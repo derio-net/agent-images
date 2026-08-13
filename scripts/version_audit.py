@@ -116,6 +116,20 @@ PIN_SPECS: dict[str, dict] = {
         "source_ref": "nousresearch/hermes-agent",
         "classification": "rebuild-only",
     },
+    "BUN_VERSION": {
+        "source": "github-release",
+        "source_ref": "oven-sh/bun",
+        "classification": "rebuild-only",
+        "tag_prefix": "bun-",
+        "note": "The JS runtime in the hermes ssh sidecar (frank#759). Nothing "
+                "self-updates it in-pod, so a rebuild is the only refresh path. "
+                "COVERS ONE OF TWO BUNS: base/Dockerfile also installs bun, via "
+                "an unpinned `curl | bash` with no ARG, so it is invisible to "
+                "find_uncovered_version_args and NOT tracked here. "
+                "The CLI that USES bun is deliberately not pinned at all - it is "
+                "installed onto the home PVC at runtime, so its name stays out "
+                "of this public repo.",
+    },
     "TMUX_RESURRECT_REF": {
         "source": "github-tag",
         "source_ref": "tmux-plugins/tmux-resurrect",
@@ -210,6 +224,7 @@ class Pin:
     frozen: bool = False
     unpinned: bool = False
     note: str | None = None
+    tag_prefix: str | None = None
 
 
 def _dockerfiles(repo_root: Path) -> list[Path]:
@@ -282,6 +297,7 @@ def extract_pins(repo_root: Path) -> list[Pin]:
             subtree=spec.get("subtree"),
             frozen=spec.get("frozen", False),
             note=spec.get("note"),
+            tag_prefix=spec.get("tag_prefix"),
         ))
     return pins
 
@@ -430,6 +446,14 @@ def classify_status(pin: "Pin", target: str | None) -> Status:
         return Status.FROZEN
     if target is None or pin.current is None:
         return Status.UNKNOWN
+    # Some upstreams tag releases with the project name (bun ships `bun-v1.3.14`,
+    # not `v1.3.14`). `_normalise` only strips a leading `v`, so without this the
+    # pin `1.3.14` never equals its own release tag and reads BEHIND forever -
+    # the false positive this module's docstring says stops a report being read.
+    # Stripping only a DECLARED prefix keeps real drift visible: `bun-v1.3.15`
+    # still differs from `1.3.14` after the prefix comes off.
+    if pin.tag_prefix and target.startswith(pin.tag_prefix):
+        target = target[len(pin.tag_prefix):]
     if _normalise(pin.current) == _normalise(target):
         return Status.CURRENT
     return Status.BEHIND
@@ -468,8 +492,15 @@ def render_report(pins, targets: dict, with_exit_code: bool = False):
         for pin in sorted(group, key=lambda p: p.name):
             target = targets.get(pin.name)
             status = classify_status(pin, target)
+            # Render the target with its declared tag prefix removed, so a
+            # correctly-pinned bun reads `1.3.14 -> v1.3.14 [ok]` rather than
+            # `1.3.14 -> bun-v1.3.14 [ok]`, which looks like drift to a skimmer
+            # and invites a no-op "fix".
+            shown = target
+            if shown and pin.tag_prefix and shown.startswith(pin.tag_prefix):
+                shown = shown[len(pin.tag_prefix):]
             row = (f"  [{_STATUS_MARK[status]:>8}]  {pin.name:<24} "
-                   f"{pin.current or '(none)':<44} -> {target or '?'}")
+                   f"{pin.current or '(none)':<44} -> {shown or '?'}")
             if pin.anchor:
                 # Without this a reader "helpfully" bumps talosctl to latest.
                 row += f"   (target: {pin.anchor}, NOT upstream latest)"

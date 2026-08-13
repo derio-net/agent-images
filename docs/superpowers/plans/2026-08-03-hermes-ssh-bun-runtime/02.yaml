@@ -1,0 +1,57 @@
+schema_version: 2
+phase:
+  number: 2
+  title: Runtime proof — build it and ask the process
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+tasks:
+- number: 1
+  title: Prove it locally before asking CI
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      Build the image locally and verify against the RUNNING container, not
+      the Dockerfile.
+
+      `docker build -t has-ssh-bun:test hermes-agent-shell-ssh/` then, under
+      the pod's security posture (`--user 1000:1000 --cap-drop ALL`,
+      entrypoint overridden so sshd does not take over):
+
+      - `bun --version` prints the pinned version
+      - `bash -lc 'echo $PATH'` contains `$HOME/.bun/bin` — run it as a
+        LOGIN shell. `docker exec … bun --version` alone proves nothing
+        about the shim, because it never sources /etc/profile.d.
+      - the shim is idempotent: `bash -lc 'source /etc/profile.d/36-hermes-bun-path.sh; echo $PATH'`
+        does not show the entry twice
+
+      Record the actual outputs in the journal (`fr journal add --scope
+      plan`). "It built" is not evidence.
+  - id: P2.T1.S2
+    text: |-
+      Extend the CI smoke test so this cannot regress.
+
+      In `.github/workflows/build.yaml`, the
+      `smoke-test-hermes-agent-shell-ssh` job already boots this image under
+      a K8s-equivalent securityContext. Add the two assertions from the
+      previous step: `bun --version`, and a `bash -lc` PATH check.
+
+      Assert on the PATH inside a login shell specifically, and comment why
+      — this repo has already been bitten by `ssh host -- cmd` skipping
+      profile.d, and a smoke test that makes the same mistake would pass
+      while the thing it claims to prove is broken.
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: '2026-08-03T15:37:11+00:00'
+      note: null
+    P2.T1.S2:
+      state: x
+      ticked_at: '2026-08-03T15:37:14+00:00'
+      note: null
+  completion:
+    at: '2026-08-03T15:37:21+00:00'
+    note: null
+    observed_prs: []
