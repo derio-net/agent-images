@@ -108,6 +108,27 @@ ConfigMap on Frank). Removed semantics mirror multi-agent-shell.
    declare per-harness MCP servers, or clone skills. The next pod restart
    (or `hermes-agent-shell-reconcile` interactively) applies them.
 
+## Strict-state permission guard
+
+Some Kubernetes PVC mount paths get broad fsGroup-driven mode rewrites on pod
+start/remount. For PostgreSQL-style state this is fatal: a previously healthy
+`PGDATA` can come back group-writable/setgid and fail only on the next start.
+
+To guard sensitive state dirs, the image ships
+`cont-init.d/36-hermes-strict-state-perms`. It reads the optional env var
+`HERMES_AGENT_SHELL_STRICT_PATHS`, a semicolon-separated list of:
+
+```text
+/abs/path
+/abs/path:700
+/abs/path:700:600
+```
+
+Defaults are `700` for directories and `600` for files. Missing paths are
+ignored (fail-open), so the hook is safe to leave configured before the state
+exists. Frank's `hermes-agent-shell` pod can use this to re-tighten
+`/home/agent/.local/pgsql/hindsight-data` on every boot.
+
 ## Layered install model
 
 Same three-layer model as `multi-agent-shell` and `paperclip-shell`:
@@ -160,6 +181,7 @@ Local bats coverage:
 cd hermes-agent-shell
 bats tests/test_motd.bats              # BYOK MOTD + OPENAI_BASE_URL hint
 bats tests/test_install_inventory.bats # harnesses/mcp-servers/skills handlers
+bats tests/test_strict_state_perms.bats
 ```
 
 ## Telegram alerting

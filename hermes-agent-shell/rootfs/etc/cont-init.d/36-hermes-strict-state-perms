@@ -1,0 +1,58 @@
+#!/command/with-contenv bash
+# 36-hermes-strict-state-perms — Re-apply strict modes to sensitive state dirs
+# on every container boot.
+#
+# Why this exists:
+# - Some Kubernetes PVC mount paths are subject to fsGroup-driven permission
+#   reconciliation on pod start/remount.
+# - That broad rewrite can leave directories group-writable/setgid (e.g. 2775)
+#   and files 664 across $HOME on the PVC.
+# - PostgreSQL rejects those modes inside PGDATA, so a previously healthy
+#   cluster can fail on the next restart even though no operator touched it.
+#
+# Contract:
+# - HERMES_AGENT_SHELL_STRICT_PATHS is a semicolon-separated list of specs:
+#     /abs/path
+#     /abs/path:700
+#     /abs/path:700:600
+# - Defaults are dir mode 700 and file mode 600.
+# - Missing paths are ignored (fail-open). This hook never blocks sshd.
+set -u
+
+specs="${HERMES_AGENT_SHELL_STRICT_PATHS:-}"
+if [ -z "$specs" ]; then
+    exit 0
+fi
+
+old_ifs="$IFS"
+IFS=';'
+for spec in $specs; do
+    IFS="$old_ifs"
+    [ -z "$spec" ] && continue
+
+    path="${spec%%:*}"
+    rest="${spec#*:}"
+    dir_mode="700"
+    file_mode="600"
+
+    if [ "$rest" != "$spec" ]; then
+        if [[ "$rest" == *:* ]]; then
+            dir_mode="${rest%%:*}"
+            file_mode="${rest#*:}"
+        else
+            dir_mode="$rest"
+        fi
+    fi
+
+    if [ ! -e "$path" ]; then
+        echo "36-hermes-strict-state-perms: skip missing path $path"
+        continue
+    fi
+
+    echo "36-hermes-strict-state-perms: enforcing dir=$dir_mode file=$file_mode on $path"
+    find "$path" -type d -exec chmod "$dir_mode" {} +
+    find "$path" -type f -exec chmod "$file_mode" {} +
+done
+IFS="$old_ifs"
+
+exit 0
