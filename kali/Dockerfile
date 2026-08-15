@@ -94,8 +94,58 @@ RUN export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH" \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Kali tooling + logrotate (openssh-server/tmux/mosh inherited from agent-shell-base) ──
+#
+# NOT `kali-tools-top10`. That metapackage hard-Depends on three tools this pod
+# is structurally incapable of running, and there is no way to install it
+# without them:
+#   - aircrack-ng  — a Wi-Fi cracking suite; a container has no radio.
+#   - burpsuite    — a Java Swing GUI (341 MB) that drags in
+#                    openjdk-25-jre-headless (234 MB). This is a headless SSH
+#                    pod with no display, and Burp Community has no headless
+#                    mode, so neither the app nor its JRE can ever execute.
+#   - wireshark    — the GRAPHICAL analyzer (16.7 MB + libwireshark19 at
+#                    131.7 MB). Same no-display problem. Note the metapackage
+#                    never installed `tshark`, wireshark's CLI, so the image
+#                    carried the unusable half and not the usable one.
+# Listing the members explicitly keeps every tool that can actually run here,
+# swaps the wireshark GUI for tshark (0.4 MB on top of libwireshark), and drops
+# roughly 750 MB uncompressed. nmap comes from `non-free` (Kali relicensed it
+# under the NPSL); the sources.list line above already enables that component.
+#
+# The split into four RUNs is deliberate and is about PULL time, not layer
+# hygiene. containerd fetches layers concurrently but decompresses and unpacks
+# each one serially, so a single monolithic layer is the bottleneck for the
+# whole image. As one 1.56 GB layer (67% of the image) this step pulled at
+# 1.36 MB/s while vk-local — same node, same rollout, minutes apart — managed
+# 5.78 MB/s across its many smaller layers. That cost a 26-minute image pull
+# during the 2026-08-15 bump, and because the secure-agent-pod Deployment is
+# `strategy: Recreate` (RWO PVC), the whole pull is downtime: the fr bridge
+# heartbeat went stale and paged `VK Issue Bridge Stale` (critical) for ~20
+# minutes on a completely healthy cluster.
+#
+# Metasploit's build toolchain goes first and alone: the mingw-w64 cross
+# compilers (~630 MB, for Windows payloads) and oracle-instantclient-basic
+# (206 MB) are pulled in as metasploit-framework's own dependencies, so naming
+# them here does not add anything to the image — it only moves them into a
+# separate blob that can download in parallel with the rest. If metasploit's
+# dependency set ever shifts, this degrades gracefully: apt simply resolves
+# whatever is still missing in the next layer.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      kali-tools-top10 nmap netcat-traditional logrotate \
+      gcc-mingw-w64-x86-64-win32 gcc-mingw-w64-i686-win32 \
+      mingw-w64-x86-64-dev mingw-w64-i686-dev mingw-w64-common \
+      oracle-instantclient-basic \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      metasploit-framework \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      nmap sqlmap hydra john netexec responder tshark \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      netcat-traditional logrotate \
     && rm -rf /var/lib/apt/lists/*
 
 # ── fr bridge — PVC-resident install, not image-baked ──
