@@ -15,7 +15,7 @@ first SSH, without the pentest baggage of `secure-agent-kali`.
 
 This image deliberately ships **only** the three Kubernetes/Talos/Omni
 admin CLIs on top of `multi-agent-shell`. **Pentest packages
-(`nmap`, `metasploit`, `kali-tools-top10`, `burpsuite`, etc.) are
+(`nmap`, `metasploit`, `sqlmap`, `hydra`, etc.) are
 intentionally NOT included.** That separation was the planning-time
 decision behind splitting `secure-agent-kali` into a cluster-ops shell
 (this image) and a pentest shell (`secure-agent-kali`, untouched in this

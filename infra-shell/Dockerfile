@@ -14,7 +14,7 @@ USER root
 # Pins + install method copied verbatim from kali/Dockerfile so the two
 # images stay byte-comparable for the tools they share. kubectl uses the
 # k8s.io stable.txt redirect (unpinned); talosctl/omnictl carry explicit
-# version pins. Pentest packages (nmap, kali-tools-top10, etc.) are
+# version pins. Pentest packages (nmap, metasploit, sqlmap, etc.) are
 # intentionally NOT included — infra-shell is cluster-ops only.
 ARG TARGETARCH
 # talosctl tracks the CLUSTER's Talos version (measured v1.12.6, 2026-07-23) -
