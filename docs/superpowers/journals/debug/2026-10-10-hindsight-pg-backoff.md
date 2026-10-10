@@ -9,3 +9,8 @@ Issue #160: with 127.0.0.1:5433 already held in the shared pod netns, postgres e
 ### 9031601629f9 · root-cause · postgres service has no finish script, so s6 has no backoff or give-up policy
 
 s6-supervise only stops restarting when finish exits 125 (permanent failure), and only spaces restarts beyond 1s if finish delays. With no finish, a non-transient startup failure loops at 1 Hz forever; each attempt allocates shared buffers before failing to bind, so the loop drives memory to the OOM limit. Single cause; the port collision itself is operator drift tracked in frank.
+
+<!-- fr:journal kind=finding scope=debug id=a03f8787cb57 created=2026-10-10T18:17:53+00:00 state=fixed -->
+### a03f8787cb57 · finding [fixed] · postgres finish script: bounded backoff, then exit 125
+
+Fix 2ccfe01: services.d/postgres/finish counts fast failures (<60s uptime); run sleeps 1/2/5/15s between them; 5th fast failure -> exit 125 + one loud stderr diagnostic, service stays down. Clean stops (0, SIGTERM/INT/QUIT) and post-long-uptime crashes reset the count. Pinned first by scripts/tests/test_hindsight_pg_backoff.py (8 failed RED on e9e049a, 67/67 green after). CI smoke step reproduces the collision (python holder on 127.0.0.1:5433, --network container:) and asserts give-up + no further attempts.
