@@ -19,3 +19,8 @@ Fix 2ccfe01: services.d/postgres/finish counts fast failures (<60s uptime); run 
 ### 8581ffd4a8e3 · finding [open] · Unrelated: hindsight-api now fetches tiktoken BPE at startup, fails offline smoke
 
 Branch build run 38075221680 (rerun): postgres starts and listens on 127.0.0.1:5433 (this fix's run/finish work), but hindsight-api crashes every ~13s with NameResolutionError for openaipublic.blob.core.windows.net (tiktoken encoding download) under --network none, so /health never returns 200. Not touched by this diff; main last built green 2026-09-12, so this is dependency drift in the hindsight env since then. Second root cause — held for operator decision per batch rules. (Separately, the first attempt failed on a transient agy installer response; rerun passed.)
+
+<!-- fr:journal kind=review scope=debug id=6fb9f9c46d96 created=2026-10-10T19:13:01+00:00 -->
+### 6fb9f9c46d96 · review · Self-review of the diff; tests: ci accepted
+
+Findings raised: none to fix in scope. Out of scope, deliberately not bundled: (1) hindsight-api cannot tell it is talking to a foreign postgres on the same host:port (identity check), (2) a give-up could also surface on /health or halt the container. Unrelated break found while validating: hindsight-api tiktoken download fails the offline happy-path smoke (finding 8581ffd4a8e3, held for operator). Evidence: tests: ci — .fr/ci.yaml gate_checks [test-scripts, test-kali, test-multi-agent-shell] all success on 4e8b3f2 (run 38078801259); fr verify_ci witness ci:4e8b3f2b8b53+af14415b8029;tree=4aec25f676d1. The new CI collision smoke step has not executed yet (it runs after the happy-path step, which fails on the tiktoken issue); local image replay was aborted per the operator's no-local-heavy-runs instruction.
