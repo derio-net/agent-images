@@ -1093,6 +1093,54 @@ jobs:
           docker logs hindsight-smoke | tail -40
           docker rm -f hindsight-smoke
 
+      - name: Smoke test — a fatal postgres start backs off and gives up (agent-images#160)
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # Reproduce the frank incident: something else in the pod netns holds
+          # 127.0.0.1:5433 before our postgres starts. `--network container:`
+          # shares one netns exactly as pod containers do. Without a finish
+          # policy s6 restarted the failing postmaster ~1/s forever (OOMKill);
+          # now it must back off, exit 125 after a bounded number of fast
+          # failures, and stay down. This also proves s6 can write the
+          # ./backoff state in the service dir under the non-root context.
+          docker run -d --name pg-holder --network none python:3.12-alpine \
+            python -c "import socket,time; s=socket.socket(); s.bind(('127.0.0.1',5433)); s.listen(); time.sleep(3600)"
+          mkdir -p /tmp/hindsight-collide
+          sudo chown 1000:1000 /tmp/hindsight-collide
+          docker run -d --name hindsight-collide \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --network container:pg-holder \
+            -v /tmp/hindsight-collide:/opt/hindsight \
+            "${HINDSIGHT_IMAGE}:${IMAGE_SHA}"
+
+          cleanup() { docker rm -f hindsight-collide pg-holder >/dev/null 2>&1 || true; }
+          gave_up=0
+          for i in $(seq 1 150); do
+            if docker logs hindsight-collide 2>&1 | grep -q 'postgres FAILED to start'; then
+              gave_up=1; echo "✓ postgres gave up after ${i}s"; break
+            fi
+            sleep 1
+          done
+          fatals() { docker logs hindsight-collide 2>&1 | grep -c 'could not create any TCP/IP sockets' || true; }
+          if [ "$gave_up" != 1 ]; then
+            echo "✗ postgres never gave up on a fatal bind failure (#160)"
+            docker logs hindsight-collide 2>&1 | tail -60; cleanup; exit 1
+          fi
+
+          # Gave up means STAYS down: no further postmaster attempts.
+          before=$(fatals); sleep 20; after=$(fatals)
+          echo "fatal bind attempts: ${before} at give-up, ${after} after 20s"
+          if [ "$after" -ne "$before" ] || [ "$before" -gt 6 ]; then
+            echo "✗ postgres kept restarting after giving up, or took too many attempts"
+            docker logs hindsight-collide 2>&1 | tail -60; cleanup; exit 1
+          fi
+          docker logs hindsight-collide 2>&1 | grep -E 'backing off|FAILED to start'
+          cleanup
+          echo "✓ fatal postgres start: bounded backoff, then down (no crash loop)"
+
   smoke-test-infra-shell:
     needs: build-children
     runs-on: ubuntu-latest

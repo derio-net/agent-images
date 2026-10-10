@@ -16,6 +16,18 @@
 #
 # initdb of an empty PVC happens earlier in cont-init.d/30-hindsight-initdb,
 # so PGDATA is always initialized by the time s6 starts this longrun.
+#
+# Restart backoff (agent-images#160): ./finish records how long to wait after
+# a fast failure; we sleep it here and stamp the start time it measures from.
+# See ./finish for the policy and the ./backoff state format.
+fails=0 delay=0 started=0
+[ -r ./backoff ] && read -r fails delay started < ./backoff
+if [ "${delay:-0}" -gt 0 ]; then
+  echo "[postgres] fast failure #${fails}; backing off ${delay}s before restarting"
+  sleep "$delay"
+fi
+echo "${fails} 0 $(date +%s)" > ./backoff
+
 export MAMBA_ROOT_PREFIX=/opt/micromamba
 PGDATA=${HINDSIGHT_PGDATA:-/opt/hindsight/pgdata}
 exec micromamba run -n hindsight-pg \

@@ -1,0 +1,59 @@
+#!/command/with-contenv bash
+# Restart policy for the postgres longrun (agent-images#160).
+#
+# Without a finish script s6-supervise restarts a dead service after one
+# second, forever. A fatal startup error (e.g. "could not create any TCP/IP
+# sockets" because something else in the shared pod netns holds 5433) then
+# becomes a 1 Hz fork storm: every attempt is a real postmaster that maps
+# shared buffers before failing to bind, which OOMKilled the container 22
+# times on frank.
+#
+# Policy: a FAST failure (postgres died within FAST_WINDOW seconds of starting)
+# raises the backoff the next `run` sleeps before exec'ing postgres; after
+# MAX_FAST_FAILURES in a row we exit 125, s6's "permanent failure, do not
+# restart" code, and the service stays down until `s6-svc -u` or a container
+# restart. A crash after a long healthy uptime starts the count afresh, and a
+# clean stop (exit 0 / SIGTERM / SIGINT / SIGQUIT) is not a failure at all.
+#
+# The sleep happens in `run`, not here: s6 SIGKILLs a finish script after 5s
+# by default, and a sleeping `run` can still be stopped with `s6-svc -d`.
+#
+# State lives in ./backoff — s6 runs run/finish with cwd = the service dir,
+# which s6-overlay keeps on the /run tmpfs, so it resets with the container.
+# Format, one line: "<fast_failures> <next_delay> <started_epoch>".
+#
+# Args from s6-supervise: $1 exit code (256 = killed by a signal), $2 signal.
+FAST_WINDOW=60
+MAX_FAST_FAILURES=5
+DELAYS=(0 1 2 5 15)   # sleep before the next start, indexed by fast_failures
+
+code=${1:-0}
+sig=${2:-0}
+echo "[s6] postgres exited code=${code} (signal=${sig})"
+
+fails=0 delay=0 started=0
+[ -r ./backoff ] && read -r fails delay started < ./backoff
+
+if [ "$code" -eq 0 ] || { [ "$code" -eq 256 ] && [[ "$sig" =~ ^(2|3|15)$ ]]; }; then
+  echo "0 0 0" > ./backoff
+  exit 0
+fi
+
+now=$(date +%s)
+if [ $((now - started)) -ge "$FAST_WINDOW" ]; then
+  fails=1
+else
+  fails=$((fails + 1))
+fi
+
+if [ "$fails" -ge "$MAX_FAST_FAILURES" ]; then
+  echo "0 0 0" > ./backoff
+  echo "[s6] postgres FAILED to start ${fails} times in a row (each within ${FAST_WINDOW}s);" \
+       "giving up — the service stays DOWN. Check the log above (e.g. port 5433 already" \
+       "in use in the pod netns), then 's6-svc -u' the service or restart the container." >&2
+  exit 125
+fi
+
+delay=${DELAYS[$fails]}
+echo "${fails} ${delay} ${started}" > ./backoff
+exit 0
