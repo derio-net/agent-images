@@ -14,3 +14,8 @@ s6-supervise only stops restarting when finish exits 125 (permanent failure), an
 ### a03f8787cb57 · finding [fixed] · postgres finish script: bounded backoff, then exit 125
 
 Fix 2ccfe01: services.d/postgres/finish counts fast failures (<60s uptime); run sleeps 1/2/5/15s between them; 5th fast failure -> exit 125 + one loud stderr diagnostic, service stays down. Clean stops (0, SIGTERM/INT/QUIT) and post-long-uptime crashes reset the count. Pinned first by scripts/tests/test_hindsight_pg_backoff.py (8 failed RED on e9e049a, 67/67 green after). CI smoke step reproduces the collision (python holder on 127.0.0.1:5433, --network container:) and asserts give-up + no further attempts.
+
+<!-- fr:journal kind=finding scope=debug id=8581ffd4a8e3 created=2026-10-10T18:40:12+00:00 state=open -->
+### 8581ffd4a8e3 · finding [open] · Unrelated: hindsight-api now fetches tiktoken BPE at startup, fails offline smoke
+
+Branch build run 38075221680 (rerun): postgres starts and listens on 127.0.0.1:5433 (this fix's run/finish work), but hindsight-api crashes every ~13s with NameResolutionError for openaipublic.blob.core.windows.net (tiktoken encoding download) under --network none, so /health never returns 200. Not touched by this diff; main last built green 2026-09-12, so this is dependency drift in the hindsight env since then. Second root cause — held for operator decision per batch rules. (Separately, the first attempt failed on a transient agy installer response; rerun passed.)
