@@ -1,0 +1,6 @@
+# CI checks that run this repo's test suites (the per-image pytest jobs in
+# .github/workflows/build.yaml). fr accepts `tests: ci` only once every gate
+# below has passed on the PR head's commit. NB: build.yaml has no
+# pull_request trigger, so a branch gets these checks via
+# `gh workflow run build.yaml --ref <branch>`, which also builds and pushes images.
+gate_checks: [test-kali, test-multi-agent-shell, test-scripts]
