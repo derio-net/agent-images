@@ -1,0 +1,1 @@
+gate_checks: [test-scripts, test-kali, test-multi-agent-shell]
