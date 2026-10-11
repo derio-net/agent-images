@@ -881,3 +881,76 @@ def test_v1_ends_session_by_default_legacy_path_does_not(harness):
         assert _killed(harness) == ["run-123"], "an explicit end_session=false must be honoured"
     finally:
         proc.terminate(); proc.wait(timeout=5)
+
+
+def test_ended_session_resumes_on_next_send(harness):
+    # The fence must not lose the conversation: after a kill, the next send with
+    # the same session_id recreates the session with --resume on the transcript.
+    sid = SEND_REQ["session_id"]
+    out = json.loads(harness.run(dict(SEND_REQ, end_session=True)).stdout)
+    assert out["status"] == "ok" and _killed(harness) == [sid]
+    u = _driver_module().session_uuid(sid)
+    tdir = harness.home / ".claude" / "projects" / _project_dir(harness.home)
+    tdir.mkdir(parents=True, exist_ok=True)
+    (tdir / (u + ".jsonl")).write_text("{}\n")
+    out = json.loads(harness.run(SEND_REQ, session_exists=False).stdout)
+    assert out["status"] == "ok" and out["turn"] == 2
+    assert f"--resume {u}" in (harness.fdir / "new.log").read_text()
+
+
+def test_end_session_fences_failure_before_submit(harness, tmp_path):
+    # A failure before submit (here: the capability file can't be written) must
+    # still end a /v1-style session — it is never reused, so it would sit idle.
+    blocker = tmp_path / "not-a-dir"; blocker.write_text("")
+    e = dict(harness.env); e["AGENT_SESSION_CRED_DIR"] = str(blocker / "cred")
+    (harness.fdir / "has.code").write_text("0")
+    req = dict(SEND_REQ, end_session=True, capability="tok")
+    r = subprocess.run([sys.executable, str(harness.drv), "send", json.dumps(req)],
+                       capture_output=True, text=True, env=e, timeout=30)
+    assert r.returncode != 0
+    assert _killed(harness) == [SEND_REQ["session_id"]]
+
+
+def test_flags_require_json_true(harness):
+    sid = SEND_REQ["session_id"]
+    last_dir = Path(harness.env["AGENT_SESSION_LAST_DIR"]); last_dir.mkdir(parents=True, exist_ok=True)
+    (last_dir / (sid + ".last")).write_text(str(time.time()))
+    out = json.loads(harness.run(dict(SEND_REQ, fresh="false", end_session="false")).stdout)
+    assert out["status"] == "ok"
+    assert "/clear" not in _paste_first_lines(harness), 'fresh="false" must not clear'
+    assert _killed(harness) == [], 'end_session="false" must not end the session'
+
+
+def test_v1_explicit_null_keeps_fence_on(harness):
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        code, out = _post(base, "/v1/session/send", dict(SEND_REQ, session_id="run-n", end_session=None))
+        assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == ["run-n"]
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+
+
+def test_reap_escalates_until_harness_is_gone():
+    # A harness that ignores SIGHUP and SIGTERM (kill-session alone would leave it
+    # running) must still be gone when the fence returns.
+    import signal as _sig
+    import threading
+    mod = _driver_module()
+    proc = subprocess.Popen([sys.executable, "-c",
+                             "import signal,time\n"
+                             "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+                             "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                             "print('up', flush=True)\n"
+                             "time.sleep(60)"],
+                            stdout=subprocess.PIPE, start_new_session=True)
+    assert proc.stdout.readline().strip() == b"up"
+    threading.Thread(target=proc.wait, daemon=True).start()  # reap the zombie like tmux would
+    os.kill(proc.pid, _sig.SIGHUP)
+    t0 = time.monotonic()
+    assert mod._reap(proc.pid, grace_s=0.3) is True
+    assert time.monotonic() - t0 < 5
+    assert proc.wait(timeout=2) == -_sig.SIGKILL
