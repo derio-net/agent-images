@@ -122,6 +122,7 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight \
  && chmod +x \
       /etc/cont-init.d/30-hindsight-initdb \
       /etc/services.d/postgres/run \
+      /etc/services.d/postgres/finish \
       /etc/services.d/hindsight-api/run
 
 USER ${AGENT_USER}
