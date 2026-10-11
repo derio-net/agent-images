@@ -24,3 +24,8 @@ Verified: fresh env, python -c 'import litellm.exceptions; import litellm' print
 ### 173047ec3c23 · finding [fixed] · Bake cl100k_base into TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken
 
 Fix (db30407): Dockerfile sets ENV TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken and runs tiktoken.get_encoding('cl100k_base') at build time (asserting the dir is non-empty), chowned to UID 1000 with the rest of the baked stack. This removes the dependence on litellm's import-time env mutation, matching the existing bake-by-path approach for the BGE model. Failing test first (7ef745a): new first step in smoke-test-hermes-agent-shell-hindsight runs the image's python under --network none with litellm NOT imported and asserts cl100k_base encodes 'hello world' to [15339, 1917]. Rejected alternatives: pinning litellm<1.104 (keeps the accidental coupling); pointing TIKTOKEN_CACHE_DIR at litellm's package dir (couples to litellm's internal layout). Validation: branch build run 38157168934.
+
+<!-- fr:journal kind=finding scope=debug id=red-proof created=2026-10-11T16:53:38+00:00 state=fixed -->
+### red-proof · finding [fixed] · New smoke step is red against main's image
+
+Ran the new #165 step body locally (host docker, x86_64) against ghcr.io/derio-net/hermes-agent-shell-hindsight:5c05aaaf52d6 (main's latest published hindsight image): exit=1, requests ConnectionError to openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken — the same failure as the CI health smoke, now caught in seconds by a targeted assertion.
