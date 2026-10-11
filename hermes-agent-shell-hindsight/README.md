@@ -29,6 +29,8 @@ UID-1000 `agent` user, and the baked `claude`/`codex` CLIs used by the
   `postgresql=18.4` + `hindsight-api-slim[local-ml]==0.8.4` (public PyPI) →
   torch-CPU + sentence-transformers.
 - **`BAAI/bge-small-en-v1.5`** pre-baked into the image HF cache (offline, CPU).
+- **tiktoken `cl100k_base`** pre-baked at `TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken`:
+  hindsight-api loads it at startup and would otherwise download it (#165).
 - **s6 longruns**: `postgres` (loopback `:5433`) and `hindsight-api` (`:8888`),
   `hindsight-api` gated on `pg_isready`.
 - **sshd disabled** — the base bakes an sshd on `:2222`, which would collide
@@ -36,7 +38,7 @@ UID-1000 `agent` user, and the baked `claude`/`codex` CLIs used by the
 
 ## Data vs. image
 
-- **Image** carries the *stack* (binaries, Python env, embedding model).
+- **Image** carries the *stack* (binaries, Python env, embedding model, tokenizer).
 - **PVC** (`hermes-agent-shell-hindsight`, mounted at `/opt/hindsight`) carries
   only *data*: `PGDATA=/opt/hindsight/pgdata`. A fresh volume is `initdb`'d by
   `cont-init.d/30-hindsight-initdb` (locale `C.UTF-8`, role `hindsight`, db
@@ -54,4 +56,4 @@ confirmed; recall is unaffected.
 CI (`.github/workflows/build.yaml`) boots the image under the live K8s-equivalent
 `securityContext` and asserts: s6 brings both services up, Postgres accepts
 connections, `hindsight-api` `/health` returns `healthy`, and the embedding
-model loads offline.
+model and the tiktoken encoding load offline.
