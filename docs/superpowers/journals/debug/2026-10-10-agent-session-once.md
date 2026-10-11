@@ -34,3 +34,8 @@ cncd sends a wake-stable Idempotency-Key (wake-<id>) and only re-sends after non
 ### 734cd1fc3c3c · root-cause · #152: the harness can act after the driver's turn ends (background-task self-resume); most likely cause, unconfirmed for the July walk
 
 The driver treats 'result file appeared' as the end of the turn but never fences the harness. A background task left running makes Claude Code inject a task-notification and run a self-initiated turn with full task context, with no send and no Enter. This is proven on Frank (run 0e31be85) and matches #152's signature. The operator accepted fixing it without the walk host's DB, which would have confirmed it (both duplicate comments sharing one created_by_run_id). #157 is a separate feature delivered alongside: same file, same 'turn lifetime' concern.
+
+<!-- fr:journal kind=finding scope=debug id=aa2e99a4e325 created=2026-10-11T06:53:37+00:00 state=fixed -->
+### aa2e99a4e325 · finding [fixed] · end_session post-turn fence + fresh per-request reset
+
+Driver: in the _send_locked finally (under the per-session flock), end_session kills the tmux session after a turn, whether it succeeded or timed out, and skips /compact. serve() defaults end_session on for /v1/session/send, off for the legacy path and the CLI. fresh ORs into the idle-reset /clear condition (no-op when last_activity is None). Tests written first (5 RED, 2 guard tests already GREEN), then 50/50 in test_agent_session.py: fresh-clears-despite-recent, fresh-noop-new-session, end_session-kills-after-turn, -after-timeout, -skips-compaction, cli-keeps-session, v1-default-on/legacy-off/explicit-false-honoured. README contract documents both fields.
