@@ -14,3 +14,8 @@ SETTLE_S=0.03 reproduces the unrepainted-box race: submit() sends 2 Enters 90ms 
 ### f1a917e6a787 · hypothesis · OPEN — #152 doubling: three candidates, none confirmable from this repo
 
 With the retry-Enter falsified, the doubling must come from (H2) a second request reaching the node: a cncd retry with no or an unstable Idempotency-Key (send_idempotent only dedupes a stable key), (H3) a later wake on the SAME persistent session re-doing work still visible in context (the #157 class), or (H4) claude repeating the side-effecting call within one turn (e.g. a CNC POST that succeeded server-side but timed out client-side, then retried). cncd source is not reachable and there is no frank kube context, so the live transcript cannot be read. Discriminator: in the spec-b session's ~/.claude/projects/-home-*/<uuid>.jsonl, count user messages and comment-POST tool_uses: 1 user + 2 POSTs = H4; 2 user msgs with the same text = H2; 2 user msgs with different text = H3. #157 (fresh flag) is an independent feature regardless.
+
+<!-- fr:journal kind=finding scope=debug id=8bf5fd1b1dfe created=2026-10-11T06:44:27+00:00 state=open -->
+### 8bf5fd1b1dfe · finding [open] · Frank evidence: the July double-post walk predates Frank's CNC; its transcript, DB and logs are not on Frank
+
+Gathered read-only by the frank session. agent-images#152 was filed 2026-07-18T15:34Z, but cnc-staging-vcluster was created 16:54Z the same day, and the first staging run is 07-20. Two later Frank agent-session runs (wake 3 on 07-20, wake 4 on 09-10) each posted exactly 1 comment, each delivered with attempts=0. cncd logs no /v1/session/send requests. The incident cannot be root-caused from Frank's data.
