@@ -39,3 +39,8 @@ The driver treats 'result file appeared' as the end of the turn but never fences
 ### aa2e99a4e325 · finding [fixed] · end_session post-turn fence + fresh per-request reset
 
 Driver: in the _send_locked finally (under the per-session flock), end_session kills the tmux session after a turn, whether it succeeded or timed out, and skips /compact. serve() defaults end_session on for /v1/session/send, off for the legacy path and the CLI. fresh ORs into the idle-reset /clear condition (no-op when last_activity is None). Tests written first (5 RED, 2 guard tests already GREEN), then 50/50 in test_agent_session.py: fresh-clears-despite-recent, fresh-noop-new-session, end_session-kills-after-turn, -after-timeout, -skips-compaction, cli-keeps-session, v1-default-on/legacy-off/explicit-false-honoured. README contract documents both fields.
+
+<!-- fr:journal kind=finding scope=debug id=c07bf4b73ca1 created=2026-10-11T07:06:27+00:00 state=fixed -->
+### c07bf4b73ca1 · finding [fixed] · Fence verified live and hardened
+
+Host, real claude 2.1.296, task with a run_in_background job (sleep 30, then append) and an instruction to append again when notified. CONTROL (no end_session): driver returned at +0s, bg fired at +26s, self-initiated notification turn appended at +34s, reproducing H5 locally. FENCED (first cut): no bg, no notified, but claude was still alive 1s after kill-session (idle claude exits in ~1s). HARDENED (_reap: wait, then SIGTERM, then SIGKILL on the pane process group): claude already gone when send() returns, no bg, no notified line. 55/55 in test_agent_session.py; 4 of the 5 new review tests fail against the prior driver.
