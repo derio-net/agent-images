@@ -24,3 +24,8 @@ Gathered read-only by the frank session. agent-images#152 was filed 2026-07-18T1
 ### 6c9e8bc0a94a · hypothesis · H5 (proven to exist): a background-task notification self-resumes the harness AFTER the driver's turn ends
 
 Run 0e31be85 transcript: claude launched a run_in_background poller mid-turn. It finished ~70s after the out file was written; Claude Code injected a <task-notification> user message and claude ran a second, self-initiated assistant turn with the full task in context. No cncd send, no driver Enter, and .turn stayed 1. That reproduces the #152 signature exactly (one send, one succeeded, side effects able to fire again). In that run the extra turn only summarised the output. Pre-#36 builds spent whole turns discovering the API, which makes background jobs more likely in the July walk. Unconfirmed for the incident.
+
+<!-- fr:journal kind=ruled-out scope=debug id=4bea7d22012c created=2026-10-11T06:44:30+00:00 -->
+### 4bea7d22012c · ruled-out · H2 and H3 unlikely through cncd v0.18.0
+
+cncd sends a wake-stable Idempotency-Key (wake-<id>) and only re-sends after non-2xx or started=false. The node's send_idempotent is keyed on that value alone and holds a per-key flock across the whole turn, so a retry during or after the turn replays the cached result. H3: cncd sets session_id=RunID, so every wake gets a fresh session (turn=1 on both Frank runs). Residual H2 hole: an incident build earlier than bfcd421 that predates the Idempotency-Key.
