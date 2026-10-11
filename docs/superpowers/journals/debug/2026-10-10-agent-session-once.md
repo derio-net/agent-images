@@ -29,3 +29,8 @@ Run 0e31be85 transcript: claude launched a run_in_background poller mid-turn. It
 ### 4bea7d22012c · ruled-out · H2 and H3 unlikely through cncd v0.18.0
 
 cncd sends a wake-stable Idempotency-Key (wake-<id>) and only re-sends after non-2xx or started=false. The node's send_idempotent is keyed on that value alone and holds a per-key flock across the whole turn, so a retry during or after the turn replays the cached result. H3: cncd sets session_id=RunID, so every wake gets a fresh session (turn=1 on both Frank runs). Residual H2 hole: an incident build earlier than bfcd421 that predates the Idempotency-Key.
+
+<!-- fr:journal kind=root-cause scope=debug id=734cd1fc3c3c created=2026-10-11T06:53:29+00:00 -->
+### 734cd1fc3c3c · root-cause · #152: the harness can act after the driver's turn ends (background-task self-resume); most likely cause, unconfirmed for the July walk
+
+The driver treats 'result file appeared' as the end of the turn but never fences the harness. A background task left running makes Claude Code inject a task-notification and run a self-initiated turn with full task context, with no send and no Enter. This is proven on Frank (run 0e31be85) and matches #152's signature. The operator accepted fixing it without the walk host's DB, which would have confirmed it (both duplicate comments sharing one created_by_run_id). #157 is a separate feature delivered alongside: same file, same 'turn lifetime' concern.
