@@ -3,4 +3,6 @@
 # below has passed on the PR head's commit. NB: build.yaml has no
 # pull_request trigger, so a branch gets these checks via
 # `gh workflow run build.yaml --ref <branch>`, which also builds and pushes images.
+# Inert while .devcontainer/fr-profiles.yaml sets `ci: none` (fr refuses
+# `tests: ci` before reading gates); kept ready for a future pull_request trigger.
 gate_checks: [test-kali, test-multi-agent-shell, test-scripts]

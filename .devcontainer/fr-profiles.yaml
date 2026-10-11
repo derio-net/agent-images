@@ -7,7 +7,11 @@ profiles:
 default: dev
 forge:
   type: github
+# none: build.yaml runs on push to main / dispatch only, never on a PR, so no CI
+# run can vouch for a branch. Test evidence is a local log or is recorded at
+# close-out. Flip to github-actions if build.yaml gains a pull_request trigger
+# (.fr/ci.yaml already names the gate checks).
 ci:
-  type: github-actions
+  type: none
 tracking:
   type: github
