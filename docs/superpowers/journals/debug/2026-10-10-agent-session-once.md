@@ -44,3 +44,8 @@ Driver: in the _send_locked finally (under the per-session flock), end_session k
 ### c07bf4b73ca1 · finding [fixed] · Fence verified live and hardened
 
 Host, real claude 2.1.296, task with a run_in_background job (sleep 30, then append) and an instruction to append again when notified. CONTROL (no end_session): driver returned at +0s, bg fired at +26s, self-initiated notification turn appended at +34s, reproducing H5 locally. FENCED (first cut): no bg, no notified, but claude was still alive 1s after kill-session (idle claude exits in ~1s). HARDENED (_reap: wait, then SIGTERM, then SIGKILL on the pane process group): claude already gone when send() returns, no bg, no notified line. 55/55 in test_agent_session.py; 4 of the 5 new review tests fail against the prior driver.
+
+<!-- fr:journal kind=review scope=debug id=031f8b04941b created=2026-10-11T07:06:29+00:00 -->
+### 031f8b04941b · review · Code review (general-purpose reviewer): With fixes, no Critical
+
+Important: (1) fence effect not shown live, so it was verified live and the process wait/escalation added; (2) legacy-alias divergence, so README /v1 migration note added (frank alert-agent and n8n confirmed on the legacy path); (3) no resume-after-kill test, now added. Minor: (4) null/string flags, fixed with strict booleans and null=unset on /v1; (5) pre-submit failure orphan, fixed by fencing the whole turn; (6) README resume overstated, qualified to claude; (8) submit() claim, now cites the journal id. Not done: (7) paired compaction control, because test_compacts_when_context_over_threshold already serves as the control.
