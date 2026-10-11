@@ -18,6 +18,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -67,6 +68,9 @@ READY_TIMEOUT_S = float(_env("AGENT_SESSION_READY_TIMEOUT_S", "STOA_READY_TIMEOU
 # warm REPL answers on the first capture; a dead bash shell (continuum-restored)
 # or crashed claude never shows ❯, so the probe gives up fast and recreates.
 READY_PROBE_S = float(_env("AGENT_SESSION_READY_PROBE_S", "STOA_READY_PROBE_S", "3"))
+# Per-step grace for the end_session fence (#152): wait this long for the harness
+# to exit after kill-session, then after SIGTERM, before escalating to SIGKILL.
+END_GRACE_S = float(_env("AGENT_SESSION_END_GRACE_S", None, "5"))
 PORT = int(_env("AGENT_SESSION_PORT", "STOA_SESSION_PORT", "8765"))
 # Bind address (CNC /v1 upgrade). Default STAYS 127.0.0.1 — existing consumers
 # (n8n, alert-agent) rely on the loopback-only posture, so the shared image's
@@ -301,6 +305,61 @@ def _is_live_repl(session_id):
     return _poll_ready(session_id, READY_PROBE_S, idle_fallback=False)
 
 
+def _pane_pid(session_id):
+    out = tmux("display-message", "-p", "-t", session_id, "#{pane_pid}").stdout or ""
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
+def _gone(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def _reap(pid, grace_s=None):
+    # Wait for the harness to actually exit; escalate if it lingers. kill-session
+    # only closes the pty: claude gets SIGHUP and exits ~1s later when idle, but
+    # was measured still alive >1s after the kill while a background task ran —
+    # a window in which a notification turn could still act. SIGTERM, then
+    # SIGKILL, go to the pane's process group (the harness + the children it
+    # spawned); a SIGKILL'd claude still --resumes (launch_command). Holding the
+    # caller's flock until this returns means the next turn never overlaps it.
+    grace_s = END_GRACE_S if grace_s is None else grace_s
+    for sig in (None, signal.SIGTERM, signal.SIGKILL):
+        if sig is not None:
+            # The group first; the pid alone if it leads no group. Liveness is
+            # re-checked below either way, never inferred from a signal error.
+            for kill in (os.killpg, os.kill):
+                try:
+                    kill(pid, sig)
+                    break
+                except OSError:
+                    continue
+        deadline = time.monotonic() + grace_s
+        while time.monotonic() < deadline:
+            if _gone(pid):
+                return True
+            time.sleep(0.1)
+    return _gone(pid)
+
+
+def _end_session(session_id):
+    # The #152 post-turn fence: end the harness so nothing can act on the turn
+    # after the driver is done with it.
+    pid = _pane_pid(session_id)
+    tmux("kill-session", "-t", session_id)
+    if pid is not None and not _reap(pid):
+        print(f"agent-session: harness pid {pid} of {session_id} survived SIGKILL",
+              file=sys.stderr)
+
+
 def _input_box_has_text(pane):
     # After a clean submit the ❯ prompt line is empty; a dropped Enter leaves the
     # message sitting after the glyph. Non-whitespace after ❯ ⇒ still unsubmitted.
@@ -324,9 +383,10 @@ def submit(session_id, text):
     # more. Single retry, self-healing, independent of the readiness marker.
     # NB: this can also fire if the Enter DID submit but the TUI hasn't repainted
     # the now-empty box within SETTLE_S (loaded node) — the extra keypress is then
-    # a bare Enter into an empty prompt. Harmless for claude (empty submit; and
-    # send() keys off the output FILE, not the pane), but unverified for the
-    # codex/antigravity profiles.
+    # a bare Enter into an empty prompt. Verified harmless for claude 2.1.296
+    # (#152, debug journal 2026-10-10-agent-session-once entry a5f121694e84: forced
+    # race, 2 Enters, the turn's side effect fired once), and send()
+    # keys off the output FILE, not the pane; unverified for codex/antigravity.
     time.sleep(SETTLE_S)
     if _input_box_has_text(_pane(session_id)):
         tmux("send-keys", "-t", session_id, "Enter")
@@ -507,19 +567,44 @@ def _send_locked(req):
     message = req["message"]
     timeout_s = float(req.get("timeout_s", 300))
     capability = req.get("capability")
+    # `fresh` (#157): force the context reset in _turn for THIS turn — a one-shot
+    # wake grounded only in its own payload, on the same session (no new process).
+    # `end_session` (#152): end the harness once the driver is done with the turn.
+    # serve() defaults it on for /v1. Both are JSON booleans: only `true` enables
+    # (a string "false" must not switch a flag on).
+    fresh = req.get("fresh") is True
+    end_session = req.get("end_session") is True
     # session_id is validated in send() before any path is built. The agent-enum
     # check is cncd's adapter's job (spec b Scope 1); the node keeps
     # launch_command's lenient fallback so existing image consumers are unaffected.
 
     ensure_session(session_id, agent)
 
-    # Idle reset (Fix E): a persisted conversation idle > IDLE_RESET_S is /clear'd
-    # first (fresh conversation, SAME --session-id) so a stale/huge context does not
-    # bleed into the new ask. A brand-new session (last_activity None) is left alone.
+    # Post-turn fence (#152). The result file appearing does NOT mean the harness
+    # has stopped: a background task it started (run_in_background, Monitor, a
+    # subagent) that finishes later makes Claude Code inject a <task-notification>
+    # and run a new, self-initiated turn with the whole task in context — no send,
+    # no Enter, side effects free to fire again (seen on the CNC staging node and
+    # reproduced live: a side effect 34s after the result). A timed-out turn is
+    # likewise still running unsupervised, and a failure before submit would leave
+    # an idle never-reused session behind. Ending the session is the fence; it runs
+    # under the per-session flock, so no next turn can race it. The claude
+    # transcript persists, so a later send with this session_id --resumes.
+    try:
+        return _turn(session_id, agent, message, timeout_s, capability, fresh, end_session)
+    finally:
+        if end_session:
+            _end_session(session_id)
+
+
+def _turn(session_id, agent, message, timeout_s, capability, fresh, end_session):
+    # Context reset (Fix E idle reset, or `fresh` on request): /clear first (fresh
+    # conversation, SAME --session-id) so a stale/huge context does not bleed into
+    # the new ask. A brand-new session (last_activity None) is left alone.
     # NB: if Fix C just recreated a dead session this may /clear an already-fresh
     # conversation — a harmless no-op (I1).
     last = read_last_activity(session_id)
-    if last is not None and (time.time() - last) > IDLE_RESET_S:
+    if last is not None and (fresh or (time.time() - last) > IDLE_RESET_S):
         submit(session_id, "/clear")
         # Re-gate: confirm the prompt returned before pasting the real message, so a
         # slow /clear can't concatenate with the message in the input box (I3).
@@ -583,9 +668,11 @@ def _send_locked(req):
                 # claude's near-limit auto-compact. Safe: payload already read+removed and
                 # turn bumped, so /compact can't corrupt THIS turn; the per-session flock
                 # serializes the NEXT turn so its ensure_session won't probe mid-compaction (N1).
-                pct = context_pct(_pane(session_id))
-                if pct is not None and pct >= COMPACT_PCT:
-                    submit(session_id, "/compact")
+                # Skipped when the session is about to be ended.
+                if not end_session:
+                    pct = context_pct(_pane(session_id))
+                    if pct is not None and pct >= COMPACT_PCT:
+                        submit(session_id, "/compact")
                 return response(session_id, agent, "ok", turn, payload, True)
             time.sleep(POLL_S)
 
@@ -658,6 +745,14 @@ def serve():
                 self._json(400, {"status": "error", "error": "bad json",
                                  "started": False, "error_code": "not_started"})
                 return
+            # /v1 is the cncd contract: session_id is the run id and is never
+            # reused, so the post-turn fence is on unless the caller opts out. The
+            # legacy path serves persistent conversations and keeps the session.
+            # An explicit null counts as unset (a client serialising an unset
+            # optional must not silently lose the fence).
+            if self.path == "/v1/session/send" and isinstance(req, dict) \
+                    and req.get("end_session") is None:
+                req["end_session"] = True
             idem = self.headers.get("Idempotency-Key", "")
             self._json(200, send_idempotent(req, idem))
 

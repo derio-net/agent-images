@@ -234,9 +234,10 @@ there is no postStart hook or restart loop to wire up. `agent-session send
 ```
 POST /v1/session/send   Authorization: Bearer <runner-token>   (when a token is configured)
                         Idempotency-Key: <wake-stable-key>      (optional; de-dups a retry)
-                        {session_id, agent, message, timeout_s?, capability?}
+                        {session_id, agent, message, timeout_s?, capability?, fresh?, end_session?}
                      -> {session_id, agent, status, turn, payload, started, error_code}
-POST /session/send      (legacy alias of /v1/session/send — kept one migration cycle)
+POST /session/send      (legacy alias of /v1/session/send — kept one migration cycle;
+                         differs only in the end_session default, see below)
 GET  /healthz           -> 200 {"status":"ok"}   (unauthenticated; leaks no metadata)
 ```
 
@@ -247,6 +248,29 @@ session began (bad auth, malformed `session_id`, bad JSON) — safe to retry;
 retryable). **`error_code`** is a stable machine value
 (`not_started`/`timeout`/…) or `null` on success. A repeated **`Idempotency-Key`**
 returns the first turn's cached result instead of firing a duplicate turn.
+
+**`fresh: true`** clears the conversation (`/clear`, same session and process)
+before this turn: a one-shot wake grounded only in its own message, whatever the
+idle gap. Without it, only the idle reset (`AGENT_SESSION_IDLE_RESET_S`, 12h)
+clears. A session that has never had a turn has nothing to clear.
+
+**`end_session`** ends the harness session once the driver is done with the turn
+(on success, on timeout, and on a failure before submit). The result file
+appearing does not stop the harness: a background task it left running can, on
+finishing, make it resume itself and act on the turn again with no new send
+(agent-images#152). Ending the session is the fence. The driver waits for the
+harness process to exit, escalating to SIGTERM and then SIGKILL on its process
+group after `AGENT_SESSION_END_GRACE_S` each. For claude the transcript persists,
+so a later send with the same `session_id` resumes it. Other agents start a fresh
+conversation. **Default: on for `/v1/session/send`** (cncd sends one
+`session_id` per run, never reused; an explicit `null` counts as unset), **off
+for `/session/send` and the CLI** (persistent conversations). Pass it explicitly
+to override either default. **A persistent-conversation consumer migrating from
+`/session/send` to `/v1` must send `end_session: false`**, or every turn becomes a
+cold start plus a resume.
+
+Both flags are JSON booleans. Only `true` enables one; a string such as `"false"`
+does not.
 
 **Auth & bind (CNC /v1 upgrade).** The bind defaults to `127.0.0.1` — the legacy
 pod-local posture — so existing loopback consumers are unchanged. A consumer that
@@ -275,6 +299,7 @@ never echoed into the message or transcript.
 | `AGENT_SESSION_CRED_DIR` | `~/.agent-session/cred` | where the per-turn 0600 capability file is brokered |
 | `AGENT_SESSION_IDEM_DIR` | `~/.agent-session/idem` | idempotency-key result cache |
 | `AGENT_SESSION_IDEM_TTL_S` | `86400` | idempotency cache TTL (s) |
+| `AGENT_SESSION_END_GRACE_S` | `5` | `end_session` fence: wait per step (after kill, after SIGTERM) before escalating |
 | `AGENT_SESSION_TURN_DIR` | `~/.agent-session` | per-session turn counters |
 | `AGENT_SESSION_OUT_DIR` | `~/.agent-session/out` | per-turn output files |
 | `AGENT_SESSION_POLL_S` | `2` | output-file poll interval (s) |
