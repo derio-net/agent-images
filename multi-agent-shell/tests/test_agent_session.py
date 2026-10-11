@@ -790,3 +790,94 @@ def test_serve_refuses_nonloopback_bind_without_token(harness):
     assert proc.returncode != 0, "non-loopback bind without a runner token must fail-closed"
     err = proc.stderr.read().decode()
     assert "refusing to bind" in err
+
+
+# ── per-request context reset (#157) ────────────────────────────────────────
+
+def test_fresh_clears_before_turn_despite_recent_activity(harness):
+    # `fresh` forces the idle-reset /clear on demand: a one-shot wake must not
+    # inherit the previous wake's context just because it came < 12h later.
+    sid = SEND_REQ["session_id"]
+    last_dir = Path(harness.env["AGENT_SESSION_LAST_DIR"]); last_dir.mkdir(parents=True, exist_ok=True)
+    (last_dir / (sid + ".last")).write_text(str(time.time()))
+    out = json.loads(harness.run(dict(SEND_REQ, fresh=True)).stdout)
+    assert out["status"] == "ok"
+    pastes = _paste_first_lines(harness)
+    assert "/clear" in pastes, f"fresh must submit /clear; pastes={pastes}"
+    assert pastes.index("/clear") < next(i for i, l in enumerate(pastes) if l.startswith("Investigate")), \
+        f"/clear must precede the message; pastes={pastes}"
+
+
+def test_fresh_on_brand_new_session_is_noop(harness):
+    # Nothing to clear on a session that has never had a turn (same guard as idle reset).
+    out = json.loads(harness.run(dict(SEND_REQ, fresh=True)).stdout)
+    assert out["status"] == "ok"
+    assert "/clear" not in _paste_first_lines(harness)
+
+
+# ── post-turn fence (#152) ──────────────────────────────────────────────────
+# A background-task notification can resume the harness AFTER the driver has
+# read the payload, re-running work with the whole task in context and no new
+# send. `end_session` ends the harness once the driver is done with the turn,
+# so nothing can act on that turn afterwards.
+
+def _killed(harness):
+    kl = harness.fdir / "killed.log"
+    return kl.read_text().split() if kl.exists() else []
+
+
+def test_end_session_kills_harness_after_turn(harness):
+    out = json.loads(harness.run(dict(SEND_REQ, end_session=True)).stdout)
+    assert out["status"] == "ok" and out["payload"] == PAYLOAD
+    assert _killed(harness) == [SEND_REQ["session_id"]], "harness must be ended after the turn"
+    calls = (harness.fdir / "calls.log").read_text().splitlines()
+    last_paste = max(i for i, l in enumerate(calls) if l.startswith("paste-buffer"))
+    kill = max(i for i, l in enumerate(calls) if l.startswith("kill-session"))
+    assert kill > last_paste, "the fence must come after the turn was submitted"
+
+
+def test_end_session_kills_harness_after_timeout(harness):
+    # A timed-out turn is still running unsupervised — exactly when it must be fenced.
+    out = json.loads(harness.run(dict(SEND_REQ, end_session=True, timeout_s=0.3),
+                                 no_reply=True).stdout)
+    assert out["status"] == "timeout" and out["started"] is True
+    assert _killed(harness) == [SEND_REQ["session_id"]]
+
+
+def test_end_session_skips_compaction(harness):
+    e = dict(harness.env); e["FAKE_CONTEXT_PCT"] = "90"
+    (harness.fdir / "has.code").write_text("0")
+    req = dict(SEND_REQ, end_session=True)
+    out = json.loads(subprocess.run([sys.executable, str(harness.drv), "send", json.dumps(req)],
+                                    capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    assert "/compact" not in _paste_first_lines(harness), "no point compacting a session being ended"
+
+
+def test_cli_send_keeps_session_by_default(harness):
+    out = json.loads(harness.run(SEND_REQ).stdout)
+    assert out["status"] == "ok"
+    assert _killed(harness) == [], "persistent conversations must survive the turn by default"
+
+
+def test_v1_ends_session_by_default_legacy_path_does_not(harness):
+    # /v1 is the cncd contract: session_id = run id, never reused, so the fence
+    # is on by default. The legacy path serves persistent conversations
+    # (alert-agent, n8n) and keeps the session.
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        code, out = _post(base, "/session/send", dict(SEND_REQ, session_id="legacy-sess"))
+        assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == []
+        code, out = _post(base, "/v1/session/send", dict(SEND_REQ, session_id="run-123"))
+        assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == ["run-123"]
+        code, out = _post(base, "/v1/session/send",
+                          dict(SEND_REQ, session_id="run-keep", end_session=False))
+        assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == ["run-123"], "an explicit end_session=false must be honoured"
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
