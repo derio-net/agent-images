@@ -1029,6 +1029,31 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test — tiktoken cl100k_base resolves offline from the image (agent-images#165)
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          # hindsight-api's MemoryEngine eagerly calls tiktoken.get_encoding
+          # ("cl100k_base"), which downloads the BPE unless TIKTOKEN_CACHE_DIR
+          # holds it. The image used to be offline only because importing
+          # litellm <1.104 set TIKTOKEN_CACHE_DIR to litellm's bundled copy as a
+          # side effect; litellm 1.104 made that lazy and the sidecar crash-looped.
+          # Prove the IMAGE owns the encoding: no network, litellm NOT imported.
+          docker run --rm \
+            --user 1000:1000 \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --network none \
+            --entrypoint /opt/micromamba/envs/hindsight-pg/bin/python \
+            "${HINDSIGHT_IMAGE}:${IMAGE_SHA}" -c '
+          import os, sys, tiktoken
+          assert "litellm" not in sys.modules
+          enc = tiktoken.get_encoding("cl100k_base")
+          assert enc.encode("hello world") == [15339, 1917]
+          print("TIKTOKEN_CACHE_DIR=" + str(os.environ.get("TIKTOKEN_CACHE_DIR")))
+          ' || { echo "✗ cl100k_base needs the network: the image does not bake its tiktoken encoding (#165)"; exit 1; }
+          echo "✓ tiktoken cl100k_base loads offline from the baked cache"
+
       - name: Smoke test — PG + hindsight-api boot on an empty PVC, offline, under K8s securityContext
         env:
           IMAGE_SHA: ${{ github.sha }}

@@ -63,9 +63,20 @@ RUN micromamba run -n "${HINDSIGHT_ENV}" pip install --no-cache-dir \
 RUN micromamba run -n "${HINDSIGHT_ENV}" python -c \
       "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-en-v1.5', revision='${BGE_REVISION}', local_dir='/opt/hindsight-models/bge-small-en-v1.5')"
 
+# Pre-bake tiktoken's cl100k_base BPE: hindsight-api's MemoryEngine calls
+# tiktoken.get_encoding("cl100k_base") at startup, which downloads it from
+# openaipublic.blob.core.windows.net unless TIKTOKEN_CACHE_DIR already holds it
+# (agent-images#165). Until litellm 1.104 this worked offline only by accident —
+# importing litellm set TIKTOKEN_CACHE_DIR to litellm's bundled copy as a side
+# effect. Own the cache here instead of depending on that.
+ENV TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken
+RUN micromamba run -n "${HINDSIGHT_ENV}" python -c \
+      "import tiktoken; tiktoken.get_encoding('cl100k_base')" \
+ && test -n "$(ls -A "${TIKTOKEN_CACHE_DIR}")"
+
 # The baked stack must be readable/executable by UID 1000 (the runtime user);
 # the env is immutable at runtime, all mutable state is on the PVC.
-RUN chown -R ${AGENT_UID}:${AGENT_GID} /opt/micromamba /opt/hindsight-models
+RUN chown -R ${AGENT_UID}:${AGENT_GID} /opt/micromamba /opt/hindsight-models /opt/hindsight-tiktoken
 
 COPY --chown=root:root rootfs/ /
 
