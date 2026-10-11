@@ -29,3 +29,13 @@ Fix (db30407): Dockerfile sets ENV TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken an
 ### red-proof · finding [fixed] · New smoke step is red against main's image
 
 Ran the new #165 step body locally (host docker, x86_64) against ghcr.io/derio-net/hermes-agent-shell-hindsight:5c05aaaf52d6 (main's latest published hindsight image): exit=1, requests ConnectionError to openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken — the same failure as the CI health smoke, now caught in seconds by a targeted assertion.
+
+<!-- fr:journal kind=finding scope=debug id=green-ci created=2026-10-11T17:07:35+00:00 state=fixed -->
+### green-ci · finding [fixed] · Branch build 38157168934 green; #163 collision step ran in CI for the first time
+
+Run 38157168934 @ db30407: smoke-test-hermes-agent-shell-hindsight success. New step: TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken, cl100k_base loads offline. Offline boot: /health 200 after 15s (green baseline 16s). #163 postgres-collision step: gave up after 29s, 5 fatal bind attempts at give-up and 5 after 20s — bounded backoff then down. Whole run conclusion: success.
+
+<!-- fr:journal kind=review scope=debug id=932321b3accd created=2026-10-11T17:07:39+00:00 -->
+### 932321b3accd · review · Milestone review: no findings
+
+Reviewed the diff inline (small change). Checked: (1) s6 run script uses with-contenv, so the Dockerfile ENV TIKTOKEN_CACHE_DIR reaches hindsight-api, same as HF_HUB_OFFLINE; (2) if litellm is imported later it overwrites TIKTOKEN_CACHE_DIR with its bundled dir, which also holds cl100k_base, so still offline; (3) workflow step interpolates only github.sha (no injection surface); (4) build guard test -n on the cache dir fails the build if the bake writes nothing. No findings raised. Noted out of scope: README and run-script comments say hindsight-api-slim 0.8.4 while the Dockerfile pins 0.8.5 (pre-existing doc drift).
