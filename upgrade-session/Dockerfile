@@ -19,6 +19,15 @@ FROM ghcr.io/derio-net/agent-base:${AGENT_BASE_SHA}
 #     runtime; nothing here relies on skill files, which no harness loads
 #
 # Nothing is baked under /home/claude: the emptyDir mount hides it.
+#
+# Two pod-spec traps:
+#   - A pod `command:` REPLACES the ENTRYPOINT. The entrypoint is what applies
+#     UPGRADE_TALOS_MINOR / UPGRADE_K8S_MINOR, so with a `command:` override
+#     those env vars are silently ignored: use `args:` (CMD) instead, or call
+#     `use-versions` yourself first.
+#   - talosctl and kubectl are NOT on PATH until a selection is made (env at
+#     start, or `use-versions`). Until then `talosctl` is "command not found",
+#     by design: no step runs with an unchosen client.
 
 ARG TARGETARCH
 

@@ -1299,19 +1299,22 @@ jobs:
 
           # Selected via env at start (the entrypoint applies it) ...
           out=$(run -e UPGRADE_TALOS_MINOR=1.13 -e UPGRADE_K8S_MINOR=1.36 "$IMG" \
-                  bash -c 'talosctl version --client --short 2>&1; kubectl version --client 2>&1')
+                  bash -c 'talosctl version --client 2>&1; kubectl version --client 2>&1')
           echo "$out"
           echo "$out" | grep -q 'v1\.13\.' || { echo "x talosctl is not 1.13"; exit 1; }
           echo "$out" | grep -q 'v1\.36\.' || { echo "x kubectl is not 1.36"; exit 1; }
 
           # ... and re-selected per step inside a running session.
           out=$(run "$IMG" bash -c \
-                  'use-versions --talos 1.14 --kubernetes 1.37 >/dev/null && talosctl version --client --short; kubectl version --client')
+                  'use-versions --talos 1.14 --kubernetes 1.37 >/dev/null && talosctl version --client; kubectl version --client')
           echo "$out"
           echo "$out" | grep -q 'v1\.14\.' || { echo "x talosctl is not 1.14"; exit 1; }
           echo "$out" | grep -q 'v1\.37\.' || { echo "x kubectl is not 1.37"; exit 1; }
 
           # A minor outside the window refuses to start.
+          if run -e UPGRADE_TALOS_MINOR=bad "$IMG" true; then
+            echo "x malformed talos minor did not abort the start"; exit 1
+          fi
           if run -e UPGRADE_K8S_MINOR=1.99 "$IMG" true; then
             echo "x unknown minor did not abort the start"; exit 1
           fi

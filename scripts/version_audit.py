@@ -78,15 +78,16 @@ PIN_SPECS: dict[str, dict] = {
     # --- upgrade-session window pins (frozen: one patch of a FIXED minor) ----
     # These sit side by side so a session can pin a client per upgrade step
     # (Talos: +/-1 minor skew). "Latest" is the wrong target for every one of
-    # them - the newest release is a different minor - so they are `frozen`
-    # and a patch bump is a deliberate edit, not drift. The window itself is
+    # them - the newest release is a different minor - so each carries a
+    # `minor_series` and is compared against the newest release of ITS OWN
+    # minor: a security patch within the pinned minor reads BEHIND. The window itself is
     # asserted in scripts/tests/test_upgrade_session_image.py.
     **{
         f"TALOSCTL_{m}_VERSION": {
             "source": "github-release",
             "source_ref": "siderolabs/talos",
             "classification": "rebuild-only",
-            "frozen": True,
+            "minor_series": m.replace("_", "."),
             "note": f"upgrade-session window pin, Talos {m.replace('_', '.')}.x "
                     "only; bump the PATCH within the minor, never the minor.",
         }
@@ -97,7 +98,7 @@ PIN_SPECS: dict[str, dict] = {
             "source": "github-release",
             "source_ref": "kubernetes/kubernetes",
             "classification": "rebuild-only",
-            "frozen": True,
+            "minor_series": m.replace("_", "."),
             "note": f"upgrade-session window pin, Kubernetes {m.replace('_', '.')}.x "
                     "only; bump the PATCH within the minor, never the minor.",
         }
@@ -253,6 +254,7 @@ class Pin:
     unpinned: bool = False
     note: str | None = None
     tag_prefix: str | None = None
+    minor_series: str | None = None
 
 
 def _dockerfiles(repo_root: Path) -> list[Path]:
@@ -326,6 +328,7 @@ def extract_pins(repo_root: Path) -> list[Pin]:
             frozen=spec.get("frozen", False),
             note=spec.get("note"),
             tag_prefix=spec.get("tag_prefix"),
+            minor_series=spec.get("minor_series"),
         ))
     return pins
 
@@ -373,6 +376,17 @@ def resolve_latest(pin: "Pin", fetch=default_fetch) -> str | None:
 
         if pin.source == "pypi":
             return fetch(f"https://pypi.org/pypi/{ref}/json")["info"]["version"]
+
+        if pin.source == "github-release" and pin.minor_series:
+            rels = fetch(f"https://api.github.com/repos/{ref}/releases?per_page=100")
+            prefix = f"v{pin.minor_series}."
+            cands = [r["tag_name"] for r in rels
+                     if r["tag_name"].startswith(prefix)
+                     and not r.get("prerelease")
+                     and re.fullmatch(r"v\d+\.\d+\.\d+", r["tag_name"])]
+            if not cands:
+                return None
+            return max(cands, key=lambda t: tuple(int(x) for x in t[1:].split(".")))
 
         if pin.source == "github-release":
             try:

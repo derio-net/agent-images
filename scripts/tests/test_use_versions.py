@@ -106,3 +106,39 @@ def test_entrypoint_fails_loudly_on_bad_minor(tree):
             env={"UPGRADE_K8S_MINOR": "9.9"})
     assert r.returncode == 2
     assert "should-not-run" not in r.stdout
+
+
+@pytest.mark.parametrize("bad", ["", "bad", "1", "1.13.2", "../../tmp/x", "1.13/../1.12",
+                                 "1.1x", " 1.13", "1.13\n"])
+@pytest.mark.parametrize("flag", ["--talos", "--kubernetes"])
+def test_malformed_minor_exits_2_and_links_nothing(tree, flag, bad):
+    r = run(USE, tree, flag, bad)
+    assert r.returncode == 2, (flag, bad, r.stderr)
+    assert not (tree / "bin").exists() or not any((tree / "bin").iterdir())
+
+
+def test_path_traversal_to_planted_binary_is_refused(tree):
+    evil = tree / "evil" / "talosctl"
+    evil.parent.mkdir()
+    evil.write_text("#!/bin/sh\necho pwned\n")
+    evil.chmod(0o755)
+    # root/talosctl/<minor>/talosctl with minor = ../../evil/.. style input
+    r = run(USE, tree, "--talos", "../../evil")
+    assert r.returncode == 2
+    assert not (tree / "bin" / "talosctl").exists()
+
+
+def test_flag_without_value_exits_2(tree):
+    assert run(USE, tree, "--talos").returncode == 2
+
+
+def test_env_malformed_minor_exits_2(tree):
+    r = run(USE, tree, env={"UPGRADE_TALOS_MINOR": "bad"})
+    assert r.returncode == 2
+
+
+def test_switch_leaves_no_temp_links(tree):
+    run(USE, tree, "--talos", "1.12")
+    run(USE, tree, "--talos", "1.14")
+    assert sorted(p.name for p in (tree / "bin").iterdir()) == ["talosctl"]
+    assert target(tree, "talosctl").endswith("/talosctl/1.14/talosctl")

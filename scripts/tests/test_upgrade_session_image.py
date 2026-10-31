@@ -74,8 +74,47 @@ def test_side_by_side_install_layout(text):
     assert "use-versions" in text
 
 
+def _instructions(text: str) -> list[str]:
+    out, cur = [], []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        cur.append(line.rstrip("\\").strip() if line.rstrip().endswith("\\") else line.strip())
+        if not line.rstrip().endswith("\\"):
+            out.append(" ".join(cur))
+            cur = []
+    return out
+
+
 def test_downloads_are_checksum_verified(text):
-    assert "sha256sum" in text
+    downloads = [i for i in _instructions(text)
+                 if i.startswith("RUN") and "curl" in i]
+    assert len(downloads) >= 3  # talosctl, kubectl, omnictl
+    for block in downloads:
+        # Every downloading block must verify, and verify AFTER it downloads.
+        assert "sha256sum --check" in block, block[:80]
+        assert block.index("curl") < block.index("sha256sum --check"), block[:80]
+        # and the verified file is what gets installed
+        assert block.index("sha256sum --check") < block.index("install -m 0755"), block[:80]
+
+
+def test_local_bin_is_on_the_image_path():
+    # use-versions links into $HOME/.local/bin; it must be on PATH or the
+    # selection is invisible. Parsed from agent-base, which this image extends.
+    base = (REPO_ROOT / "base" / "Dockerfile").read_text()
+    m = re.search(r"^\s*PATH=(\S+?)\s*\\?$", base, re.M)
+    assert m, "no PATH in agent-base ENV"
+    dirs = m.group(1).split(":")
+    assert dirs.index("/home/claude/.local/bin") < dirs.index("/usr/local/bin")
+    # ... and the selector's default bin dir is exactly that, with HOME=/home/claude
+    assert re.search(r"HOME=/home/claude", base)
+    sel = (REPO_ROOT / "upgrade-session/rootfs/usr/local/bin/use-versions").read_text()
+    assert '${HOME:-/tmp}/.local/bin' in sel
+
+
+def test_header_documents_entrypoint_override_and_empty_path(text):
+    assert "REPLACES the ENTRYPOINT" in text
+    assert "NOT on PATH until a selection" in text
 
 
 def test_autoupdater_disabled(text):
