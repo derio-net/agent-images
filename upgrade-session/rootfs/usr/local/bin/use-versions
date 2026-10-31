@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# use-versions - pick the talosctl and kubectl minors for this upgrade step.
+#
+# Talos supports only +/-1 minor of client skew, so an upgrade session pins its
+# clients per step instead of carrying one "latest". All minors are installed
+# side by side under /opt/<tool>/<minor>/; this symlinks the chosen ones into a
+# bin dir that is already on PATH (default $HOME/.local/bin - writable emptyDir
+# under a read-only root FS).
+#
+#   use-versions --talos 1.13 --kubernetes 1.36
+#   UPGRADE_TALOS_MINOR=1.13 UPGRADE_K8S_MINOR=1.36 use-versions
+#   use-versions --list
+#
+# Flags win over env. Selection is all-or-nothing: an unknown minor exits 2 and
+# links nothing. A tool that is not selected is left as it was.
+set -euo pipefail
+
+root="${UPGRADE_TOOLS_ROOT:-/opt}"
+bindir="${UPGRADE_BIN_DIR:-${HOME:-/tmp}/.local/bin}"
+talos="${UPGRADE_TALOS_MINOR:-}"
+k8s="${UPGRADE_K8S_MINOR:-}"
+list=0
+
+minors() {
+  local d="$root/$1" m
+  for m in "$d"/*/; do
+    [ -x "${m}$1" ] && basename "$m"
+  done | sort -V | tr '\n' ' ' | sed 's/ $//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --talos) talos="${2:?--talos needs a minor}"; shift 2 ;;
+    --kubernetes|--k8s) k8s="${2:?--kubernetes needs a minor}"; shift 2 ;;
+    --list) list=1; shift ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    *) echo "use-versions: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$list" = 1 ]; then
+  echo "talosctl: $(minors talosctl)"
+  echo "kubectl: $(minors kubectl)"
+  exit 0
+fi
+
+check() { # tool minor
+  [ -x "$root/$1/$2/$1" ] && return 0
+  echo "use-versions: no $1 $2 installed (available: $(minors "$1"))" >&2
+  return 1
+}
+
+bad=0
+[ -n "$talos" ] && { check talosctl "$talos" || bad=1; }
+[ -n "$k8s" ] && { check kubectl "$k8s" || bad=1; }
+[ "$bad" = 0 ] || exit 2
+
+mkdir -p "$bindir"
+[ -z "$talos" ] || ln -sfn "$root/talosctl/$talos/talosctl" "$bindir/talosctl"
+[ -z "$k8s" ] || ln -sfn "$root/kubectl/$k8s/kubectl" "$bindir/kubectl"
+[ -z "$talos" ] || echo "talosctl -> $talos"
+[ -z "$k8s" ] || echo "kubectl -> $k8s"

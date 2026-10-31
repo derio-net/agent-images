@@ -75,6 +75,34 @@ PIN_SPECS: dict[str, dict] = {
         "note": "Must track the running Omni SERVER. The server version is not "
                 "recorded in this repo (it lives in omni.env on the Omni host).",
     },
+    # --- upgrade-session window pins (frozen: one patch of a FIXED minor) ----
+    # These sit side by side so a session can pin a client per upgrade step
+    # (Talos: +/-1 minor skew). "Latest" is the wrong target for every one of
+    # them - the newest release is a different minor - so they are `frozen`
+    # and a patch bump is a deliberate edit, not drift. The window itself is
+    # asserted in scripts/tests/test_upgrade_session_image.py.
+    **{
+        f"TALOSCTL_{m}_VERSION": {
+            "source": "github-release",
+            "source_ref": "siderolabs/talos",
+            "classification": "rebuild-only",
+            "frozen": True,
+            "note": f"upgrade-session window pin, Talos {m.replace('_', '.')}.x "
+                    "only; bump the PATCH within the minor, never the minor.",
+        }
+        for m in ("1_12", "1_13", "1_14")
+    },
+    **{
+        f"KUBECTL_{m}_VERSION": {
+            "source": "github-release",
+            "source_ref": "kubernetes/kubernetes",
+            "classification": "rebuild-only",
+            "frozen": True,
+            "note": f"upgrade-session window pin, Kubernetes {m.replace('_', '.')}.x "
+                    "only; bump the PATCH within the minor, never the minor.",
+        }
+        for m in ("1_34", "1_35", "1_36", "1_37")
+    },
     # --- rebuild-only, plain upstream --------------------------------------
     "S6_OVERLAY_VERSION": {
         "source": "github-release",
