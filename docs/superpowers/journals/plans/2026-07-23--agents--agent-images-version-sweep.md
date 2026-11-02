@@ -1,3 +1,4 @@
+<!-- fr:journal-schema=3 -->
 # Journal: 2026-07-23--agents--agent-images-version-sweep
 
 <!-- fr:journal kind=finding scope=plan id=f1-micromamba-false-positive created=2026-07-23T18:42:54 phase=1 state=fixed -->

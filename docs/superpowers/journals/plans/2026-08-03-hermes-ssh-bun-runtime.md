@@ -1,3 +1,4 @@
+<!-- fr:journal-schema=3 -->
 # Journal: 2026-08-03-hermes-ssh-bun-runtime
 
 <!-- fr:journal kind=discovery scope=plan id=p1-bun-tag-prefix created=2026-08-03T17:36:06 phase=1 -->
