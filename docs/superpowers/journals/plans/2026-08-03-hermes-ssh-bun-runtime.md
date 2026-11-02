@@ -69,3 +69,16 @@ All actioned:
 - CI clause was vacuous alone: 'command -v bun' prints nothing when absent, so the empty string fell to the *) branch and PASSED. Now requires a non-empty path first.
 - base/Dockerfile installs a SECOND bun, unpinned via curl|bash with no ARG, invisible to find_uncovered_version_args. The PIN_SPECS note implied full coverage; it now says one of two.
 - Report rendered the raw target, so a correct pin read '1.3.14 -> bun-v1.3.14 [ok]' and looked like drift. Now renders the prefix-stripped target.
+
+<!-- fr:journal kind=owed scope=plan id=manual-phase-3 created=2026-11-02T20:37:22+00:00 phase=3 -->
+### manual-phase-3 · owed · 2026-08-03-hermes-ssh-bun-runtime: manual phase 3 is not ticked (phase 3)
+
+what: do manual phase 3 of 2026-08-03-hermes-ssh-bun-runtime and tick its steps
+why: fr archive holds the plan until its manual phases are ticked
+how: tick phase 3 (fr plan edit --tick), then fr archive docs/superpowers/plans/2026-08-03-hermes-ssh-bun-runtime
+owed_key: plan:2026-08-03-hermes-ssh-bun-runtime#p3
+
+<!-- fr:journal kind=finding scope=plan id=manual-phase-3-resolved created=2026-11-02T20:37:27+00:00 phase=3 state=open resolves=manual-phase-3 filed_as=derio-net/agent-images#173 -->
+### manual-phase-3-resolved · finding [filed → derio-net/agent-images#173] · resolves manual-phase-3: 2026-08-03-hermes-ssh-bun-runtime: manual phase 3 is not ticked (phase 3)
+
+Filed at archive as derio-net/agent-images#173; still owed until discharged.
