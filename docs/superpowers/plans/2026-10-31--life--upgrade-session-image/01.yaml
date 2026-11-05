@@ -1,0 +1,75 @@
+schema_version: 2
+phase:
+  number: 1
+  title: upgrade-session image - Dockerfile, version selector, registry, CI (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+  tier: standard
+  files:
+  - upgrade-session/Dockerfile
+  - upgrade-session/rootfs/usr/local/bin/use-versions
+  - upgrade-session/rootfs/usr/local/bin/upgrade-session-entrypoint
+  - scripts/tests/test_upgrade_session_image.py
+  - scripts/tests/test_use_versions.py
+  - scripts/version_audit.py
+  - .github/workflows/build.yaml
+  - README.md
+tasks:
+- number: 1
+  title: RED - Dockerfile contract and selector behaviour tests
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      Write scripts/tests/test_upgrade_session_image.py asserting on upgrade-session/Dockerfile text: FROM agent-base; talosctl pins for minors 1.12/1.13/1.14 as exact vX.Y.Z; kubectl pins 1.34-1.37 exact; no stable.txt; omnictl pin equals infra-shell's; installs under /opt/talosctl/<minor>/ and /opt/kubectl/<minor>/; DISABLE_AUTOUPDATER=1; final USER is non-root; no `claude install`; no SKILL.md; no VOLUME and no writes outside HOME and /tmp at runtime; the cluster's Talos minor (LAST_MEASURED_CLUSTER_TALOS) is inside the talosctl window. Expected: FAILS (no Dockerfile).
+  - id: P1.T1.S2
+    text: |-
+      Write scripts/tests/test_use_versions.py running the use-versions script against a fake tools tree in tmp_path: --talos/--kubernetes symlink into the bin dir, env vars UPGRADE_TALOS_MINOR/UPGRADE_K8S_MINOR work, flags override env, unknown minor exits 2 and links nothing, re-run switches the link, the entrypoint applies env then execs its argv. Expected: FAILS.
+- number: 2
+  title: GREEN - the image
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      Create upgrade-session/rootfs/usr/local/bin/use-versions and upgrade-session-entrypoint (bash, set -euo pipefail, tools root overridable via UPGRADE_TOOLS_ROOT and bin dir via UPGRADE_BIN_DIR for tests). Run test_use_versions.py - passes.
+  - id: P1.T2.S2
+    text: |-
+      Create upgrade-session/Dockerfile FROM agent-base: side-by-side checksum-verified talosctl and kubectl, omnictl, codex (npm, pinned like multi-agent-shell), claude from the agent-base npm install, ENV DISABLE_AUTOUPDATER=1, tini entrypoint, non-root user. Run test_upgrade_session_image.py - passes.
+- number: 3
+  title: Registry, CI matrix, smoke test, docs
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      Register every new version ARG in PIN_SPECS (frozen window pins with a note) so the registry tests stay green. Run the whole scripts test suite.
+  - id: P1.T3.S2
+    text: |-
+      Add upgrade-session to the build-children matrix, add smoke-test-upgrade-session (read-only root FS, tmpfs home, uid 1000, cap-drop ALL: use-versions per step, tool --client versions match the selection, DISABLE_AUTOUPDATER visible), add it to dispatch-frank needs, document in README.
+state:
+  steps:
+    P1.T1.S1:
+      state: x
+      ticked_at: '2026-10-31T19:07:28+00:00'
+      note: null
+    P1.T1.S2:
+      state: x
+      ticked_at: '2026-10-31T19:07:45+00:00'
+      note: null
+    P1.T2.S1:
+      state: x
+      ticked_at: '2026-10-31T19:12:12+00:00'
+      note: null
+    P1.T2.S2:
+      state: x
+      ticked_at: '2026-10-31T19:12:20+00:00'
+      note: null
+    P1.T3.S1:
+      state: x
+      ticked_at: '2026-10-31T19:12:37+00:00'
+      note: null
+    P1.T3.S2:
+      state: x
+      ticked_at: '2026-10-31T19:12:47+00:00'
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
