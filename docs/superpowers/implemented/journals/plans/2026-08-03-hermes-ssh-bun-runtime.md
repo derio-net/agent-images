@@ -82,3 +82,8 @@ owed_key: plan:2026-08-03-hermes-ssh-bun-runtime#p3
 ### manual-phase-3-resolved · finding [filed → derio-net/agent-images#173] · resolves manual-phase-3: 2026-08-03-hermes-ssh-bun-runtime: manual phase 3 is not ticked (phase 3)
 
 Filed at archive as derio-net/agent-images#173; still owed until discharged.
+
+<!-- fr:journal kind=finding scope=plan id=manual-phase-3-resolved-2 created=2026-11-08T11:44:24+00:00 state=fixed resolves=manual-phase-3 -->
+### manual-phase-3-resolved-2 · finding [fixed] · resolves manual-phase-3: 2026-08-03-hermes-ssh-bun-runtime: manual phase 3 is not ticked
+
+Done (verified 2026-11-08): #158 merged; frank pins hermes-agent-shell-ssh at dbb1b7f, a later main build that includes it.
