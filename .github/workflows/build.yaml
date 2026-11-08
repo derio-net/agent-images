@@ -5,13 +5,11 @@ on:
     branches: [main]
     # Skip rebuilds for docs-only changes (plans, specs, findings).
     # Mixed commits still trigger: paths-ignore matches only when ALL
-    # changed files are ignored. workflow_dispatch and repository_dispatch
-    # bypass these filters, so manual/external triggers still rebuild.
+    # changed files are ignored. workflow_dispatch
+    # bypass these filters, so manual triggers still rebuild.
     paths-ignore:
       - 'docs/**'
   workflow_dispatch:
-  repository_dispatch:
-    types: [vibe-kanban-build-updated]
 
 env:
   REGISTRY: ghcr.io
@@ -188,11 +186,6 @@ jobs:
             context: kali
             build_args: |
               BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
-          - name: vk-local
-            context: vk-local
-            build_args: |
-              AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
-              VK_FORK_SHA=${{ github.event.client_payload.vk_fork_sha || 'latest' }}
           - name: paperclip-shell
             context: paperclip-shell
             build_args: |
@@ -247,41 +240,6 @@ jobs:
           build-args: ${{ matrix.image.build_args }}
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
-
-  smoke-test-vk-local:
-    needs: build-children
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    env:
-      VK_IMAGE: ghcr.io/derio-net/vk-local
-    steps:
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Smoke test — entrypoint wrapper runs init.d scripts
-        env:
-          IMAGE_SHA: ${{ github.sha }}
-        run: |
-          # The mount target is owned by the runner (root); chown to UID 1000
-          # so the in-container claude user (also UID 1000) can write into it.
-          # Without this, the init scripts hit EACCES on mkdir.
-          mkdir -p /tmp/test-home
-          sudo chown 1000:1000 /tmp/test-home
-          # Run the shared init scripts directly (bypass vibe-kanban startup so
-          # the test stays environment-free). Verifies:
-          #   1. /opt/agent-init.d/* scripts are present and executable
-          #   2. 01-pvc-dirs creates $HOME/repos and other expected dirs
-          #   3. Wrapper iterates scripts correctly as the claude user
-          docker run --rm \
-            --user 1000:1000 \
-            -v /tmp/test-home:/home/claude \
-            --entrypoint /bin/sh \
-            "${VK_IMAGE}:${IMAGE_SHA}" \
-            -c 'for s in /opt/agent-init.d/*; do [ -x "$s" ] && "$s"; done && ls /home/claude/repos /home/claude/.ssh'
 
   smoke-test-secure-agent-kali:
     needs: build-children
@@ -1266,7 +1224,6 @@ jobs:
       - test-kali
       - test-multi-agent-shell
       - build-children
-      - smoke-test-vk-local
       # NOT smoke-test-secure-agent-kali (deliberately dropped): kali is the
       # known-flaky Kali-rolling leg (t64 / GCC churn). Gating the frank bump on
       # it means one kali break starves EVERY image's delivery to frank. The kali
@@ -1283,12 +1240,12 @@ jobs:
       - smoke-test-hermes-agent-shell-hindsight
       - smoke-test-infra-shell
     runs-on: ubuntu-latest
-    # Only notify frank when the MAIN image tag actually moved: a push to main
-    # or the vk repository_dispatch rebuild. A manual workflow_dispatch (used to
+    # Only notify frank when the MAIN image tag actually moved: a push to main.
+    # A manual workflow_dispatch (used to
     # validate a feature BRANCH image before merge) must NOT bump frank — its
     # handler sed-pins frank's prod manifests to the dispatched SHA and opens a
     # PR, which would pin production to an unmerged branch build.
-    if: github.event_name == 'push' || github.event_name == 'repository_dispatch'
+    if: github.event_name == 'push'
     permissions: {}
     steps:
       - env:

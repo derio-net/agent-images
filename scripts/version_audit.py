@@ -199,7 +199,6 @@ PIN_SPECS: dict[str, dict] = {
 IGNORED_ARGS = {
     "BASE_SHA",            # this repo's own parent-image SHA, set by CI
     "AGENT_BASE_SHA",      # ditto
-    "VK_FORK_SHA",         # built from our own vibe-kanban fork by another pipeline
     "TARGETARCH",
     "AGENT_USER", "AGENT_UID", "AGENT_GID", "AGENT_HOME",
 }
