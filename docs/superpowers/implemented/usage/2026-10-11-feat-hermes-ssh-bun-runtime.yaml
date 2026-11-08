@@ -1,0 +1,12 @@
+schema_version: 2
+run: 2026-10-11-feat-hermes-ssh-bun-runtime
+captures:
+- host: h-5ad419a2
+  harness: claude-code
+  mode: host-worktree
+  captured_at: '2026-11-08T11:40:52+00:00'
+  at:
+  - closeout
+  sessions:
+  - session: ''
+    unavailable: no session found
