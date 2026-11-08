@@ -42,9 +42,10 @@ state:
       note: 'done: #158 merged 2026-08-13; frank pins hermes-agent-shell-ssh at dbb1b7f,
         a later main build that includes it (verified 2026-11-08, sweep)'
     P3.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-11-08T11:40:46+00:00'
+      note: 'done: #158 merged 2026-08-13; frank pins hermes-agent-shell-ssh at dbb1b7f,
+        a later main build that includes it (verified 2026-11-08, sweep)'
   completion:
     at: null
     note: null
