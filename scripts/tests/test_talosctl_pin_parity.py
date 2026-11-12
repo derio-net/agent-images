@@ -35,7 +35,10 @@ def _arg(dockerfile: str, name: str) -> str:
 
 @pytest.mark.parametrize("name", ["TALOSCTL_VERSION", "OMNICTL_VERSION"])
 def test_pin_is_identical_across_both_dockerfiles(name):
-    values = {df: _arg(df, name) for df in PINNED_IN}
+    # upgrade-session also carries omnictl (not TALOSCTL_VERSION: it pins one
+    # talosctl per minor under TALOSCTL_<minor>_VERSION instead).
+    files = PINNED_IN + (["upgrade-session/Dockerfile"] if name == "OMNICTL_VERSION" else [])
+    values = {df: _arg(df, name) for df in files}
     assert len(set(values.values())) == 1, (
         f"{name} has drifted between shells: {values}"
     )

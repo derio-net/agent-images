@@ -139,3 +139,47 @@ def test_unanchored_pin_targets_upstream_latest():
               source="github-release", source_ref="aptible/supercronic")
     fetch = fake_fetch({"releases/latest": {"tag_name": "v0.2.47"}})
     assert resolve_target(pin, probes={}, fetch=fetch) == "v0.2.47"
+
+
+# --- minor-series window pins (upgrade-session) ------------------------------
+
+
+def _rel(tag, pre=False):
+    return {"tag_name": tag, "prerelease": pre}
+
+
+def _series_pin(name, current, ref, minor):
+    return Pin(name=name, current=current, source="github-release",
+               source_ref=ref, minor_series=minor)
+
+
+def test_minor_series_resolves_newest_patch_of_the_same_minor():
+    pin = _series_pin("TALOSCTL_1_13_VERSION", "v1.13.12", "siderolabs/talos", "1.13")
+    fetch = fake_fetch({"/releases?per_page": [
+        _rel("v1.14.5"), _rel("v1.13.13"), _rel("v1.13.14-rc.1", True),
+        _rel("v1.13.2"), _rel("v1.12.12")]})
+    assert resolve_latest(pin, fetch=fetch) == "v1.13.13"
+
+
+def test_lower_patch_in_pinned_minor_reads_behind():
+    from version_audit import Status, classify_status
+    pin = _series_pin("KUBECTL_1_36_VERSION", "v1.36.6", "kubernetes/kubernetes", "1.36")
+    fetch = fake_fetch({"/releases?per_page": [_rel("v1.37.2"), _rel("v1.36.7")]})
+    assert classify_status(pin, resolve_latest(pin, fetch=fetch)) == Status.BEHIND
+
+
+def test_current_patch_in_pinned_minor_reads_current():
+    from version_audit import Status, classify_status
+    pin = _series_pin("KUBECTL_1_36_VERSION", "v1.36.7", "kubernetes/kubernetes", "1.36")
+    fetch = fake_fetch({"/releases?per_page": [_rel("v1.37.2"), _rel("v1.36.7")]})
+    assert classify_status(pin, resolve_latest(pin, fetch=fetch)) == Status.CURRENT
+
+
+def test_window_pins_are_not_frozen_and_carry_their_minor():
+    from version_audit import PIN_SPECS
+    names = [n for n in PIN_SPECS if n.startswith(("TALOSCTL_1_", "KUBECTL_1_"))]
+    assert len(names) == 7
+    for name in names:
+        assert not PIN_SPECS[name].get("frozen")
+        minor = ".".join(name.split("_")[1:3])
+        assert PIN_SPECS[name]["minor_series"] == minor
