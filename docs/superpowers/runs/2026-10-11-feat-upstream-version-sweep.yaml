@@ -1,4 +1,4 @@
-schema_version: 10
+schema_version: 11
 run: 2026-10-11-feat-upstream-version-sweep
 workflow: fr-goal@1
 branch: feat/upstream-version-sweep
