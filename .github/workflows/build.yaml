@@ -219,6 +219,13 @@ jobs:
             context: infra-shell
             build_args: |
               BASE_SHA=${{ needs.build-multi-agent-shell.outputs.sha }}
+          # Disposable upgrade-session pod (frank update-console Part 3). Builds
+          # FROM agent-base directly (tini, non-root, read-only-FS friendly) -
+          # NOT the s6/sshd shell lineage.
+          - name: upgrade-session
+            context: upgrade-session
+            build_args: |
+              AGENT_BASE_SHA=${{ needs.build-base.outputs.sha }}
     permissions:
       contents: read
       packages: write
@@ -1219,6 +1226,67 @@ jobs:
           docker logs infra-smoke || true
           docker rm -f infra-smoke || true
 
+  # upgrade-session runs the way frank's session pod does: uid 1000, all caps
+  # dropped, READ-ONLY root FS, writable only on a tmpfs home and /tmp.
+  smoke-test-upgrade-session:
+    needs: build-children
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ghcr.io/derio-net/upgrade-session
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Smoke test - hardened pod posture, per-step client selection
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          run() {
+            docker run --rm \
+              --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges \
+              --read-only \
+              --tmpfs /home/claude:uid=1000,gid=1000 --tmpfs /tmp:mode=1777 \
+              "$@"
+          }
+          IMG="${IMAGE}:${IMAGE_SHA}"
+
+          # Selected via env at start (the entrypoint applies it) ...
+          out=$(run -e UPGRADE_TALOS_MINOR=1.13 -e UPGRADE_K8S_MINOR=1.36 "$IMG" \
+                  bash -c 'talosctl version --client 2>&1; kubectl version --client 2>&1')
+          echo "$out"
+          echo "$out" | grep -q 'v1\.13\.' || { echo "x talosctl is not 1.13"; exit 1; }
+          echo "$out" | grep -q 'v1\.36\.' || { echo "x kubectl is not 1.36"; exit 1; }
+
+          # ... and re-selected per step inside a running session.
+          out=$(run "$IMG" bash -c \
+                  'use-versions --talos 1.14 --kubernetes 1.37 >/dev/null && talosctl version --client; kubectl version --client')
+          echo "$out"
+          echo "$out" | grep -q 'v1\.14\.' || { echo "x talosctl is not 1.14"; exit 1; }
+          echo "$out" | grep -q 'v1\.37\.' || { echo "x kubectl is not 1.37"; exit 1; }
+
+          # A minor outside the window refuses to start.
+          if run -e UPGRADE_TALOS_MINOR=bad "$IMG" true; then
+            echo "x malformed talos minor did not abort the start"; exit 1
+          fi
+          if run -e UPGRADE_K8S_MINOR=1.99 "$IMG" true; then
+            echo "x unknown minor did not abort the start"; exit 1
+          fi
+
+          run "$IMG" omnictl --version
+          run "$IMG" claude --version
+          run "$IMG" codex --version
+          # No auto-updater, non-root, nothing writable outside HOME and /tmp.
+          run "$IMG" bash -c '[ "$DISABLE_AUTOUPDATER" = 1 ] && [ "$(id -u)" = 1000 ]'
+          if run "$IMG" touch /usr/local/bin/should-fail 2>/dev/null; then
+            echo "x root FS is writable"; exit 1
+          fi
+          echo "ok upgrade-session smoke"
+
   dispatch-frank:
     needs:
       - test-kali
@@ -1239,6 +1307,7 @@ jobs:
       - smoke-test-hermes-agent-shell-ssh
       - smoke-test-hermes-agent-shell-hindsight
       - smoke-test-infra-shell
+      - smoke-test-upgrade-session
     runs-on: ubuntu-latest
     # Only notify frank when the MAIN image tag actually moved: a push to main.
     # A manual workflow_dispatch (used to

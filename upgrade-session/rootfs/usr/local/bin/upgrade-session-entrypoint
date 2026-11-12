@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Apply UPGRADE_TALOS_MINOR / UPGRADE_K8S_MINOR (if set) and exec the command.
+# A bad minor aborts the container start (exit 2) rather than running a step
+# with the wrong client.
+set -euo pipefail
+
+if [ -n "${UPGRADE_TALOS_MINOR:-}${UPGRADE_K8S_MINOR:-}" ]; then
+  "$(dirname "$0")/use-versions" >&2 || exit 2
+fi
+
+if [ $# -eq 0 ]; then
+  set -- bash
+fi
+exec "$@"
