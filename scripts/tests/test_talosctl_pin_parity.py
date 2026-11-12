@@ -2,9 +2,11 @@
 
 Two failure modes, both silent:
 
-1. `TALOSCTL_VERSION` lives in TWO Dockerfiles (infra-shell, kali). Nothing
-   makes them move together, so they can drift apart and one shell quietly
-   ships a different client than the other.
+1. A pin that lives in more than one Dockerfile can drift apart, so one image
+   quietly ships a different client than the other. `OMNICTL_VERSION` lives
+   in two (infra-shell, upgrade-session). `TALOSCTL_VERSION` lived in two
+   until secure-agent-kali was retired (2026-11); infra-shell is now its only
+   home, and a second copy appearing anywhere unlisted fails here.
 
 2. The pin can fall behind the cluster. Talos supports only +/-1 minor of
    client skew; on 2026-07-23 the shells shipped v1.9.5 against a v1.12.6
@@ -23,7 +25,12 @@ import pytest
 from version_audit import LAST_MEASURED_CLUSTER_TALOS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PINNED_IN = ["infra-shell/Dockerfile", "kali/Dockerfile"]
+# Every Dockerfile that declares each pin. The lists are asserted against the
+# tree, so a new copy of a pin cannot be added without joining its parity check.
+PINNED_IN = {
+    "TALOSCTL_VERSION": ["infra-shell/Dockerfile"],
+    "OMNICTL_VERSION": ["infra-shell/Dockerfile", "upgrade-session/Dockerfile"],
+}
 
 
 def _arg(dockerfile: str, name: str) -> str:
@@ -33,14 +40,28 @@ def _arg(dockerfile: str, name: str) -> str:
     return m.group(1).strip()
 
 
-@pytest.mark.parametrize("name", ["TALOSCTL_VERSION", "OMNICTL_VERSION"])
-def test_pin_is_identical_across_both_dockerfiles(name):
-    # upgrade-session also carries omnictl (not TALOSCTL_VERSION: it pins one
-    # talosctl per minor under TALOSCTL_<minor>_VERSION instead).
-    files = PINNED_IN + (["upgrade-session/Dockerfile"] if name == "OMNICTL_VERSION" else [])
-    values = {df: _arg(df, name) for df in files}
+def _declared_in(name: str) -> list[str]:
+    return sorted(
+        str(df.relative_to(REPO_ROOT))
+        for df in REPO_ROOT.glob("*/Dockerfile")
+        if re.search(rf"^ARG\s+{name}=", df.read_text(), re.MULTILINE)
+    )
+
+
+@pytest.mark.parametrize("name", sorted(PINNED_IN))
+def test_pinned_in_lists_every_dockerfile_that_declares_the_pin(name):
+    """Parity is only checked across PINNED_IN, so the list has to be complete:
+    an unlisted second copy would drift with nothing watching it."""
+    assert _declared_in(name) == sorted(PINNED_IN[name])
+
+
+@pytest.mark.parametrize("name", sorted(PINNED_IN))
+def test_pin_is_identical_across_its_dockerfiles(name):
+    # upgrade-session carries omnictl but not TALOSCTL_VERSION: it pins one
+    # talosctl per minor under TALOSCTL_<minor>_VERSION instead.
+    values = {df: _arg(df, name) for df in PINNED_IN[name]}
     assert len(set(values.values())) == 1, (
-        f"{name} has drifted between shells: {values}"
+        f"{name} has drifted between images: {values}"
     )
 
 
@@ -48,7 +69,7 @@ def test_talosctl_matches_the_cluster_not_upstream_latest():
     """The cluster's version is the target. Upstream latest is NOT - pinning
     there puts the client ahead of the nodes and re-creates the skew in the
     other direction the moment the cluster lags."""
-    for df in PINNED_IN:
+    for df in PINNED_IN["TALOSCTL_VERSION"]:
         assert _arg(df, "TALOSCTL_VERSION") == LAST_MEASURED_CLUSTER_TALOS, (
             f"{df} pins talosctl at {_arg(df, 'TALOSCTL_VERSION')}, but the "
             f"cluster runs {LAST_MEASURED_CLUSTER_TALOS}"

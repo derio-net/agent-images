@@ -38,17 +38,21 @@ def test_extracts_a_representative_pin(pins):
     assert any(f.endswith("base/Dockerfile") for f in pins["SUPERCRONIC_VERSION"].files)
 
 
-def test_talosctl_and_omnictl_report_both_locations(pins):
-    """These two live in TWO Dockerfiles each, and the silent failure is the
-    pair drifting apart. Collapsing them to one location hides that."""
-    # omnictl additionally ships in upgrade-session (which carries per-minor
-    # talosctl pins under other names instead of TALOSCTL_VERSION).
-    expected = {"TALOSCTL_VERSION": 2, "OMNICTL_VERSION": 3}
-    for name, n in expected.items():
+def test_talosctl_and_omnictl_report_every_location(pins):
+    """A pin in several Dockerfiles must report all of them: the silent failure
+    is the copies drifting apart, and collapsing to one location hides that."""
+    # talosctl: infra-shell only since secure-agent-kali was retired (2026-11).
+    # omnictl: infra-shell + upgrade-session (which carries per-minor talosctl
+    # pins under other names instead of TALOSCTL_VERSION).
+    expected = {
+        "TALOSCTL_VERSION": ["infra-shell/Dockerfile"],
+        "OMNICTL_VERSION": ["infra-shell/Dockerfile", "upgrade-session/Dockerfile"],
+    }
+    for name, want in expected.items():
         files = pins[name].files
-        assert len(files) == n, f"{name} should be found in {n} Dockerfiles, got {files}"
-        assert any(f.endswith("infra-shell/Dockerfile") for f in files)
-        assert any(f.endswith("kali/Dockerfile") for f in files)
+        assert len(files) == len(want), f"{name} should be found in {want}, got {files}"
+        for w in want:
+            assert any(f.endswith(w) for f in files)
 
 
 def test_hermes_tag_is_sourced_from_dockerhub(pins):

@@ -5,4 +5,4 @@
 # `gh workflow run build.yaml --ref <branch>`, which also builds and pushes images.
 # Inert while .devcontainer/fr-profiles.yaml sets `ci: none` (fr refuses
 # `tests: ci` before reading gates); kept ready for a future pull_request trigger.
-gate_checks: [test-kali, test-multi-agent-shell, test-scripts]
+gate_checks: [test-base, test-multi-agent-shell, test-scripts]

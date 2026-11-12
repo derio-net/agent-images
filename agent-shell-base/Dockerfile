@@ -13,7 +13,8 @@ ARG AGENT_HOME=/home/agent
 # the PV-installed NATIVE build at $AGENT_HOME/.local/bin — NOT the npm /usr/bin
 # shim, whose auto-updater can't write the root-owned npm prefix. (The base image
 # hardcodes /home/claude/.local/bin for its default user; re-set it here on
-# AGENT_HOME so every override — agent, or kali's claude — is correct.)
+# AGENT_HOME so every override — agent, or claude (as the retired
+# secure-agent-kali used, 2026-11) — is correct.)
 # AGENT_GID is propagated alongside AGENT_UID so child images can reference
 # both at build time without re-declaring the ARG.
 ENV AGENT_USER=${AGENT_USER} AGENT_UID=${AGENT_UID} AGENT_GID=${AGENT_GID} \
@@ -57,7 +58,8 @@ ENV S6_KEEP_ENV=1 \
 
 # agent-base ships with the `claude` user at UID/GID 1000. Replace that identity
 # with whichever AGENT_USER/AGENT_HOME this image is built for. Idempotent so
-# overrides like AGENT_USER=claude (Phase 3 kali) succeed too.
+# overrides like AGENT_USER=claude (as secure-agent-kali, retired 2026-11,
+# used) succeed too.
 RUN if id -u "${AGENT_USER}" >/dev/null 2>&1; then \
         : "user already present"; \
     else \

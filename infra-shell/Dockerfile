@@ -11,8 +11,9 @@ ARG AGENT_GID=1000
 USER root
 
 # ── Cluster-admin tooling (kubectl, talosctl, omnictl) ──
-# Pins + install method copied verbatim from kali/Dockerfile so the two
-# images stay byte-comparable for the tools they share. kubectl uses the
+# Pins + install method were copied verbatim from the secure-agent-kali
+# Dockerfile (retired 2026-11); this is now the only shell carrying them, and
+# scripts/tests/test_talosctl_pin_parity.py guards the pins. kubectl uses the
 # k8s.io stable.txt redirect (unpinned); talosctl/omnictl carry explicit
 # version pins. Pentest packages (nmap, metasploit, sqlmap, etc.) are
 # intentionally NOT included — infra-shell is cluster-ops only.

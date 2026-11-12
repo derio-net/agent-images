@@ -4,7 +4,7 @@ image's hardcoded /home/claude/.local/bin.
 The non-login s6 agent-session driver launches `claude` via tmux with the baked
 ENV PATH (the profile.d ~/.local/bin shim applies only to LOGIN shells). If PATH
 points at /home/claude/.local/bin (the parent image's default user) instead of
-$AGENT_HOME/.local/bin, a non-kali shell (user `agent`, HOME /home/agent) resolves
+$AGENT_HOME/.local/bin, a shell built for another user (user `agent`, HOME /home/agent) resolves
 the npm /usr/bin/claude — whose auto-updater can't write the root-owned npm prefix
 ("no write permission to npm prefix") — rather than the PV-installed native build
 that self-updates. Bug found live on alert-agent 2026-06-18.

@@ -9,7 +9,7 @@ via inheritance from `multi-agent-shell`.
 
 Intended consumer: a cluster-ops pod where the operator wants the same
 multi-harness shell experience plus the three admin CLIs on PATH from
-first SSH, without the pentest baggage of `secure-agent-kali`.
+first SSH, without the pentest baggage of the retired `secure-agent-kali`.
 
 ## Scope: cluster-ops only
 
@@ -18,8 +18,8 @@ admin CLIs on top of `multi-agent-shell`. **Pentest packages
 (`nmap`, `metasploit`, `sqlmap`, `hydra`, etc.) are
 intentionally NOT included.** That separation was the planning-time
 decision behind splitting `secure-agent-kali` into a cluster-ops shell
-(this image) and a pentest shell (`secure-agent-kali`, untouched in this
-batch).
+(this image) and a pentest shell (`secure-agent-kali`, since retired — see
+below).
 
 If a specific apt-installable tool is ever needed at runtime, an operator
 can layer it via the inventory installer's `apt:` extension rather than
@@ -27,9 +27,11 @@ re-baking it into the image.
 
 ## Migration note
 
-`secure-agent-kali` is **not removed** by this batch. The Frank-side
-switch from `secure-agent-kali` to `infra-shell` for cluster-ops pods is
-tracked separately. Both images continue to build in CI.
+`secure-agent-kali` was retired in 2026-11 together with frank's
+`secure-agent-pod`: its `kali/` directory and CI jobs are gone and no new
+tags are built. The published GHCR package is not deleted, so old commits
+that pin it still resolve. `infra-shell` is now the only shell image that
+carries the cluster-admin CLIs.
 
 ## Harness manifest
 
@@ -48,9 +50,11 @@ and adds cluster-admin tooling on top.
 | `talosctl` | `v1.9.5` (build arg `TALOSCTL_VERSION`) | `github.com/siderolabs/talos/releases/download/<ver>/talosctl-linux-${TARGETARCH}` |
 | `omnictl` | `v0.45.1` (build arg `OMNICTL_VERSION`) | `github.com/siderolabs/omni/releases/download/<ver>/omnictl-linux-${TARGETARCH}` |
 
-Pins + install method are copied verbatim from `kali/Dockerfile` so the
-two images stay byte-comparable for the tools they share. When bumping a
-version, bump it in both places in the same PR.
+Pins + install method were copied verbatim from the `secure-agent-kali`
+Dockerfile (retired 2026-11). `infra-shell/Dockerfile` is now the single
+place the `talosctl` pin lives; `omnictl` is also pinned in
+`upgrade-session/Dockerfile` and the two must move together
+(`scripts/tests/test_talosctl_pin_parity.py`).
 
 ## Inventory schema
 
@@ -108,8 +112,8 @@ cat /var/lib/infra-shell/last-reconcile.motd
 | Arg | Default | Notes |
 |---|---|---|
 | `BASE_SHA` | `latest` | The `multi-agent-shell` tag/SHA to inherit from. CI passes the SHA of the same workflow run via `build-multi-agent-shell.outputs.sha`. |
-| `TALOSCTL_VERSION` | `v1.9.5` | Mirror of the `kali/Dockerfile` pin. |
-| `OMNICTL_VERSION` | `v0.45.1` | Mirror of the `kali/Dockerfile` pin. |
+| `TALOSCTL_VERSION` | `v1.9.5` | Tracks the cluster's Talos version. |
+| `OMNICTL_VERSION` | `v0.45.1` | Kept identical to the `upgrade-session/Dockerfile` pin. |
 
 `AGENT_USER`, `AGENT_HOME`, `AGENT_UID`, `AGENT_GID` are inherited from
 `agent-shell-base` via `multi-agent-shell` (defaults: `agent`,
