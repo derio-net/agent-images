@@ -3,7 +3,7 @@
 **Status:** Draft (living document)
 **Applies to:** any `*-shell` image in this repo that hosts one or more agent-CLI
 harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`, future harnesses).
-**Does not apply to:** server images (`ruflo-server`, `vk-local`).
+**Does not apply to:** server images (`ruflo-server`).
 
 ## Purpose
 
