@@ -41,8 +41,8 @@ USER root
 # exact patch pins, never a floating "latest" lookup. The window is Talos 1.12-1.14 (the
 # cluster runs 1.12 - see LAST_MEASURED_CLUSTER_TALOS in
 # scripts/version_audit.py) and Kubernetes 1.34-1.37.
-# omnictl must track the running Omni server; kept identical to infra-shell /
-# kali (scripts/tests/test_upgrade_session_image.py).
+# omnictl must track the running Omni server; kept identical to infra-shell
+# (scripts/tests/test_upgrade_session_image.py).
 ARG TALOSCTL_1_12_VERSION=v1.12.12
 ARG TALOSCTL_1_13_VERSION=v1.13.12
 ARG TALOSCTL_1_14_VERSION=v1.14.5

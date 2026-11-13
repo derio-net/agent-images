@@ -7,7 +7,6 @@ Shared base image and per-pod child images for secure agent pods on Frank.
 | Image | Base | Purpose |
 |-------|------|---------|
 | `agent-base` | `debian:bookworm-slim` | Common toolchain (claude, gh, node, bun, python3, uv, supercronic) |
-| `secure-agent-kali` | `agent-base` | Kali pentest tools + sshd + kubectl/talosctl/omnictl |
 | [`upgrade-session`](upgrade-session/) | `agent-base` | Disposable upgrade-session pod for frank's update console: omnictl, talosctl 1.12/1.13/1.14 and kubectl 1.34-1.37 side by side (pick per step with `use-versions --talos 1.13 --kubernetes 1.36`, or `UPGRADE_TALOS_MINOR` / `UPGRADE_K8S_MINOR` at start), claude + codex, `DISABLE_AUTOUPDATER=1`, non-root uid 1000 (home `/home/claude`), read-only-root-FS safe (writes only to `$HOME` and `/tmp`). Not the s6/sshd lineage. A pod `command:` overrides the ENTRYPOINT (so `UPGRADE_*_MINOR` is then ignored; use `args:`), and `talosctl`/`kubectl` are not on PATH until a selection is made. |
 | [`multi-agent-shell`](multi-agent-shell/) | `agent-shell-base` | Multi-harness shell: claude + codex + agy + opencode, implements the [multi-harness shell standard](docs/standards/multi-harness-shells.md). Second intermediate base for Phase 3 `infra-shell`. |
 | [`hermes-agent-shell`](hermes-agent-shell/) | `agent-shell-base` | Single-harness shell for the `hermes` agent (BYOK against an OpenAI-compatible endpoint — the documented exception to the [standard](docs/standards/multi-harness-shells.md)'s no-API-tokens auth contract). |
@@ -19,10 +18,19 @@ CI builds all images on every push to `main` and publishes to `ghcr.io/derio-net
 
 ```
 base/Dockerfile          → ghcr.io/derio-net/agent-base:<sha>
-kali/Dockerfile          → ghcr.io/derio-net/secure-agent-kali:<sha>
+<image>/Dockerfile       → ghcr.io/derio-net/<image>:<sha>
 ```
 
 Children are built after base completes, inheriting the base SHA from the same commit.
+
+### Retired images
+
+`secure-agent-kali` (Kali pentest tools + sshd + kubectl/talosctl/omnictl) was
+retired in 2026-11 together with frank's `secure-agent-pod`: its `kali/`
+directory and CI jobs are gone and no new tags are built. The published GHCR
+package is **not** deleted, so old commits and manifests that pin
+`ghcr.io/derio-net/secure-agent-kali:<sha>` still resolve. Cluster-admin tooling
+now ships only in [`infra-shell`](infra-shell/).
 
 ## Version audit
 

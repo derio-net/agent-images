@@ -16,34 +16,28 @@ env:
   OWNER: derio-net
 
 jobs:
-  test-kali:
+  # Shell harnesses for the code every child image inherits from base/ (the gh
+  # App-token wrapper and the boot-time credential-helper migration). They lived
+  # under kali/tests until secure-agent-kali was retired (2026-11).
+  test-base:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-      - name: Sync Python deps
-        run: uv sync --group dev
-      - name: Run kali shell tests
+      - name: Run base shell tests
         run: |
           fail=0
-          for t in kali/tests/test_*.sh; do
+          for t in base/tests/test_*.sh; do
             echo "::group::$t"
             bash "$t" || fail=1
             echo "::endgroup::"
           done
           exit $fail
-      - name: Run kali Python tests
-        working-directory: kali
-        run: uv run pytest tests/ -v
 
   # The baked agent-session driver (multi-agent-shell/rootfs/.../agent-session)
-  # is exercised by a tmux-mock pytest suite ported from frank. Mirrors the
-  # test-kali Python step; gates the frank dispatch alongside test-kali.
+  # is exercised by a tmux-mock pytest suite ported from frank. Gates the frank
+  # dispatch alongside test-base.
   test-multi-agent-shell:
     runs-on: ubuntu-latest
     permissions:
@@ -165,16 +159,6 @@ jobs:
   build-children:
     needs: [build-base, build-shell-base, build-multi-agent-shell]
     runs-on: ubuntu-latest
-    # secure-agent-kali is the one child that periodically breaks on Kali-rolling
-    # transitions (t64, GCC churn) — a flake unrelated to every other image. Make
-    # ONLY its matrix leg soft (fail-fast:false above already keeps a kali failure
-    # from cancelling the sibling builds) so a broken kali build no longer fails
-    # build-children and starves the downstream smokes + the frank auto-bump. The
-    # kali SMOKE stays hard (a real regression still reds the run), and
-    # dispatch-frank no longer needs it (see its needs: below); frank's bump
-    # handler pins per-image by GHCR tag existence, so it skips any image not
-    # actually published at the SHA.
-    continue-on-error: ${{ matrix.image.name == 'secure-agent-kali' }}
     strategy:
       # One child's external flake (e.g. ruflo-server's build-time
       # router.huggingface.co fetch returning 429, #115) must not cancel the
@@ -182,10 +166,6 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: secure-agent-kali
-            context: kali
-            build_args: |
-              BASE_SHA=${{ needs.build-shell-base.outputs.sha }}
           - name: paperclip-shell
             context: paperclip-shell
             build_args: |
@@ -248,76 +228,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
 
-  smoke-test-secure-agent-kali:
-    needs: build-children
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    env:
-      KALI_IMAGE: ghcr.io/derio-net/secure-agent-kali
-    steps:
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Smoke test — s6-overlay /init under K8s-equivalent securityContext
-        env:
-          IMAGE_SHA: ${{ github.sha }}
-        run: |
-          # Match the live secure-agent-pod securityContext so the s6-overlay
-          # preinit hits the same /run constraints it does in K8s. Without
-          # --cap-drop=ALL --security-opt=no-new-privileges, suexec can chown
-          # /run at runtime and the test cannot detect missing image-side chowns.
-          mkdir -p /tmp/kali-home
-          sudo chown 1000:1000 /tmp/kali-home
-          docker run -d --name kali-smoke \
-            --user 1000:1000 \
-            --cap-drop=ALL \
-            --security-opt=no-new-privileges \
-            -v /tmp/kali-home:/home/claude \
-            "${KALI_IMAGE}:${IMAGE_SHA}"
-          # /init must reach stage 2 (services up). Budget bumped to 90s
-          # because cont-init.d/55-install-fr-bridge now does a `uv tool
-          # install` from a git tag on first boot — pulls the fr source +
-          # transitive deps from PyPI before sshd starts. Steady-state
-          # boots are still ~3s once fr is on the PVC; the 90s budget is
-          # for the first run against an empty volume (CI is always first).
-          # s6-overlay v3 installs binaries under /command/ — the agent-base
-          # PATH does not include it, so we must call s6-svstat by full path.
-          for i in $(seq 1 90); do
-            if docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
-              echo "✓ s6-overlay started, sshd is up"
-              break
-            fi
-            sleep 1
-          done
-          if ! docker exec kali-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
-            echo "✗ s6-overlay did not bring sshd up within 90s"
-            docker logs kali-smoke
-            docker rm -f kali-smoke
-            exit 1
-          fi
-
-          # Bridge wrapper smoke: cron invokes $HOME/.local/bin/fr-bridge
-          # (the wrapper written by cont-init.d/55-install-fr-bridge). The
-          # banner version must match the image's FR_BRIDGE_PIN — this is
-          # what proves the init script reconciled to the pinned tag rather
-          # than silently keeping a stale PVC install.
-          # Capture stderr (2>&1): the bridge (fr_vk.bridge module) emits its
-          # banner + "dry-run complete" via logging, which goes to STDERR, not
-          # stdout. Without 2>&1 `out` is empty and the assertions below fail —
-          # this is what kept secure-agent-kali red on every build after the
-          # 2026-05-19 v2-bridge cutover.
-          out=$(docker exec kali-smoke /home/claude/.local/bin/fr-bridge --dry-run 2>&1)
-          echo "$out"
-          echo "$out" | head -1 | grep -qE '^\[bridge\] - v[0-9]+\.[0-9]+\.[0-9]+ - '
-          echo "$out" | grep -q 'fr_dispatch: dry-run complete'
-
-          docker logs kali-smoke
-          docker rm -f kali-smoke
-
   smoke-test-paperclip-shell:
     needs: build-children
     runs-on: ubuntu-latest
@@ -354,7 +264,7 @@ jobs:
             -v /tmp/paperclip-shell-inventory:/etc/paperclip-shell:ro \
             "${PAPERCLIP_SHELL_IMAGE}:${IMAGE_SHA}"
 
-          # /init must reach stage 2 (sshd up). 30s budget mirrors kali smoke.
+          # /init must reach stage 2 (sshd up) within a 30s budget.
           for i in $(seq 1 30); do
             if docker exec paperclip-shell-smoke /command/s6-svstat /run/service/sshd 2>/dev/null | grep -q '^up'; then
               echo "✓ s6-overlay started, sshd is up"
@@ -1289,16 +1199,9 @@ jobs:
 
   dispatch-frank:
     needs:
-      - test-kali
+      - test-base
       - test-multi-agent-shell
       - build-children
-      # NOT smoke-test-secure-agent-kali (deliberately dropped): kali is the
-      # known-flaky Kali-rolling leg (t64 / GCC churn). Gating the frank bump on
-      # it means one kali break starves EVERY image's delivery to frank. The kali
-      # build leg is soft (build-children.continue-on-error) and its smoke stays a
-      # hard signal, but the bump no longer waits on it. Safe because frank's
-      # agent-images-bump handler pins per-image by GHCR tag existence, so it
-      # skips kali at a SHA where kali did not publish (no ImagePullBackOff).
       - smoke-test-paperclip-shell
       - smoke-test-ruflo-shell
       - smoke-test-ruflo-server

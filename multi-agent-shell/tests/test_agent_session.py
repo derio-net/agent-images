@@ -13,7 +13,8 @@ stages the message, `send-keys Enter` makes the "agent" write the file the
 message names. Env is the genericized `AGENT_SESSION_*`; a dedicated test
 proves the deprecated `STOA_*` aliases still drive identical behaviour.
 
-Modeled on the repo's existing pytest setup (`kali/tests/test_*.py`).
+Modeled on the repo's pytest setup at the time (`kali/tests/test_*.py`, removed
+with secure-agent-kali in 2026-11).
 """
 import importlib.machinery
 import importlib.util
