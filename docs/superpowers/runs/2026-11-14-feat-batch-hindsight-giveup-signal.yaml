@@ -12,7 +12,17 @@ steps:
     emitted:
       spec: docs/superpowers/specs/2026-11-14-hindsight-giveup-signal-design.md
   spec-review:
-    state: pending
+    state: running
+    at: '2026-11-14T21:23:18+00:00'
+    units:
+      step/spec-review:
+        attempts:
+        - dispatched: '2026-11-14T21:23:18+00:00'
+          agent_type: super-fr:fr-spec-reviewer
+          harness: claude-code
+          tier: hard
+          bound: opus
+          session: 985bb351-d51d-4643-a7a8-0836c02ecbbe
   plan:
     state: pending
   plan-review:
