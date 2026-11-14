@@ -83,3 +83,13 @@ Re-wrapped.
 ### p1-r5-resolved · finding [fixed] · resolves p1-r5: The identity check discards stderr, so the halt reason lacks the cause (phase 1)
 
 stderr is captured into the halt reason, with a /dev/null fallback and a test.
+
+<!-- fr:journal kind=discovery scope=plan id=p2-record-not-written created=2026-11-14T21:54:26+00:00 phase=2 -->
+### p2-record-not-written · discovery · Executor returned done but never wrote its step record; the orchestrator wrote it from the return (phase 2)
+
+The executor's return claimed the record was committed, but no file existed. The orchestrator wrote this record from the return's ticks and refactor reason. The code commits 6958512 (red) and ecd0a1a (green, README) and the suite log, 70 passed with exit=0 and written after ecd0a1a, are the executor's own.
+
+<!-- fr:journal kind=discovery scope=plan id=no-refactor-p2-t1 created=2026-11-14T21:54:26+00:00 phase=2 -->
+### no-refactor-p2-t1 · discovery · no-refactor-because P2.T1 (phase 2)
+
+Test-only task: renames, inversions and explicit end_session False args. No production code to clean, and the tests follow the file's existing harness helpers.
