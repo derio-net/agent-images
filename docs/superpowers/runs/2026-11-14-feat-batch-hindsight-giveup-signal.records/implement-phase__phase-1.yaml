@@ -12,4 +12,4 @@ refactor:
 journal:
   - {kind: discovery, id: p1-ci-yaml-unproven, title: "CI smoke steps are parse-validated only", body: "Tasks 7.S1/S2 were validated by YAML parse (pyyaml via uv --with); the docker behaviour is proven only by a dispatched branch build. shellcheck was run on all new/changed scripts and is clean.", phase: 1}
 resolves: []
-evidence: {tests: /var/folders/28/d4n60x_92gbgh3rtf4vstb0h0000gn/T//p1-suite.log}
+evidence: {}
