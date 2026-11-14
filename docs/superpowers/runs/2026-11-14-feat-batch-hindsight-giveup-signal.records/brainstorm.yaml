@@ -1,0 +1,119 @@
+schema_version: 12
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+step: brainstorm
+outcome: done
+questions: {rounds: 1}
+journal:
+  - kind: discovery
+    input: true
+    id: operator-brief
+    title: "Operator brief: batch hindsight-giveup-signal (agent-images#170)"
+    body: |
+      /fr-goal hindsight give-up visible, legacy agent-session fenced, fresh adopted, version strings
+
+      Batch `hindsight-giveup-signal` of derio-net/agent-images: 1 issues, delivered as ONE pull request.
+
+      ## agent-images#170: Leftovers: hindsight gives up silently, legacy agent-session path unfenced, fresh unadopted, stale 0.8.4 strings
+      hindsight gives up on postgres silently (container stays Ready, no /health signal); legacy agent-session send path unfenced (#152); fresh unadopted by frank; stale 0.8.4 strings.
+
+      ## Why these belong together
+      Hindsight gives up on postgres while the container stays Ready; the other items are the same image's leftovers.
+
+      ## Delivery rules
+      - Work on branch `feat/batch-hindsight-giveup-signal`.
+      - Open a draft PR as soon as the spec is committed. Its body contains these lines, one per member, so every member closes when it merges:
+        Closes derio-net/agent-images#170
+      - Start the run (`fr run start` with `--issue 170`) so it records its issue.
+      - Do not name any member issue as a phase `tracking_issue` in the plan: the bridge would then own that issue's `fr:` labels.
+
+      Never add the `approved-fr` label: it is the operator's approval to merge, and fr voids it on your next push.
+
+      --- Issue #170 body ---
+      Found by the 2026-10-13 audit of merged derio-net batches. Leftovers of hindsight-pg-backoff (#163), agent-session-once (#164) and hindsight-offline-smoke (#168). The issues closed with these unmet, and nothing was filed.
+
+      ## Defects
+      1. **#160: giving up is silent.** After postgres gives up (`hermes-agent-shell-hindsight/rootfs/etc/services.d/postgres/finish`, exit 125), the container stays Ready, and hindsight-api still trusts host:port and would connect to a foreign postgres. The PR listed these as "Out of scope": surface the failure on `/health`; fail readiness; check postgres identity before connecting; a port pre-flight at cont-init.
+      2. **#152: the duplicate-turn fence covers only `/v1/session/send`.** The legacy `/session/send` and the CLI default to off (`multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/agent-session`, `serve()`; `test_v1_ends_session_by_default_legacy_path_does_not`). The persistent-conversation consumers the PR names (frank alert-agent, n8n) can still get a self-resumed duplicate turn. The PR also says the original root cause is "most likely, not confirmed".
+      3. **#157: no consumer adopted `fresh`.** frank `apps/alert-agent` never passes `fresh`, so the frank#599 context-bleed class is mitigated only by frank#695's session-id split. File or do the frank-side change.
+      4. **Stale version strings.** These still say 0.8.4 while the Dockerfile pins 0.8.5: `README.md:29`, the Dockerfile comment at line 15, and `rootfs/etc/services.d/hindsight-api/run:2`.
+      5. **Housekeeping:** #164 adopted the version-sweep (#155) and hermes-ssh (#158) plan cursors at "implement pending", with manual phases unchecked. Reconcile them.
+
+      ## Acceptance
+      - With postgres given up, `/health` reports it and the container is not Ready (test).
+      - The legacy send path and the CLI fence the turn too, or the decision not to is recorded with the remaining risk.
+      - frank's alert-agent passes `fresh` (or an issue there tracks it).
+      - No 0.8.4 string remains.
+  - kind: discovery
+    id: health-already-db-aware
+    title: "Upstream /health already 503s on a dead DB; the Ready-while-broken case is a foreign postgres on 5433"
+    body: |
+      hindsight-api-slim 0.8.5 `MemoryEngine.health_check` (engine/memory_engine.py:3265) runs SELECT 1 and `/health` returns 503 on failure; frank's hindsight sidecar startup/readiness/liveness probes all curl /health; hindsight-api/run never execs while pg_isready fails. So a down postgres already fails probes (slowly, via the 300s startup budget). What stays Ready is a foreign postgres on 127.0.0.1:5433 (frank's stray ssh-sidecar postgres, 2026-08-19): pg_isready passes and /health reports healthy from the wrong DB.
+  - kind: decision
+    id: giveup-identity-and-halt
+    title: "Give-up: identity check + cont-init port pre-flight + halt the container on give-up"
+    body: |
+      Question: what should the hindsight image do about give-up / a foreign postgres?
+      Answer (operator, Round 1 Q1): "Identity + halt" — hindsight-api/run compares system_identifier with pg_controldata of our PGDATA and refuses on mismatch; a cont-init pre-flight fails boot when 5433 is already taken; on give-up (exit 125) postgres/finish halts the container non-zero so kubelet's CrashLoopBackOff is the bounded visible signal.
+      Interprets #170's "/health reports it" as: /health never answers healthy from a given-up or foreign postgres (API not exec'd, or container exited).
+  - kind: decision
+    id: fence-on-everywhere
+    title: "Fence: end_session defaults on for every send path and the CLI; explicit false opts out"
+    body: |
+      Question: which default for the #152 post-turn fence on the legacy /session/send path and the CLI?
+      Answer (operator, Round 1 Q2): "Fence on everywhere" — legacy and CLI default end_session to true like /v1; callers wanting a warm REPL pass end_session:false. A duplicate side-effecting turn costs more than the cold-start latency.
+  - kind: decision
+    id: version-sweep-close-and-file
+    title: "Housekeeping: close the version-sweep cursor, tick P7.T1.S2, file the omnictl discovery"
+    body: |
+      Question: how to reconcile the stalled version-sweep run (hermes-ssh already archived by #175)?
+      Answer (operator, Round 1 Q3): "Close it + file omnictl" — tick phase 6 and P7.T1.S2 ("left at v0.45.1, server version not established"), file an issue for the real omnictl-to-server discovery, close the cursor and archive the plan in this PR.
+  - kind: decision
+    id: fresh-frank-issue
+    title: "fresh adoption: filed as derio-net/frank#990, not done here"
+    body: |
+      Question: frank-side `fresh` adoption under the one-PR rule?
+      Answer (operator, Round 1 Q4): "File a frank issue" — filed as https://github.com/derio-net/frank/issues/990 (surge + digest orchestration sends pass fresh:true; chat bridge does not), which also warns of the fence default change.
+  - kind: decision
+    id: verification-pytest-branch-build-tester
+    title: "Verification: pytest + dispatched branch build pre-merge; frank boot post-merge, gate tester"
+    body: |
+      Question: how is this run verified before merge, and who closes it out?
+      Answer (operator, Round 1 Q5): "pytest + branch build, tester" — local pytest suite plus a dispatched build.yaml branch build whose hindsight smoke jobs gain pre-flight and give-up-halts cases; rows `verify: none` with that reason; Test Plan rows for the frank sidecar boot and agent-session resume after the bump; gate: tester.
+  - kind: lens
+    lens: errors
+    title: "New halt/refuse paths in s6 scripts: every failure must exit loudly with the right code, never hang or silently exec"
+resolves: []
+acceptance:
+  - id: hindsight-port-preflight
+    capability: hindsight sidecar boot safety
+    acceptance: "When something already listens on 127.0.0.1:5433, the hindsight container fails boot naming the port and exits non-zero without starting a postmaster."
+    origin: ["spec:2026-11-14-hindsight-giveup-signal#R1"]
+    status: not-implemented
+    verify: none
+  - id: hindsight-identity-check
+    capability: hindsight sidecar boot safety
+    acceptance: "hindsight-api starts only when the postgres on 127.0.0.1:5433 is the cluster in our PGDATA (matching system identifier); otherwise it refuses, says why, and the container exits non-zero."
+    origin: ["spec:2026-11-14-hindsight-giveup-signal#R2", "spec:2026-11-14-hindsight-giveup-signal#R4"]
+    status: not-implemented
+    verify: none
+  - id: hindsight-giveup-halts
+    capability: hindsight sidecar boot safety
+    acceptance: "When postgres exhausts its bounded restart backoff, the hindsight container exits non-zero (so the pod shows restarts) instead of staying up with postgres down, and /health never answers healthy meanwhile."
+    origin: ["spec:2026-11-14-hindsight-giveup-signal#R3", "spec:2026-11-14-hindsight-giveup-signal#R4"]
+    status: not-implemented
+    verify: none
+  - id: agent-session-fence-default
+    capability: agent-session exactly-once turns
+    acceptance: "Every agent-session send path (legacy /session/send, /v1/session/send, the send CLI) ends the harness session after the turn by default; only end_session:false keeps it, and the next send resumes the same conversation."
+    origin: ["spec:2026-11-14-hindsight-giveup-signal#R5", "spec:2026-11-14-hindsight-giveup-signal#R6"]
+    status: not-implemented
+    verify: none
+  - id: hindsight-version-strings
+    capability: hindsight image documentation
+    acceptance: "Every hindsight-api version the image's README, Dockerfile comment and run script mention equals the pinned ARG HINDSIGHT_API_VERSION, and a test fails when they drift."
+    origin: ["spec:2026-11-14-hindsight-giveup-signal#R7"]
+    status: not-implemented
+    verify: none
+emitted:
+  spec: docs/superpowers/specs/2026-11-14-hindsight-giveup-signal-design.md
+evidence: {}
