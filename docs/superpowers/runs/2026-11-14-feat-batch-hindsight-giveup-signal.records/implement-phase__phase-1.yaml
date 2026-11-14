@@ -1,0 +1,15 @@
+schema_version: 12
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+step: implement-phase
+item: phase/1
+outcome: done
+ticks: [P1.T1.S1, P1.T2.S1, P1.T2.S2, P1.T2.S3, P1.T3.S1, P1.T3.S2, P1.T4.S1, P1.T4.S2, P1.T5.S1, P1.T5.S2, P1.T6.S1, P1.T6.S2, P1.T6.S3, P1.T7.S1, P1.T7.S2, P1.T7.S3]
+refactor:
+  P1.T3: "halt-container is a 6-line script; nothing to clean"
+  P1.T4: "finish change was a message swap plus one call; nothing to clean"
+  P1.T5: "single short cont-init script; nothing to clean"
+  P1.T7: "YAML-only CI steps; nothing to clean"
+journal:
+  - {kind: discovery, id: p1-ci-yaml-unproven, title: "CI smoke steps are parse-validated only", body: "Tasks 7.S1/S2 were validated by YAML parse (pyyaml via uv --with); the docker behaviour is proven only by a dispatched branch build. shellcheck was run on all new/changed scripts and is clean.", phase: 1}
+resolves: []
+evidence: {tests: /var/folders/28/d4n60x_92gbgh3rtf4vstb0h0000gn/T//p1-suite.log}
