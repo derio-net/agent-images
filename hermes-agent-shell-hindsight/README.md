@@ -26,7 +26,7 @@ UID-1000 `agent` user, and the baked `claude`/`codex` CLIs used by the
 `claude-code` retain provider. On top:
 
 - **micromamba env `hindsight-pg`** (baked into the image, not the PVC):
-  `postgresql=18.4` + `hindsight-api-slim[local-ml]==0.8.4` (public PyPI) →
+  `postgresql=18.4` + `hindsight-api-slim[local-ml]==0.8.5` (public PyPI) →
   torch-CPU + sentence-transformers.
 - **`BAAI/bge-small-en-v1.5`** pre-baked into the image HF cache (offline, CPU).
 - **tiktoken `cl100k_base`** pre-baked at `TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken`:

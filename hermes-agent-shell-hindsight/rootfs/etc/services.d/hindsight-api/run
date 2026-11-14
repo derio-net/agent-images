@@ -1,5 +1,5 @@
 #!/command/with-contenv bash
-# hindsight-api (hindsight-api-slim 0.8.4) — the local_external backend Hermes
+# hindsight-api (hindsight-api-slim 0.8.5) — the local_external backend Hermes
 # talks to over the pod loopback at 127.0.0.1:8888.
 #
 # Launch command + stable settings are the ground-truth recipe from the live
