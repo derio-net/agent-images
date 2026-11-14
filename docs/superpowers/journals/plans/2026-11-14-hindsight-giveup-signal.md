@@ -138,3 +138,57 @@ Predates this change (#164's ordering). It is not caused by flipping the default
 ### p2-r4-resolved · finding [out-of-scope] · resolves p2-r4: A non-object JSON body crashes send() with AttributeError and no HTTP response (phase 2)
 
 Predates this change. send() crashed on non-object bodies before the /v1 guard was removed, so it gets filed as a follow-up.
+
+<!-- fr:journal kind=discovery scope=plan id=omnictl-issue-180 created=2026-11-14T22:01:13+00:00 phase=3 -->
+### omnictl-issue-180 · discovery · Filed derio-net/agent-images#180 (omnictl: pin to the live Omni server version); P7.T1.S1 superseded by it (phase 3)
+
+https://github.com/derio-net/agent-images/issues/180 carries phase 7's reasoning, both
+OMNICTL_VERSION pins at v0.45.1 (infra-shell/Dockerfile:30, upgrade-session/Dockerfile:53),
+the missing kali/Dockerfile, and Refs #170. P7.T1.S1 of the version-sweep plan is ticked
+'-' (superseded by #180); P7.T1.S2 is ticked x with the stale-v0.45.1 note.
+
+<!-- fr:journal kind=finding scope=plan id=cursor-close-refused created=2026-11-14T22:01:13+00:00 phase=3 state=open review_scope=out -->
+### cursor-close-refused · finding [open] (reviewer: out of scope) · Version-sweep run cursor not closed: fr archive and fr run adopt refused the close-out routes (phase 3)
+
+2026-10-11-feat-upstream-version-sweep: `fr run reshape --yes` added lens-review (commit 8f3b843).
+`fr run adopt --supersede --yes` re-adopted it (commit 7648186); the cursor now sits on implement
+(pending), with phase/1-6 done and phase/7 manual.
+`fr archive docs/superpowers/plans/2026-07-23--agents--agent-images-version-sweep --no-issues` refused:
+  "Phase 1..6: complete locally, not on origin/main; merge the PR first"
+  "(override with --force if you know the work is done)"
+PR #155 is MERGED (squash commit c7a80f6 is on origin/main); the phase commits are not ancestors
+of origin/main, so the gate does not see the merge. --force not used.
+`fr archive --branch feat/upstream-version-sweep --no-issues` refused:
+  "branch feat/upstream-version-sweep resolves neither locally nor as origin/feat/upstream-version-sweep — nothing to diff"
+The plan folder stays at docs/superpowers/plans/2026-07-23--agents--agent-images-version-sweep.
+
+<!-- fr:journal kind=finding scope=plan id=fr-status-sweep-plan created=2026-11-14T22:01:13+00:00 phase=3 state=open review_scope=out -->
+### fr-status-sweep-plan · finding [open] (reviewer: out of scope) · fr status still lists the version-sweep plan as unmerged, and origin/main could not be parsed for it (phase 3)
+
+`fr status` (exit 0) reports "no merged plans waiting to be archived", then lists
+2026-07-23--agents--agent-images-version-sweep under "complete locally, not yet on origin/main
+(waiting for merge)" and under "could not parse on origin/main with this fr; merge state unknown".
+Same root as cursor-close-refused: squash-merge not recognised. `fr validate artifacts`: 14 checked, all valid.
+
+<!-- fr:journal kind=decision scope=plan id=archive-version-sweep-force created=2026-11-14T22:01:13+00:00 phase=3 -->
+### archive-version-sweep-force · decision · Orchestrator archived the version-sweep plan with `fr archive --force` (phase 3)
+
+The gate refused only because this branch's ticks are not yet on origin/main. #155 merged
+long ago (squash c7a80f6), and the operator's decision version-sweep-close-and-file asks for
+the archive in this PR. --force is fr's documented override for "you know the work is
+done". The plan, run cursor and journal moved to docs/superpowers/implemented/.
+
+<!-- fr:journal kind=finding scope=plan id=cursor-close-refused-resolved created=2026-11-14T22:01:13+00:00 phase=3 state=fixed resolves=cursor-close-refused -->
+### cursor-close-refused-resolved · finding [fixed] · resolves cursor-close-refused: Version-sweep run cursor not closed: fr archive and fr run adopt refused the close-out routes (phase 3)
+
+The orchestrator ran `fr archive <plan> --force --no-issues`, which moved the plan, run 2026-10-11-feat-upstream-version-sweep and journal to implemented/.
+
+<!-- fr:journal kind=finding scope=plan id=fr-status-sweep-plan-resolved created=2026-11-14T22:01:13+00:00 phase=3 state=open resolves=fr-status-sweep-plan out_of_scope=true -->
+### fr-status-sweep-plan-resolved · finding [out-of-scope] · resolves fr-status-sweep-plan: fr status still lists the version-sweep plan as unmerged, and origin/main could not be parsed for it (phase 3)
+
+What is left is fr status failing to parse origin/main's pre-migration copy. That clears when this PR merges, and the same note lists the unrelated upgrade-session plan, so this change did not cause it.
+
+<!-- fr:journal kind=discovery scope=plan id=no-refactor-p3-t1 created=2026-11-14T22:01:13+00:00 phase=3 -->
+### no-refactor-p3-t1 · discovery · no-refactor-because P3.T1 (phase 3)
+
+docs/cursor housekeeping only; no code to clean
