@@ -392,7 +392,7 @@ def test_live_existing_session_is_reused(tmp_path):
     e = dict(h.env)
     (h.fdir / "has.code").write_text("0")          # exists + (default) ready ❯ pane
     out = json.loads(subprocess.run(
-        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        [sys.executable, str(h.drv), "send", json.dumps(dict(SEND_REQ, end_session=False))],
         capture_output=True, text=True, env=e, timeout=30).stdout)
     assert out["status"] == "ok"
     calls = (h.fdir / "calls.log").read_text()
@@ -411,7 +411,7 @@ def test_slow_live_existing_session_reused(tmp_path):
     e = dict(h.env)
     (h.fdir / "has.code").write_text("0")          # session EXISTS
     out = json.loads(subprocess.run(
-        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        [sys.executable, str(h.drv), "send", json.dumps(dict(SEND_REQ, end_session=False))],
         capture_output=True, text=True, env=e, timeout=30).stdout)
     assert out["status"] == "ok"
     assert "kill-session" not in (h.fdir / "calls.log").read_text(), \
@@ -425,7 +425,7 @@ def test_absent_session_still_creates(tmp_path):
     e = dict(h.env)
     (h.fdir / "has.code").write_text("1")          # session ABSENT
     out = json.loads(subprocess.run(
-        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        [sys.executable, str(h.drv), "send", json.dumps(dict(SEND_REQ, end_session=False))],
         capture_output=True, text=True, env=e, timeout=30).stdout)
     assert out["status"] == "ok"
     assert SEND_REQ["session_id"] in (h.fdir / "new.log").read_text()
@@ -580,7 +580,7 @@ def _run_with_ctx(harness, pct):
         e["FAKE_CONTEXT_PCT"] = str(pct)
     (harness.fdir / "has.code").write_text("0")   # live session
     return json.loads(subprocess.run(
-        [sys.executable, str(harness.drv), "send", json.dumps(SEND_REQ)],
+        [sys.executable, str(harness.drv), "send", json.dumps(dict(SEND_REQ, end_session=False))],
         capture_output=True, text=True, env=e, timeout=30).stdout)
 
 
@@ -855,16 +855,15 @@ def test_end_session_skips_compaction(harness):
     assert "/compact" not in _paste_first_lines(harness), "no point compacting a session being ended"
 
 
-def test_cli_send_keeps_session_by_default(harness):
+def test_cli_send_ends_session_by_default(harness):
     out = json.loads(harness.run(SEND_REQ).stdout)
     assert out["status"] == "ok"
-    assert _killed(harness) == [], "persistent conversations must survive the turn by default"
+    assert _killed(harness) == [SEND_REQ["session_id"]], "the fence is on by default"
 
 
-def test_v1_ends_session_by_default_legacy_path_does_not(harness):
-    # /v1 is the cncd contract: session_id = run id, never reused, so the fence
-    # is on by default. The legacy path serves persistent conversations
-    # (alert-agent, n8n) and keeps the session.
+def test_every_path_ends_session_by_default(harness):
+    # The fence is the default on every send path: legacy /session/send,
+    # /v1/session/send and the CLI.
     port = _free_port()
     proc = _start_server(harness, port)
     try:
@@ -872,16 +871,32 @@ def test_v1_ends_session_by_default_legacy_path_does_not(harness):
         assert _wait_healthz(base, proc), "server did not become ready"
         code, out = _post(base, "/session/send", dict(SEND_REQ, session_id="legacy-sess"))
         assert code == 200 and out["status"] == "ok"
-        assert _killed(harness) == []
+        assert _killed(harness) == ["legacy-sess"]
         code, out = _post(base, "/v1/session/send", dict(SEND_REQ, session_id="run-123"))
         assert code == 200 and out["status"] == "ok"
-        assert _killed(harness) == ["run-123"]
-        code, out = _post(base, "/v1/session/send",
-                          dict(SEND_REQ, session_id="run-keep", end_session=False))
-        assert code == 200 and out["status"] == "ok"
-        assert _killed(harness) == ["run-123"], "an explicit end_session=false must be honoured"
+        assert _killed(harness) == ["legacy-sess", "run-123"]
     finally:
         proc.terminate(); proc.wait(timeout=5)
+    out = json.loads(harness.run(dict(SEND_REQ, session_id="cli-sess")).stdout)
+    assert out["status"] == "ok"
+    assert "cli-sess" in _killed(harness)
+
+
+def test_explicit_false_keeps_session(harness):
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        for path, sid in (("/session/send", "legacy-keep"), ("/v1/session/send", "run-keep")):
+            code, out = _post(base, path, dict(SEND_REQ, session_id=sid, end_session=False))
+            assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == [], "an explicit end_session=false must be honoured"
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+    out = json.loads(harness.run(dict(SEND_REQ, session_id="cli-keep", end_session=False)).stdout)
+    assert out["status"] == "ok"
+    assert _killed(harness) == []
 
 
 def test_ended_session_resumes_on_next_send(harness):
@@ -912,14 +927,23 @@ def test_end_session_fences_failure_before_submit(harness, tmp_path):
     assert _killed(harness) == [SEND_REQ["session_id"]]
 
 
-def test_flags_require_json_true(harness):
+def test_fresh_requires_json_true(harness):
     sid = SEND_REQ["session_id"]
     last_dir = Path(harness.env["AGENT_SESSION_LAST_DIR"]); last_dir.mkdir(parents=True, exist_ok=True)
     (last_dir / (sid + ".last")).write_text(str(time.time()))
-    out = json.loads(harness.run(dict(SEND_REQ, fresh="false", end_session="false")).stdout)
+    out = json.loads(harness.run(dict(SEND_REQ, fresh="false", end_session=False)).stdout)
     assert out["status"] == "ok"
     assert "/clear" not in _paste_first_lines(harness), 'fresh="false" must not clear'
-    assert _killed(harness) == [], 'end_session="false" must not end the session'
+
+
+def test_end_session_only_false_disables(harness):
+    # Only a JSON false disables the fence; a non-boolean errs to the fence.
+    out = json.loads(harness.run(dict(SEND_REQ, end_session="false")).stdout)
+    assert out["status"] == "ok"
+    assert _killed(harness) == [SEND_REQ["session_id"]], 'end_session="false" must stay fenced'
+    out = json.loads(harness.run(dict(SEND_REQ, session_id="kept", end_session=False)).stdout)
+    assert out["status"] == "ok"
+    assert _killed(harness) == [SEND_REQ["session_id"]], "JSON false must keep the session"
 
 
 def test_v1_explicit_null_keeps_fence_on(harness):
@@ -931,6 +955,19 @@ def test_v1_explicit_null_keeps_fence_on(harness):
         code, out = _post(base, "/v1/session/send", dict(SEND_REQ, session_id="run-n", end_session=None))
         assert code == 200 and out["status"] == "ok"
         assert _killed(harness) == ["run-n"]
+    finally:
+        proc.terminate(); proc.wait(timeout=5)
+
+
+def test_legacy_explicit_null_keeps_fence_on(harness):
+    port = _free_port()
+    proc = _start_server(harness, port)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        assert _wait_healthz(base, proc), "server did not become ready"
+        code, out = _post(base, "/session/send", dict(SEND_REQ, session_id="legacy-n", end_session=None))
+        assert code == 200 and out["status"] == "ok"
+        assert _killed(harness) == ["legacy-n"]
     finally:
         proc.terminate(); proc.wait(timeout=5)
 
