@@ -1,0 +1,27 @@
+#!/command/with-contenv bash
+# Port pre-flight (agent-images#170): refuse to boot when 127.0.0.1:5433 is
+# already held in the shared pod netns.
+#
+# On frank a stray postgres in the ssh-sidecar held 5433, so ours could never
+# bind; the pod stayed Running with a dead database. Failing here is the
+# earliest, cheapest signal.
+#
+# This relies on S6_BEHAVIOUR_IF_STAGE2_FAILS=2: a failing cont-init stops the
+# whole container before any longrun starts, so there is nothing to halt and we
+# deliberately do NOT call halt-container (the exit code is s6's own).
+#
+# HINDSIGHT_PG_PORT is a test seam; the real port is always 5433.
+port=${HINDSIGHT_PG_PORT:-5433}
+
+if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+  cat >&2 <<MSG
+[hindsight-preflight] FATAL: 127.0.0.1:$port is already in use.
+Our postgres would collide with it in the shared pod netns and could never
+start. Known cause: frank's stray postgres in the ssh-sidecar container.
+Free the port (stop whatever listens there) and restart the pod.
+MSG
+  exit 1
+fi
+
+echo "[hindsight-preflight] 127.0.0.1:$port free"
+exit 0

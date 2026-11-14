@@ -132,6 +132,7 @@ ENV HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight@127.0.0.1:5433/p
 RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight \
  && chmod +x \
       /etc/cont-init.d/30-hindsight-initdb \
+      /etc/cont-init.d/35-hindsight-port-preflight \
       /etc/services.d/postgres/run \
       /etc/services.d/postgres/finish \
       /etc/services.d/hindsight-api/run \
