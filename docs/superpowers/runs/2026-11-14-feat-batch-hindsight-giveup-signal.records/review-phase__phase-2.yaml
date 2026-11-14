@@ -1,0 +1,17 @@
+schema_version: 12
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+step: review-phase
+item: phase/2
+outcome: done
+journal:
+  - {kind: finding, id: p2-r1, phase: 2, review_scope: in, title: "README cost paragraph omits that claude's near-limit auto-compact still runs under the fence", body: "Verified (README.md:271). The spec's Conversation cost says auto-compact remains, and R6 asks for the compaction cost to be documented."}
+  - {kind: finding, id: p2-r2, phase: 2, review_scope: in, title: "CLI leg of test_every_path_ends_session_by_default asserts membership, not the exact kill list", body: "Verified (test_agent_session.py:882). It would still pass if the CLI killed extra sessions."}
+  - {kind: finding, id: p2-r3, phase: 2, review_scope: out, title: "ensure_session() runs outside _send_locked's try/finally, so a failure there is unfenced although the README says the fence covers a failure before submit", body: "Pre-existing: the ordering and the README claim come from #164, and this change does not alter where ensure_session runs."}
+  - {kind: finding, id: p2-r4, phase: 2, review_scope: out, title: "A non-object JSON body crashes send() with AttributeError and no HTTP response", body: "Pre-existing: send() indexed req['session_id'] before this change. The removed isinstance guard only protected the /v1 defaulting step."}
+  - {kind: review, id: review-phase2-1, phase: 2, title: "Phase 2 review: 2 minor in-scope findings fixed, 2 pre-existing filed out of scope", body: "Independent reviewer over git diff 79d2080..ecd0a1a against spec R5-R6 and plan 02.yaml. Every send path fences by default, and only JSON false disables it. Nothing else depended on the removed serve() defaulting, idempotency cache included. All six spec-listed tests are handled, and fresh is unchanged. The full suite gave 70 passed. Findings p2-r1 and p2-r2 (in) are fixed; p2-r3 and p2-r4 (out) are pre-existing. The reviewer's suggested consumer-migration concern is already covered by Test Plan row 2 and the frank#990 heads-up."}
+resolves:
+  - {id: p2-r1, state: fixed, body: "The README now says claude's near-limit auto-compact still runs."}
+  - {id: p2-r2, state: fixed, body: "The CLI leg asserts the exact list [legacy-sess, run-123, cli-sess]."}
+  - {id: p2-r3, state: out-of-scope, body: "Predates this change (#164's ordering). It is not caused by flipping the default, so it gets filed as a follow-up."}
+  - {id: p2-r4, state: out-of-scope, body: "Predates this change. send() crashed on non-object bodies before the /v1 guard was removed, so it gets filed as a follow-up."}
+evidence: {review: review-phase2-1, reviewer: aba3bc9688b8d1e60, model: claude-opus-5-5}
