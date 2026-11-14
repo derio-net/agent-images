@@ -223,3 +223,16 @@ run_kind: none
 
 <!-- fr:journal kind=decision scope=spec id=phase-split-2026-11-14-hindsight-giveup-signal-p3 created=2026-11-14T21:35:40+00:00 -->
 ### phase-split-2026-11-14-hindsight-giveup-signal-p3 · decision · tier: the version-sweep close-out (R8) is mechanical docs/cursor housekeeping, a cheaper tier than phases 1–2
+
+<!-- fr:journal kind=decision scope=spec id=exit-change-1 created=2026-11-14T22:17:13+00:00 -->
+### exit-change-1 · decision · exit change: row hindsight-port-preflight -> gate tester
+
+Repo is ci none (build.yaml never runs on PRs): unit tests pass locally and in the dispatched branch build; the tester confirms on the post-merge main build and frank bump (operator decision verification-pytest-branch-build-tester)
+
+before: kinds ['none'], gates ['tester']
+after: kinds ['none'], gates ['tester']
+
+```yaml
+answered_by: none
+lowered: []
+```
