@@ -1,0 +1,83 @@
+schema_version: 2
+phase:
+  number: 3
+  title: Housekeeping — close out the version-sweep plan and cursor
+  tag: agentic
+  depends_on:
+  - 2
+  tracking_issue: null
+  tier: mechanical
+  files:
+  - docs/superpowers/plans/2026-07-23--agents--agent-images-version-sweep/**
+  - docs/superpowers/implemented/plans/2026-07-23--agents--agent-images-version-sweep/**
+  - docs/superpowers/runs/2026-10-11-feat-upstream-version-sweep*
+  - docs/superpowers/journals/**
+  - docs/acceptance/**
+  estimate_lines: 80
+tasks:
+- number: 1
+  title: Tick, file, close, archive
+  steps:
+  - id: P3.T1.S1
+    text: |-
+      Tick P7.T1.S2 of `docs/superpowers/plans/2026-07-23--agents--agent-images-version-sweep`.
+      Use `fr plan tick` if available (`fr plan --help`); otherwise set its state
+      to `x` with the note "omnictl left at v0.45.1: the Omni server version was
+      not established (agent-images#170)". P7.T1.S1 is superseded by the issue
+      below: record that in its note too and tick it in whatever way fr accepts
+      for a superseded manual step. Verify with `fr plan self-review <plan-dir>`.
+  - id: P3.T1.S2
+    text: |-
+      File an agent-images issue:
+      `gh issue create -R derio-net/agent-images --title "omnictl: pin to the live Omni server version"`.
+      The body covers:
+      - phase 7's reasoning: omnictl must track the server, and the server version
+        lives out-of-band in omni.env;
+      - the two pins (`infra-shell/Dockerfile:30` and `upgrade-session/Dockerfile:53`,
+        both v0.45.1);
+      - that the plan's `kali/Dockerfile` no longer exists;
+      - Refs #170.
+      Do NOT name it as any phase's tracking_issue. Record the issue URL in the
+      plan journal (`fr journal add --scope plan ...`, a discovery).
+  - id: P3.T1.S3
+    text: |-
+      Close the run cursor `2026-10-11-feat-upstream-version-sweep`.
+      1. Preview `fr run reshape 2026-10-11-feat-upstream-version-sweep` (it
+         predates lens-review); apply it with `--yes` if it loses nothing.
+         Otherwise use `fr run adopt docs/superpowers/plans/2026-07-23--agents--agent-images-version-sweep --supersede`.
+      2. Bring the cursor to done. Phase 6 is done at #155's merge, recorded
+         as historical; phase 7 is manual and ticked. Use whatever fr offers for a
+         merged plan: try the close-out path `fr pickup --run <id>` prints, or
+         `fr archive --branch feat/upstream-version-sweep --no-issues`.
+      3. If fr refuses every route, record the refusal text in the plan journal as
+         a finding and stop at the furthest state reached. Do not hand-edit the
+         run yaml.
+  - id: P3.T1.S4
+    text: |-
+      Confirm the plan folder now lives under
+      `docs/superpowers/implemented/plans/` (the archive moves it; if the archive
+      route was refused, leave it in place and say so). Run `fr status` and
+      `fr validate artifacts` (both clean), then commit
+      `chore(fr): close out the version-sweep plan (#170)`.
+state:
+  steps:
+    P3.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P3.T1.S4:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []

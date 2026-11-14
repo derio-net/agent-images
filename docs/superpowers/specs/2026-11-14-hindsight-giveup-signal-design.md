@@ -235,3 +235,9 @@ gate: tester
 - [ ] post-merge — operator-driven, BEFORE merging frank's bump PR: inside the hermes-agent-shell pod, check whether anything other than the hindsight sidecar's own postgres holds 127.0.0.1:5433 (the stray ssh-sidecar postgres frank's deployment comment records since 2026-08-19). If one does, `pg_dump` whatever hindsight wrote to it, restore that into the sidecar's PGDATA, and stop the stray server. Otherwise the new pre-flight crash-loops the sidecar, by design.
 - [ ] post-merge — operator-driven: after frank's agent-images bump PR pins the hermes-agent-shell-hindsight SHA from this merge, the `hindsight` sidecar of the hermes-agent-shell pod reaches Ready, `curl -sf http://127.0.0.1:8888/health` inside it returns `healthy`, and its logs show the port pre-flight and identity check passing (no `halt-container`).
 - [ ] post-merge — operator-driven: after the bump reaches the alert-agent / n8n agent-session consumers, one alert-agent chat turn and one n8n-driven turn still complete, and the second turn in the same session remembers the first (the fence resumes the conversation).
+
+## Implementation Plans
+
+| Plan | Repo | File | Depends on |
+|------|------|------|------------|
+| 2026-11-14-hindsight-giveup-signal | `derio-net/agent-images` | `2026-11-14-hindsight-giveup-signal` | — |

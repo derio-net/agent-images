@@ -1,0 +1,284 @@
+schema_version: 2
+phase:
+  number: 1
+  title: Hindsight — port pre-flight, identity check, halt on give-up, version strings
+    (TDD)
+  tag: agentic
+  depends_on: []
+  tracking_issue: null
+  acceptance:
+  - hindsight-port-preflight
+  - hindsight-identity-check
+  - hindsight-giveup-halts
+  - hindsight-version-strings
+  skeleton: true
+  tier: standard
+  files:
+  - hermes-agent-shell-hindsight/**
+  - scripts/tests/test_hindsight_*.py
+  - .github/workflows/build.yaml
+  estimate_lines: 520
+tasks:
+- number: 1
+  title: Skeleton smoke — the scripts suite runs green on a trivial test
+  steps:
+  - id: P1.T1.S1
+    text: |-
+      The repo has `ci none`, so the local suite is the gate. Create
+      `scripts/tests/test_hindsight_version_strings.py` holding only a trivial
+      test that reads `hermes-agent-shell-hindsight/Dockerfile` and asserts it
+      contains `ARG HINDSIGHT_API_VERSION=`. Run from `scripts/`:
+      `uv run pytest tests/ -q`. Expected: all green, the new test included.
+      Commit `test(hindsight): skeleton smoke for the version-string guard (#170)`.
+- number: 2
+  title: Version-string guard (R7)
+  steps:
+  - id: P1.T2.S1
+    text: |-
+      RED. In `scripts/tests/test_hindsight_version_strings.py`, parse
+      `ARG HINDSIGHT_API_VERSION=(\S+)` from the Dockerfile. For each of
+      `hermes-agent-shell-hindsight/README.md`, `.../Dockerfile` and
+      `.../rootfs/etc/services.d/hindsight-api/run`, find every match of
+      `hindsight-api-slim(\[[^\]]*\])?(==|\s+)(\d+\.\d+\.\d+)`. Assert each file
+      has at least one match and every captured version equals the ARG.
+      Parametrize over the three files. Run
+      `uv run pytest tests/test_hindsight_version_strings.py -q` from `scripts/`.
+      Expected: 3 FAIL on 0.8.4.
+  - id: P1.T2.S2
+    text: |-
+      GREEN. Change 0.8.4 to 0.8.5 at README.md:29, the Dockerfile:15 comment and
+      hindsight-api/run:2. Re-run the test (expected: pass) and
+      `grep -rn '0\.8\.4' hermes-agent-shell-hindsight` (expected: no output).
+  - id: P1.T2.S3
+    text: |-
+      REFACTOR. Factor the regex and the file list into module constants with a
+      comment citing #170. Re-run the test (green). Commit.
+- number: 3
+  title: halt-container helper with test seams
+  steps:
+  - id: P1.T3.S1
+    text: |-
+      RED. Create `scripts/tests/test_hindsight_halt.py` in the harness style of
+      `test_hindsight_pg_backoff.py`: run the script with real bash, and stub
+      binaries via `tmp_path` on PATH. Test that
+      `bash hermes-agent-shell-hindsight/rootfs/usr/local/lib/hindsight/halt-container 125 "why"`,
+      with env `S6_RESULTS_DIR=<tmp>/results` (pre-created) and `S6_HALT=<tmp>/halt`
+      (a stub that appends to a calls file):
+      - writes `125` to `<tmp>/results/exitcode`;
+      - invokes the halt stub exactly once;
+      - prints `why` on stderr;
+      - exits 0.
+      Also test that a missing `<code>` argument exits 2 with usage on stderr.
+      Expected: FAIL (file missing).
+  - id: P1.T3.S2
+    text: |-
+      GREEN. Create `rootfs/usr/local/lib/hindsight/halt-container`:
+      `#!/bin/bash`, `set -u`, require `$1` (else usage + exit 2), then
+      `echo "[halt-container] $2" >&2`,
+      `printf '%s\n' "$1" > "${S6_RESULTS_DIR:-/run/s6-linux-init-container-results}/exitcode"`,
+      `exec "${S6_HALT:-/run/s6/basedir/bin/halt}"`. Add a header comment on why:
+      the s6-overlay v3 exitcode + halt mechanism, rootless because
+      agent-shell-base chowns /run. Add it to the Dockerfile `chmod +x` list.
+      Extend `test_finish_exists_and_is_built_executable` (or add a sibling test)
+      so the chmod list covers every new script. Run
+      `uv run pytest tests/ -q` from `scripts/` (green). Commit.
+- number: 4
+  title: Give-up halts the container (R3)
+  steps:
+  - id: P1.T4.S1
+    text: |-
+      RED. In `scripts/tests/test_hindsight_pg_backoff.py`, make the `svc`
+      fixture also put a halt stub on the env: `HINDSIGHT_HALT=<tmp>/halt-stub`,
+      which records its args. Add
+      `test_give_up_halts_container_with_125`: drive finish to the give-up limit
+      (reuse `_crash_loop`) and assert rc 125, the halt stub called once with
+      `125` as first arg, and that the message says the container is being
+      stopped. Expected: FAIL.
+  - id: P1.T4.S2
+    text: |-
+      GREEN. In `services.d/postgres/finish`'s give-up branch, replace the
+      "stays DOWN" message: call
+      `"${HINDSIGHT_HALT:-/usr/local/lib/hindsight/halt-container}" 125 "<message: gave up after N fast failures, stopping the container; check the log, e.g. port 5433 in use>"`,
+      then `exit 125`. Update the header comment's policy paragraph to match.
+      Run the whole pg_backoff file (green, existing tests included). Commit.
+- number: 5
+  title: Port pre-flight cont-init (R1)
+  steps:
+  - id: P1.T5.S1
+    text: |-
+      RED. Create `scripts/tests/test_hindsight_preflight.py`. Run
+      `bash rootfs/etc/cont-init.d/35-hindsight-port-preflight` with env
+      `HINDSIGHT_PG_PORT=<port>` (a test seam; default 5433):
+      (a) while a Python socket listens on 127.0.0.1:<free port>, expect rc 1 and
+      stderr naming `127.0.0.1:<port>` and "already in use";
+      (b) with nothing listening, expect rc 0.
+      Expected: FAIL.
+  - id: P1.T5.S2
+    text: |-
+      GREEN. Write the cont-init (`#!/command/with-contenv bash`; the test runs it
+      with plain `bash`, which ignores the shebang). Set
+      `port=${HINDSIGHT_PG_PORT:-5433}`. If
+      `timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null`
+      succeeds, print a loud error and `exit 1`. The error names the port, says
+      our postgres would collide in the shared pod netns, and points at frank's
+      stray ssh-sidecar postgres as the known cause. Otherwise print
+      `[hindsight-preflight] 127.0.0.1:$port free` and exit 0. The header comment
+      explains that it relies on S6_BEHAVIOUR_IF_STAGE2_FAILS=2 (a failed
+      cont-init stops the container before any longrun) and why it does not call
+      halt-container. Add it to the Dockerfile chmod list. Run the tests (green).
+      Commit.
+- number: 6
+  title: Postgres identity check before hindsight-api (R2, R4)
+  steps:
+  - id: P1.T6.S1
+    text: |-
+      RED. Create `scripts/tests/test_hindsight_identity.py`. Run
+      `bash rootfs/etc/services.d/hindsight-api/run` with:
+      - PATH stubs for `pg_isready` (exit 0), `psql` (prints `$PSQL_OUT`, exits
+        `$PSQL_RC`), `pg_controldata` (prints
+        `Database system identifier:           $CTL_ID`, exits `$CTL_RC`),
+        `micromamba` (records argv to a file, exit 0), and a halt stub via
+        `HINDSIGHT_HALT`;
+      - `HINDSIGHT_PG_BIN=<stub dir>`, a seam replacing the hard-coded
+        `/opt/micromamba/envs/hindsight-pg/bin`.
+      Cases:
+      - ids match: micromamba recorded `hindsight-api`, halt not called;
+      - mismatch: halt called with `1` and a reason holding both ids, rc 1,
+        micromamba not called;
+      - psql rc≠0, empty psql output, pg_controldata rc≠0: each halts with 1 and
+        never execs.
+      Also assert psql was invoked with `-X`, `-w` and `PGCONNECT_TIMEOUT` set
+      (the stub records its argv and env). Expected: FAIL.
+  - id: P1.T6.S2
+    text: |-
+      GREEN. Edit hindsight-api/run: `PGBIN=${HINDSIGHT_PG_BIN:-/opt/micromamba/envs/hindsight-pg/bin}`,
+      and use it for the pg_isready loop. Then:
+      - `expected=$(LC_ALL=C "$PGBIN/pg_controldata" -D "$PGDATA" | sed -n 's/^Database system identifier:[[:space:]]*//p')`;
+      - `served=$(PGCONNECT_TIMEOUT=5 "$PGBIN/psql" -X -w -h 127.0.0.1 -p 5433 -U hindsight -d postgres -Atc 'select system_identifier from pg_control_system()')`;
+      - capture each command's rc; a non-zero rc or empty value is the unreadable
+        branch;
+      - on unreadable or mismatch, run the halt seam with 1 and the reason, then
+        `exit 1`;
+      - only after that, `exec micromamba run …` as today.
+      Set `PGDATA=${HINDSIGHT_PGDATA:-/opt/hindsight/pgdata}` as postgres/run does.
+      Update the header comment (why identity, not just pg_isready: frank's stray
+      5433 postgres). Run the tests (green). Commit.
+  - id: P1.T6.S3
+    text: |-
+      REFACTOR. If the halt-seam expression now appears in both finish and run,
+      keep it identical and grep-able (`HINDSIGHT_HALT`). Add a README paragraph
+      to the hindsight image's README covering:
+      - the pre-flight;
+      - the identity check;
+      - give-up halting the container, with kubelet CrashLoopBackOff as the
+        signal;
+      - that /health never answers healthy from a given-up or foreign postgres.
+      Run the full scripts suite (green). Commit.
+- number: 7
+  title: CI smoke steps for pre-flight and give-up
+  steps:
+  - id: P1.T7.S1
+    text: |-
+      Rewrite the `.github/workflows/build.yaml` step "Smoke test — a fatal
+      postgres start backs off and gives up (agent-images#160)" (≈ line 996) into
+      "Smoke test — 5433 held → pre-flight stops boot (agent-images#170)". Keep
+      the pg-holder container and `--network container:pg-holder`. Run the
+      hindsight container without `--rm` and poll `docker inspect -f
+      '{{.State.Running}}'` for up to 60s until false. Then assert:
+      - `docker inspect -f '{{.State.ExitCode}}'` is non-zero (print it; it is
+        s6's stage-2 failure code);
+      - the logs contain `already in use`;
+      - `grep -c 'could not create any TCP/IP sockets'` is 0.
+      Cleanup both containers. Validate the YAML with
+      `python -c "import yaml,sys; yaml.safe_load(open('.github/workflows/build.yaml'))"`.
+  - id: P1.T7.S2
+    text: |-
+      Add a step "Smoke test — postgres give-up halts the container (agent-images#170)":
+      1. `mkdir /tmp/hindsight-giveup && sudo chown 1000:1000` it.
+      2. First run (detached, same `--user 1000:1000 --cap-drop=ALL
+         --security-opt=no-new-privileges`, `-v /tmp/hindsight-giveup:/opt/hindsight`).
+         Wait up to 120s for `pg_isready` via `docker exec`, then `docker stop`
+         and `docker rm`.
+      3. `echo "shared_buffers = 'bogus'" | sudo -u '#1000' tee -a /tmp/hindsight-giveup/pgdata/postgresql.auto.conf`
+         (or `sudo tee` followed by `chown 1000:1000`).
+      4. Second run, not `--rm`. Poll up to 150s for Running=false.
+      5. Assert ExitCode == 125, and that the log has ≥1 `backing off` line and
+         ≤ 6 `postgres exited code=` lines.
+      6. Cleanup.
+      Re-validate the YAML. Commit `ci(hindsight): smoke the pre-flight and the give-up halt (#170)`.
+  - id: P1.T7.S3
+    text: |-
+      Run the full scripts suite one last time after the final code commit, into
+      a host-visible log outside the repo: from `scripts/`,
+      `uv run pytest tests/ -q > "$TMPDIR/p1-suite.log" 2>&1`. Expected: all pass.
+      Return that log path as `tests_log`.
+state:
+  steps:
+    P1.T1.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T2.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T3.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T4.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T5.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T6.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T7.S1:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T7.S2:
+      state: ' '
+      ticked_at: null
+      note: null
+    P1.T7.S3:
+      state: ' '
+      ticked_at: null
+      note: null
+  completion:
+    at: null
+    note: null
+    observed_prs: []
