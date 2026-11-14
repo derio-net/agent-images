@@ -1,0 +1,61 @@
+schema_version: 2
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+captures:
+- host: h-1d8946da
+  harness: claude-code
+  mode: devcontainer
+  captured_at: '2026-11-14T21:23:12+00:00'
+  at:
+  - resolve:brainstorm
+  sessions:
+  - session: 985bb351-d51d-4643-a7a8-0836c02ecbbe
+    role: main
+    models:
+      claude-opus-5-5:
+        input: 78
+        cache_write: 127832
+        cache_read: 4298116
+        output: 30516
+        usd: null
+        usd_source: none
+    activity:
+      implementation:
+        usd: null
+        turns: 10
+      other:
+        usd: null
+        turns: 15
+      paperwork:
+        usd: null
+        turns: 13
+    steps:
+      (outside run):
+        usd: null
+        turns: 5
+        input: 10
+        cache_write: 57403
+        cache_read: 350429
+        output: 1017
+      brainstorm:
+        usd: null
+        turns: 33
+        input: 68
+        cache_write: 70429
+        cache_read: 3947687
+        output: 29499
+    steps_by_role:
+      main:
+        (outside run):
+          usd: null
+          turns: 5
+          input: 10
+          cache_write: 57403
+          cache_read: 350429
+          output: 1017
+        brainstorm:
+          usd: null
+          turns: 33
+          input: 68
+          cache_write: 70429
+          cache_read: 3947687
+          output: 29499
