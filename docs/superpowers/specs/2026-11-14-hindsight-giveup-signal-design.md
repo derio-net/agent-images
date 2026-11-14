@@ -231,6 +231,7 @@ cursor-less, is not part of #170 and is left alone.
 - hindsight-version-strings: none — proven by the pytest version-string guard.
 gate: tester
 gate: hindsight-port-preflight=tester
+gate: hindsight-identity-check=tester
 
 ## Test Plan
 
