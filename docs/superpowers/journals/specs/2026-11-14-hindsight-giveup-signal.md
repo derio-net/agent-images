@@ -262,3 +262,16 @@ after: kinds ['none'], gates ['tester']
 answered_by: none
 lowered: []
 ```
+
+<!-- fr:journal kind=decision scope=spec id=exit-change-4 created=2026-11-14T22:17:42+00:00 -->
+### exit-change-4 · decision · exit change: row agent-session-fence-default -> gate tester
+
+Repo is ci none (build.yaml never runs on PRs): unit tests pass locally and in the dispatched branch build; the tester confirms on the post-merge main build and frank bump (operator decision verification-pytest-branch-build-tester)
+
+before: kinds ['none'], gates ['tester']
+after: kinds ['none'], gates ['tester']
+
+```yaml
+answered_by: none
+lowered: []
+```
