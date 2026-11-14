@@ -51,6 +51,23 @@ Recall works with no LLM. Retain (writing new memories) uses
 reusing the pre-migration provider. Left wired-dark until the model var is
 confirmed; recall is unaffected.
 
+## Failing loudly (agent-images#170)
+
+The sidecar shares the pod netns, so a stray postgres on `127.0.0.1:5433`
+(frank's ssh-sidecar once held it) used to leave a Running pod whose database
+was dead. Now it stops the pod instead:
+
+- **Port pre-flight** (`35-hindsight-port-preflight`): if 5433 is already
+  listening, boot fails before any service starts.
+- **Identity check** (`hindsight-api/run`): before hindsight-api starts, the
+  system identifier reported by the server on 5433 must equal our PGDATA's
+  (`pg_controldata`). A mismatch or an unreadable answer halts the container.
+- **Give-up halts the container**: when postgres fails fast too many times in a
+  row, `halt-container` stops the whole container with exit code 125, so the
+  kubelet shows `CrashLoopBackOff` - that is the signal to look at.
+- `/health` therefore never answers healthy from a given-up or foreign
+  postgres.
+
 ## Smoke test
 
 CI (`.github/workflows/build.yaml`) boots the image under the live K8s-equivalent
