@@ -3,7 +3,7 @@ run: 2026-11-14-feat-batch-hindsight-giveup-signal
 step: implement-phase
 item: phase/3
 outcome: done
-ticks: [P3.T1.S1, P3.T1.S2, P3.T1.S4]
+ticks: [P3.T1.S1, P3.T1.S2, P3.T1.S3, P3.T1.S4]
 refactor: {P3.T1: "docs/cursor housekeeping only; no code to clean"}
 journal:
   - kind: discovery
@@ -42,5 +42,16 @@ journal:
       2026-07-23--agents--agent-images-version-sweep under "complete locally, not yet on origin/main
       (waiting for merge)" and under "could not parse on origin/main with this fr; merge state unknown".
       Same root as cursor-close-refused: squash-merge not recognised. `fr validate artifacts`: 14 checked, all valid.
-resolves: []
+  - kind: decision
+    id: archive-version-sweep-force
+    phase: 3
+    title: "Orchestrator archived the version-sweep plan with `fr archive --force`"
+    body: |
+      The gate refused only because this branch's ticks are not yet on origin/main. #155 merged
+      long ago (squash c7a80f6), and the operator's decision version-sweep-close-and-file asks for
+      the archive in this PR. --force is fr's documented override for "you know the work is
+      done". The plan, run cursor and journal moved to docs/superpowers/implemented/.
+resolves:
+  - {id: cursor-close-refused, state: fixed, body: "The orchestrator ran `fr archive <plan> --force --no-issues`, which moved the plan, run 2026-10-11-feat-upstream-version-sweep and journal to implemented/."}
+  - {id: fr-status-sweep-plan, state: out-of-scope, body: "What is left is fr status failing to parse origin/main's pre-migration copy. That clears when this PR merges, and the same note lists the unrelated upgrade-session plan, so this change did not cause it."}
 evidence: {}
