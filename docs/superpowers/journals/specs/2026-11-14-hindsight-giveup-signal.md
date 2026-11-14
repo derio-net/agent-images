@@ -77,3 +77,143 @@ Answer (operator, Round 1 Q5): "pytest + branch build, tester" — local pytest 
 
 <!-- fr:journal kind=lens scope=spec id=lens-errors-1 created=2026-11-14T21:23:05+00:00 lens=errors step=brainstorm -->
 ### lens-errors-1 · lens · New halt/refuse paths in s6 scripts: every failure must exit loudly with the right code, never hang or silently exec
+
+<!-- fr:journal kind=finding scope=spec id=f-1 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-1 · finding [open] (reviewer: in scope) · Changing the fence default breaks at least six existing tests, and the spec names only one
+
+check: consistency · target: spec. The Design names only test_v1_ends_session_by_default_legacy_path_does_not (test_agent_session.py:864). These also break under `is not False`: test_cli_send_keeps_session_by_default (:858), test_flags_require_json_true (:915), test_live_existing_session_is_reused (:388), test_slow_live_existing_session_reused (:405), test_absent_session_still_creates (:421), test_compacts_when_context_over_threshold (:587; agent-session:672 skips /compact). Fix: list each test, pass end_session False where a test pins warm reuse or compaction, invert the ones that pinned the old default, and split :915.
+
+<!-- fr:journal kind=finding scope=spec id=f-2 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-2 · finding [open] (reviewer: in scope) · Turning the fence on by default makes non-claude agents lose their conversation on every turn, which contradicts R5
+
+check: codebase · target: spec. agent-session:182-187 uses --resume only for claude; multi-agent-shell/README.md:263-264 says the same. R5 claims the conversation always resumes. Fix: limit the claim to claude and document the non-claude cost.
+
+<!-- fr:journal kind=finding scope=spec id=f-3 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-3 · finding [open] (reviewer: in scope) · The README rewrite misses two lines that become false
+
+check: consistency · target: spec. multi-agent-shell/README.md:239-240 (legacy alias "differs only in the end_session default") and :272-273 ("only true enables") would contradict the new default. Add both to the rewrite.
+
+<!-- fr:journal kind=finding scope=spec id=f-4 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-4 · finding [open] (reviewer: in scope) · The halt helper is hard-coded to an absolute path, but the bash-run unit tests need to stub it
+
+check: consistency · target: spec. scripts/tests/test_hindsight_pg_backoff.py:66-70,82-89 run finish and run on the host, where /usr/local/lib/hindsight/halt-container and /run/s6/basedir/bin/halt do not exist. Fix: add a ${HINDSIGHT_HALT:-...} seam and S6_RESULTS_DIR/halt overrides, a unit test for the helper, and the helper in the Dockerfile chmod list (:132-137).
+
+<!-- fr:journal kind=finding scope=spec id=f-5 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-5 · finding [open] (reviewer: in scope) · Rollout risk on frank. If the stray 5433 postgres is still there, the bump crash-loops the sidecar, and recent memories may live in the stray database
+
+check: consistency · target: spec. The Context quotes frank's note that a stray postgres has held 5433 since 2026-08-19, and the Test Plan expects Ready after the bump. Fix: add a pre-bump operator precondition: check the holder, dump what hindsight wrote to it into our PGDATA, then stop it.
+
+<!-- fr:journal kind=finding scope=spec id=f-6 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-6 · finding [open] (reviewer: in scope) · The R4 design says the Test Plan exercises it on frank, but no Test Plan row covers a given-up or foreign postgres
+
+check: consistency · target: spec. An internal contradiction. Fix: point R4 at the smoke step and the unit tests, or add a row.
+
+<!-- fr:journal kind=finding scope=spec id=f-7 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-7 · finding [open] (reviewer: in scope) · The pre-flight does not go through halt-container, so "every path uses it" is false and the exit code is s6's choice, not ours
+
+check: consistency · target: spec. The pre-flight exits 1 and relies on S6_BEHAVIOUR_IF_STAGE2_FAILS=2 (agent-shell-base/Dockerfile:55). Fix: scope "every path" to the longruns, document that the exit code comes from s6, assert it via docker inspect, and pin N.
+
+<!-- fr:journal kind=finding scope=spec id=f-8 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-8 · finding [open] (reviewer: in scope) · The identity-check commands need hardening so they cannot hang, prompt or misparse
+
+check: codebase · target: spec. psql needs -w, PGCONNECT_TIMEOUT and -X; pg_controldata needs LC_ALL=C. Spell out the unreadable branch and exit after the halt, so the script never falls through to exec.
+
+<!-- fr:journal kind=finding scope=spec id=f-9 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-9 · finding [open] (reviewer: in scope) · The version-string guard's pattern is ambiguous, and the guard passes vacuously when it finds nothing
+
+check: codebase · target: spec. The forms differ: run:2 `hindsight-api-slim 0.8.4`, Dockerfile:15 `[local-ml] 0.8.4`, README:29 `[local-ml]==0.8.4`. Fix: specify the regex and require at least one match per file.
+
+<!-- fr:journal kind=finding scope=spec id=f-10 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-10 · finding [open] (reviewer: in scope) · The setup for the give-up smoke step is underspecified
+
+check: consistency · target: spec. A bad auto.conf needs an initialised cluster (30-hindsight-initdb:15-25). Fix: state how the cluster is initialised, assert ExitCode 125 via docker inspect, and don't use --rm.
+
+<!-- fr:journal kind=finding scope=spec id=f-11 created=2026-11-14T21:32:40+00:00 state=open review_scope=in -->
+### f-11 · finding [open] (reviewer: in scope) · In the version-sweep run, phase 6's implement unit is what is pending; the plan's phase 6 steps are already ticked
+
+check: codebase · target: spec. 06.yaml:42-52 is already ticked; the run yaml shows phase/6/implement-phase pending and cursor implement. Fix: say so, and name docs/superpowers/implemented/plans/ as the archive destination.
+
+<!-- fr:journal kind=review scope=spec id=spec-review-1 created=2026-11-14T21:32:40+00:00 -->
+### spec-review-1 · review · Independent spec review: 11 findings, all in scope
+
+Independent fr-spec-reviewer pass over the spec, the spec journal and the codebase. All 5 operator decisions are honoured; f-2 surfaces an unweighed cost of fence-on-everywhere for non-claude agents. The s6-overlay v3 halt/exitcode mechanism is correct and works rootless (agent-shell-base/Dockerfile:80-86 chowns /run). A failed cont-init under S6_BEHAVIOUR_IF_STAGE2_FAILS=2 stops the container before the longruns start. Findings raised: f-1..f-11, all in scope; the reviewer verified every file:line it cited. Suggested lenses: errors (already recorded), tests.
+
+<!-- fr:journal kind=lens scope=spec id=lens-tests-1 created=2026-11-14T21:32:40+00:00 lens=tests step=spec-review -->
+### lens-tests-1 · lens · The default flip inverts several existing agent-session tests (f-1); review the test edits as a whole
+
+<!-- fr:journal kind=finding scope=spec id=f-1-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-1 -->
+### f-1-resolved · finding [fixed] · resolves f-1: Changing the fence default breaks at least six existing tests, and the spec names only one
+
+Design §agent-session Tests now lists every affected test: renames/inversions for :864/:858, the :915 split, explicit end_session:False for :388/:405/:421/:587, and a legacy twin for :925.
+
+<!-- fr:journal kind=finding scope=spec id=f-2-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-2 -->
+### f-2-resolved · finding [fixed] · resolves f-2: Turning the fence on by default makes non-claude agents lose their conversation on every turn, which contradicts R5
+
+R5 now limits 'still resumes' to claude; Design §Conversation cost and R6 state that non-claude profiles start fresh each turn unless they send end_session:false. This stays within decision fence-on-everywhere, since frank's consumers all drive claude.
+
+<!-- fr:journal kind=finding scope=spec id=f-3-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-3 -->
+### f-3-resolved · finding [fixed] · resolves f-3: The README rewrite misses two lines that become false
+
+The README rewrite now names :239-240 (legacy-alias line) and :272-273 (JSON-boolean rule) as well as :257-270.
+
+<!-- fr:journal kind=finding scope=spec id=f-4-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-4 -->
+### f-4-resolved · finding [fixed] · resolves f-4: The halt helper is hard-coded to an absolute path, but the bash-run unit tests need to stub it
+
+Added seams HINDSIGHT_HALT, S6_RESULTS_DIR and S6_HALT, a unit test for the helper, and the helper in the chmod list; callers exit after halting.
+
+<!-- fr:journal kind=finding scope=spec id=f-5-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-5 -->
+### f-5-resolved · finding [fixed] · resolves f-5: Rollout risk on frank. If the stray 5433 postgres is still there, the bump crash-loops the sidecar, and recent memories may live in the stray database
+
+Added a pre-bump Test Plan row (operator-driven, before frank's bump merges): check for a stray 5433 holder, dump and restore what hindsight wrote there, then stop it.
+
+<!-- fr:journal kind=finding scope=spec id=f-6-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-6 -->
+### f-6-resolved · finding [fixed] · resolves f-6: The R4 design says the Test Plan exercises it on frank, but no Test Plan row covers a given-up or foreign postgres
+
+Dropped the 'Test Plan exercises R4 on frank' claim. R4 now points at the identity unit tests and the give-up smoke step, and the hindsight-giveup-halts verification line names R4.
+
+<!-- fr:journal kind=finding scope=spec id=f-7-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-7 -->
+### f-7-resolved · finding [fixed] · resolves f-7: The pre-flight does not go through halt-container, so "every path uses it" is false and the exit code is s6's choice, not ours
+
+Halt-container is now scoped to the two longrun paths. The pre-flight exit code is documented as s6's stage-2 code, which the smoke step records via docker inspect, with N pinned at 60s.
+
+<!-- fr:journal kind=finding scope=spec id=f-8-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-8 -->
+### f-8-resolved · finding [fixed] · resolves f-8: The identity-check commands need hardening so they cannot hang, prompt or misparse
+
+The identity check now uses psql -X -w with PGCONNECT_TIMEOUT=5 and LC_ALL=C pg_controldata. Non-zero exit or empty output is the unreadable branch, and exit follows the halt.
+
+<!-- fr:journal kind=finding scope=spec id=f-9-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-9 -->
+### f-9-resolved · finding [fixed] · resolves f-9: The version-string guard's pattern is ambiguous, and the guard passes vacuously when it finds nothing
+
+The guard regex is now specified (extras optional, separator == or whitespace), with at least one match required per file.
+
+<!-- fr:journal kind=finding scope=spec id=f-10-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-10 -->
+### f-10-resolved · finding [fixed] · resolves f-10: The setup for the give-up smoke step is underspecified
+
+The give-up smoke setup is specified: a first run initdbs and is stopped, then the bad GUC is appended as UID 1000, then a second run (not --rm) must reach ExitCode 125 within 150s with at most 6 failures.
+
+<!-- fr:journal kind=finding scope=spec id=f-11-resolved created=2026-11-14T21:32:40+00:00 state=fixed resolves=f-11 -->
+### f-11-resolved · finding [fixed] · resolves f-11: In the version-sweep run, phase 6's implement unit is what is pending; the plan's phase 6 steps are already ticked
+
+Housekeeping now says the plan's phase 6 is already ticked. What remains is the run cursor's phase-6 unit, phase 7, journal-check and deliver; the archive target is docs/superpowers/implemented/plans/.
+
+<!-- fr:journal kind=decision scope=spec id=exit-baseline created=2026-11-14T21:32:42+00:00 -->
+### exit-baseline · decision · exit when spec-review resolved
+
+The exit when spec-review resolved; `fr verification set` and `deliver` compare against it.
+
+```yaml
+row_gates:
+  agent-session-fence-default: none
+  hindsight-giveup-halts: none
+  hindsight-identity-check: none
+  hindsight-port-preflight: none
+  hindsight-version-strings: none
+row_kinds:
+  agent-session-fence-default: none
+  hindsight-giveup-halts: none
+  hindsight-identity-check: none
+  hindsight-port-preflight: none
+  hindsight-version-strings: none
+run_gate: tester
+run_kind: none
+```

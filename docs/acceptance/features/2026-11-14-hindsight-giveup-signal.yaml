@@ -64,3 +64,11 @@ rows:
     status: not-implemented
     notes: ''
     verify: none
+amendments:
+  - row: agent-session-fence-default
+    op: reword
+    base: 0
+    acceptance: Every agent-session send path (legacy /session/send, /v1/session/send,
+      the send CLI) ends the harness session after the turn by default; only end_session:false
+      keeps it, and for claude the next send resumes the same conversation.
+    why: 'spec-review f-2: resume holds for claude only'
