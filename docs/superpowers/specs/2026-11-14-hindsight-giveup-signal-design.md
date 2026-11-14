@@ -230,6 +230,7 @@ cursor-less, is not part of #170 and is left alone.
 - agent-session-fence-default: none — proven by the multi-agent-shell pytest suite (`tests/test_agent_session.py`), which drives the real handler over every path.
 - hindsight-version-strings: none — proven by the pytest version-string guard.
 gate: tester
+gate: hindsight-port-preflight=tester
 
 ## Test Plan
 
