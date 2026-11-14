@@ -40,3 +40,4 @@ steps:
     state: pending
 fr_version: 7.0.0rc2
 issue: 170
+pr: https://github.com/derio-net/agent-images/pull/179
