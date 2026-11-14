@@ -69,8 +69,10 @@ rows:
     origin:
     - spec:2026-11-14-hindsight-giveup-signal#R7
     levels: {}
-    status: not-implemented
-    notes: ''
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
     verify: none
 amendments:
   - row: agent-session-fence-default
