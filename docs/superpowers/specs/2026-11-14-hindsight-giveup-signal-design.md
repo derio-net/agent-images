@@ -234,6 +234,7 @@ gate: hindsight-port-preflight=tester
 gate: hindsight-identity-check=tester
 gate: hindsight-giveup-halts=tester
 gate: agent-session-fence-default=tester
+gate: hindsight-version-strings=tester
 
 ## Test Plan
 
