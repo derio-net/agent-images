@@ -418,6 +418,26 @@ def test_slow_live_existing_session_reused(tmp_path):
         "a slow-but-live REPL (renders ❯ within the probe) must be reused, not killed"
 
 
+def test_default_fenced_send_reuses_live_session_then_ends_it(tmp_path):
+    # tests-lens l-tests-r1: the reuse tests above pin end_session=False, so on the
+    # DEFAULT (fenced) path assert the same guarantee: a slow-but-live session is
+    # reused for the turn and ended exactly once, only AFTER the message is pasted.
+    h = _make_harness(tmp_path)
+    h.env["FAKE_COLD_CAPTURES"] = "2"
+    e = dict(h.env)
+    (h.fdir / "has.code").write_text("0")          # session EXISTS
+    out = json.loads(subprocess.run(
+        [sys.executable, str(h.drv), "send", json.dumps(SEND_REQ)],
+        capture_output=True, text=True, env=e, timeout=30).stdout)
+    assert out["status"] == "ok"
+    lines = (h.fdir / "calls.log").read_text().splitlines()
+    kills = [i for i, l in enumerate(lines) if "kill-session" in l]
+    pastes = [i for i, l in enumerate(lines) if "paste-buffer" in l]
+    assert len(kills) == 1, f"exactly one post-turn fence kill expected; calls={lines!r}"
+    assert pastes and kills[0] > pastes[-1], "the session must not be killed before the turn"
+    assert not any("new-session" in l for l in lines), "a live session must be reused, not recreated"
+
+
 def test_absent_session_still_creates(tmp_path):
     # Regression: a genuinely-absent session still takes the create + wait_ready
     # path (Fix C must not break the original cold-create flow).

@@ -31,11 +31,15 @@ def _drive(tmp_path, *, psql_out="111", psql_rc=0, ctl_id="111", ctl_rc=0, psql_
          f'echo "PGCONNECT_TIMEOUT=$PGCONNECT_TIMEOUT" > "{rec}/psql_env"\n'
          f'printf "%s" "$PSQL_ERR" >&2\nprintf "%s" "$PSQL_OUT"\nexit "$PSQL_RC"\n')
     _exe(stubs / "pg_controldata",
-         '#!/bin/sh\necho "Database system identifier:           $CTL_ID"\n'
+         # Localised unless LC_ALL=C, as an NLS build of pg_controldata is,
+         # so the label parse only works if run pins the locale (l-tests-r2).
+         '#!/bin/sh\nif [ "$LC_ALL" = C ]; then\n'
+         '  echo "Database system identifier:           $CTL_ID"\n'
+         'else\n  echo "Identificador del sistema:            $CTL_ID"\nfi\n'
          'exit "$CTL_RC"\n')
     _exe(stubs / "micromamba", f'#!/bin/sh\necho "$@" > "{rec}/micromamba"\n')
     _exe(tmp_path / "halt", f'#!/bin/sh\necho "$@" > "{rec}/halt"\n')
-    env = {**os.environ,
+    env = {**os.environ, "LC_ALL": "es_ES.UTF-8",
            "PATH": f"{stubs}:{os.environ['PATH']}",
            "HINDSIGHT_PG_BIN": str(stubs),
            "HINDSIGHT_HALT": str(tmp_path / "halt"),

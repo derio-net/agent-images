@@ -147,6 +147,7 @@ def test_clean_stop_is_not_a_failure(svc, code, sig):
         svc.run()
         assert svc.finish(code, sig).returncode == 0
     assert svc.sleeps() == []
+    assert svc.halts() == [], "a clean stop must never halt the container"
 
 
 def test_crash_after_long_uptime_resets_the_count(svc):
@@ -155,5 +156,6 @@ def test_crash_after_long_uptime_resets_the_count(svc):
     # postgres that had been up for an hour when it crashed.
     (svc.dir / "backoff").write_text(f"{MAX_ATTEMPTS * 10} 60 {int(time.time()) - 3600}\n")
     assert svc.finish(1).returncode == 0
+    assert svc.halts() == [], "a crash after long uptime must not halt the container"
     # The count genuinely restarted: a full bounded run is still available.
     assert _crash_loop(svc) > 1

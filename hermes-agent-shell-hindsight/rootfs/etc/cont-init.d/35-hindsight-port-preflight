@@ -13,7 +13,19 @@
 # HINDSIGHT_PG_PORT is a test seam; the real port is always 5433.
 port=${HINDSIGHT_PG_PORT:-5433}
 
-if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+# Probe outcomes: 0 = something accepted (held); 1 = refused (free);
+# 124 = no answer within 2s; 126/127 = the probe itself could not run. Loopback
+# refuses a free port at once, so anything but 0 or 1 is not "free": fail
+# closed and say which, rather than guess.
+timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+  echo "[hindsight-preflight] FATAL: cannot tell whether 127.0.0.1:$port is free" \
+       "(probe rc=$rc: 124 = no answer within 2s, 126/127 = timeout/bash unavailable);" \
+       "refusing to start postgres blind" >&2
+  exit 1
+fi
+if [ "$rc" -eq 0 ]; then
   cat >&2 <<MSG
 [hindsight-preflight] FATAL: 127.0.0.1:$port is already in use.
 Our postgres would collide with it in the shared pod netns and could never

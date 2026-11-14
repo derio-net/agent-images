@@ -38,22 +38,25 @@ done
 # halts the container rather than letting hindsight-api talk to a stranger.
 # Keep each tool's stderr so the halt reason says WHY (auth, refused, no PGDATA).
 errf=$(mktemp "${TMPDIR:-/tmp}/hindsight-identity.XXXXXX" 2>/dev/null) || errf=/dev/null
+nocap="not captured (mktemp failed)"
 ctl_out=$(LC_ALL=C "$PGBIN/pg_controldata" -D "$PGDATA" 2>"$errf")
 expected_rc=$?
-ctl_err=$(head -c 300 "$errf")
+if [ "$errf" = /dev/null ]; then ctl_err=$nocap; else ctl_err=$(head -c 300 "$errf"); fi
 expected=$(printf '%s\n' "$ctl_out" | sed -n 's/^Database system identifier:[[:space:]]*//p')
 served=$(PGCONNECT_TIMEOUT=5 "$PGBIN/psql" -X -w -h 127.0.0.1 -p 5433 -U hindsight -d postgres \
   -Atc 'select system_identifier from pg_control_system()' 2>"$errf")
 served_rc=$?
-psql_err=$(head -c 300 "$errf")
+if [ "$errf" = /dev/null ]; then psql_err=$nocap; else psql_err=$(head -c 300 "$errf"); fi
 [ "$errf" = /dev/null ] || rm -f "$errf"
 
 if [ "$expected_rc" -ne 0 ] || [ "$served_rc" -ne 0 ] || [ -z "$expected" ] || [ -z "$served" ]; then
-  "$HALT" 1 "cannot verify the postgres on 127.0.0.1:5433 is ours (pg_controldata rc=${expected_rc} id='${expected}', psql rc=${served_rc} id='${served}'; pg_controldata stderr: ${ctl_err:-none}; psql stderr: ${psql_err:-none}); refusing to start hindsight-api"
+  "$HALT" 1 "cannot verify the postgres on 127.0.0.1:5433 is ours (pg_controldata rc=${expected_rc} id='${expected}', psql rc=${served_rc} id='${served}'; pg_controldata stderr: ${ctl_err:-none}; psql stderr: ${psql_err:-none}); refusing to start hindsight-api" \
+    || sleep 60  # halt failed (logged): do not let s6 retry this at 1 Hz
   exit 1
 fi
 if [ "$expected" != "$served" ]; then
-  "$HALT" 1 "the postgres on 127.0.0.1:5433 is not ours: serves system identifier ${served}, our PGDATA is ${expected} (a foreign postgres holds the port in the pod netns)"
+  "$HALT" 1 "the postgres on 127.0.0.1:5433 is not ours: serves system identifier ${served}, our PGDATA is ${expected} (a foreign postgres holds the port in the pod netns)" \
+    || sleep 60  # halt failed (logged): do not let s6 retry this at 1 Hz
   exit 1
 fi
 

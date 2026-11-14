@@ -1031,8 +1031,8 @@ jobs:
             echo "✗ expected a non-zero exit code"
             docker logs hindsight-collide 2>&1 | tail -60; cleanup; exit 1
           fi
-          if ! docker logs hindsight-collide 2>&1 | grep -q 'already in use'; then
-            echo "✗ log does not name the port conflict ('already in use')"
+          if ! docker logs hindsight-collide 2>&1 | grep -q '\[hindsight-preflight\] FATAL: 127.0.0.1:5433 is already in use'; then
+            echo "✗ log has no pre-flight FATAL line naming 127.0.0.1:5433"
             docker logs hindsight-collide 2>&1 | tail -60; cleanup; exit 1
           fi
           fatals=$(docker logs hindsight-collide 2>&1 | grep -c 'could not create any TCP/IP sockets' || true)
