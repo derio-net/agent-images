@@ -269,7 +269,8 @@ and the CLI). Only an explicit JSON `false` disables it; a missing, `null` or
 non-boolean value (such as the string `"false"`) keeps the fence on. The cost:
 every turn is a cold start of the claude harness, resumed with `--resume` on the
 stored transcript, and the proactive `/compact` is skipped because the session is
-ending anyway. Non-claude agent profiles have no resume, so each fenced turn
+ending anyway (claude's own near-limit auto-compact still runs, so the resumed
+transcript stays bounded). Non-claude agent profiles have no resume, so each fenced turn
 starts a fresh conversation unless the caller sends `end_session: false`. **A
 persistent-conversation consumer (a long-lived `session_id` reused across turns,
 such as alert-agent or n8n) must send `end_session: false`** to keep a warm

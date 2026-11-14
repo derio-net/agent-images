@@ -879,7 +879,7 @@ def test_every_path_ends_session_by_default(harness):
         proc.terminate(); proc.wait(timeout=5)
     out = json.loads(harness.run(dict(SEND_REQ, session_id="cli-sess")).stdout)
     assert out["status"] == "ok"
-    assert "cli-sess" in _killed(harness)
+    assert _killed(harness) == ["legacy-sess", "run-123", "cli-sess"]
 
 
 def test_explicit_false_keeps_session(harness):
