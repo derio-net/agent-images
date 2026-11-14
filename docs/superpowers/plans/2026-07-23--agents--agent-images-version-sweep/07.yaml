@@ -35,9 +35,10 @@ state:
         server version); the live server version was not established in this plan
         (agent-images#170)'
     P7.T1.S2:
-      state: ' '
-      ticked_at: null
-      note: null
+      state: x
+      ticked_at: '2026-11-14T21:58:15+00:00'
+      note: 'omnictl left at v0.45.1: the Omni server version was not established
+        (agent-images#170)'
   completion:
     at: null
     note: null
