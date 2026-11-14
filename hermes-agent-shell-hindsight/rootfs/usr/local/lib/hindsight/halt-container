@@ -1,0 +1,22 @@
+#!/bin/bash
+# Stop the whole container with a chosen exit code (agent-images#170).
+#
+# s6-overlay v3 reads the container's exit code from
+# /run/s6-linux-init-container-results/exitcode when it is halted, so we write
+# the code there and then exec s6's halt. This works rootless because
+# agent-shell-base chowns /run to the agent UID. A halted container makes the
+# kubelet report a terminated container, so the pod shows CrashLoopBackOff
+# instead of a Running pod with a silently dead service.
+#
+# usage: halt-container <exit-code> [reason]
+# Env seams (tests): S6_RESULTS_DIR, S6_HALT.
+set -u
+
+if [ $# -lt 1 ]; then
+  echo "usage: halt-container <exit-code> [reason]" >&2
+  exit 2
+fi
+
+echo "[halt-container] ${2:-halting}" >&2
+printf '%s\n' "$1" > "${S6_RESULTS_DIR:-/run/s6-linux-init-container-results}/exitcode"
+exec "${S6_HALT:-/run/s6/basedir/bin/halt}"

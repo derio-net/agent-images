@@ -134,7 +134,8 @@ RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight \
       /etc/cont-init.d/30-hindsight-initdb \
       /etc/services.d/postgres/run \
       /etc/services.d/postgres/finish \
-      /etc/services.d/hindsight-api/run
+      /etc/services.d/hindsight-api/run \
+      /usr/local/lib/hindsight/halt-container
 
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}
