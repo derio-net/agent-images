@@ -93,3 +93,48 @@ The executor's return claimed the record was committed, but no file existed. The
 ### no-refactor-p2-t1 · discovery · no-refactor-because P2.T1 (phase 2)
 
 Test-only task: renames, inversions and explicit end_session False args. No production code to clean, and the tests follow the file's existing harness helpers.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r1 created=2026-11-14T21:56:48+00:00 phase=2 state=open review_scope=in -->
+### p2-r1 · finding [open] (reviewer: in scope) · README cost paragraph omits that claude's near-limit auto-compact still runs under the fence (phase 2)
+
+Verified (README.md:271). The spec's Conversation cost says auto-compact remains, and R6 asks for the compaction cost to be documented.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r2 created=2026-11-14T21:56:48+00:00 phase=2 state=open review_scope=in -->
+### p2-r2 · finding [open] (reviewer: in scope) · CLI leg of test_every_path_ends_session_by_default asserts membership, not the exact kill list (phase 2)
+
+Verified (test_agent_session.py:882). It would still pass if the CLI killed extra sessions.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r3 created=2026-11-14T21:56:48+00:00 phase=2 state=open review_scope=out -->
+### p2-r3 · finding [open] (reviewer: out of scope) · ensure_session() runs outside _send_locked's try/finally, so a failure there is unfenced although the README says the fence covers a failure before submit (phase 2)
+
+Pre-existing: the ordering and the README claim come from #164, and this change does not alter where ensure_session runs.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r4 created=2026-11-14T21:56:48+00:00 phase=2 state=open review_scope=out -->
+### p2-r4 · finding [open] (reviewer: out of scope) · A non-object JSON body crashes send() with AttributeError and no HTTP response (phase 2)
+
+Pre-existing: send() indexed req['session_id'] before this change. The removed isinstance guard only protected the /v1 defaulting step.
+
+<!-- fr:journal kind=review scope=plan id=review-phase2-1 created=2026-11-14T21:56:48+00:00 phase=2 -->
+### review-phase2-1 · review · Phase 2 review: 2 minor in-scope findings fixed, 2 pre-existing filed out of scope (phase 2)
+
+Independent reviewer over git diff 79d2080..ecd0a1a against spec R5-R6 and plan 02.yaml. Every send path fences by default, and only JSON false disables it. Nothing else depended on the removed serve() defaulting, idempotency cache included. All six spec-listed tests are handled, and fresh is unchanged. The full suite gave 70 passed. Findings p2-r1 and p2-r2 (in) are fixed; p2-r3 and p2-r4 (out) are pre-existing. The reviewer's suggested consumer-migration concern is already covered by Test Plan row 2 and the frank#990 heads-up.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r1-resolved created=2026-11-14T21:56:48+00:00 phase=2 state=fixed resolves=p2-r1 -->
+### p2-r1-resolved · finding [fixed] · resolves p2-r1: README cost paragraph omits that claude's near-limit auto-compact still runs under the fence (phase 2)
+
+The README now says claude's near-limit auto-compact still runs.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r2-resolved created=2026-11-14T21:56:48+00:00 phase=2 state=fixed resolves=p2-r2 -->
+### p2-r2-resolved · finding [fixed] · resolves p2-r2: CLI leg of test_every_path_ends_session_by_default asserts membership, not the exact kill list (phase 2)
+
+The CLI leg asserts the exact list [legacy-sess, run-123, cli-sess].
+
+<!-- fr:journal kind=finding scope=plan id=p2-r3-resolved created=2026-11-14T21:56:48+00:00 phase=2 state=open resolves=p2-r3 out_of_scope=true -->
+### p2-r3-resolved · finding [out-of-scope] · resolves p2-r3: ensure_session() runs outside _send_locked's try/finally, so a failure there is unfenced although the README says the fence covers a failure before submit (phase 2)
+
+Predates this change (#164's ordering). It is not caused by flipping the default, so it gets filed as a follow-up.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r4-resolved created=2026-11-14T21:56:48+00:00 phase=2 state=open resolves=p2-r4 out_of_scope=true -->
+### p2-r4-resolved · finding [out-of-scope] · resolves p2-r4: A non-object JSON body crashes send() with AttributeError and no HTTP response (phase 2)
+
+Predates this change. send() crashed on non-object bodies before the /v1 guard was removed, so it gets filed as a follow-up.
