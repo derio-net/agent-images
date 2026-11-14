@@ -36,15 +36,20 @@ done
 # stray, agent-images#170). Compare the system identifier of our PGDATA with
 # the one the server on 5433 reports; a mismatch (or anything unreadable)
 # halts the container rather than letting hindsight-api talk to a stranger.
-ctl_out=$(LC_ALL=C "$PGBIN/pg_controldata" -D "$PGDATA" 2>/dev/null)
+# Keep each tool's stderr so the halt reason says WHY (auth, refused, no PGDATA).
+errf=$(mktemp "${TMPDIR:-/tmp}/hindsight-identity.XXXXXX" 2>/dev/null) || errf=/dev/null
+ctl_out=$(LC_ALL=C "$PGBIN/pg_controldata" -D "$PGDATA" 2>"$errf")
 expected_rc=$?
+ctl_err=$(head -c 300 "$errf")
 expected=$(printf '%s\n' "$ctl_out" | sed -n 's/^Database system identifier:[[:space:]]*//p')
 served=$(PGCONNECT_TIMEOUT=5 "$PGBIN/psql" -X -w -h 127.0.0.1 -p 5433 -U hindsight -d postgres \
-  -Atc 'select system_identifier from pg_control_system()' 2>/dev/null)
+  -Atc 'select system_identifier from pg_control_system()' 2>"$errf")
 served_rc=$?
+psql_err=$(head -c 300 "$errf")
+[ "$errf" = /dev/null ] || rm -f "$errf"
 
 if [ "$expected_rc" -ne 0 ] || [ "$served_rc" -ne 0 ] || [ -z "$expected" ] || [ -z "$served" ]; then
-  "$HALT" 1 "cannot verify the postgres on 127.0.0.1:5433 is ours (pg_controldata rc=${expected_rc} id='${expected}', psql rc=${served_rc} id='${served}'); refusing to start hindsight-api"
+  "$HALT" 1 "cannot verify the postgres on 127.0.0.1:5433 is ours (pg_controldata rc=${expected_rc} id='${expected}', psql rc=${served_rc} id='${served}'; pg_controldata stderr: ${ctl_err:-none}; psql stderr: ${psql_err:-none}); refusing to start hindsight-api"
   exit 1
 fi
 if [ "$expected" != "$served" ]; then

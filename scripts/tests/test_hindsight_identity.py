@@ -20,7 +20,7 @@ def _exe(path, text):
     path.chmod(0o755)
 
 
-def _drive(tmp_path, *, psql_out="111", psql_rc=0, ctl_id="111", ctl_rc=0):
+def _drive(tmp_path, *, psql_out="111", psql_rc=0, ctl_id="111", ctl_rc=0, psql_err=""):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     rec = tmp_path / "rec"
@@ -29,7 +29,7 @@ def _drive(tmp_path, *, psql_out="111", psql_rc=0, ctl_id="111", ctl_rc=0):
     _exe(stubs / "psql",
          f'#!/bin/sh\necho "$@" > "{rec}/psql_argv"\n'
          f'echo "PGCONNECT_TIMEOUT=$PGCONNECT_TIMEOUT" > "{rec}/psql_env"\n'
-         f'printf "%s" "$PSQL_OUT"\nexit "$PSQL_RC"\n')
+         f'printf "%s" "$PSQL_ERR" >&2\nprintf "%s" "$PSQL_OUT"\nexit "$PSQL_RC"\n')
     _exe(stubs / "pg_controldata",
          '#!/bin/sh\necho "Database system identifier:           $CTL_ID"\n'
          'exit "$CTL_RC"\n')
@@ -40,7 +40,7 @@ def _drive(tmp_path, *, psql_out="111", psql_rc=0, ctl_id="111", ctl_rc=0):
            "HINDSIGHT_PG_BIN": str(stubs),
            "HINDSIGHT_HALT": str(tmp_path / "halt"),
            "HINDSIGHT_PGDATA": str(tmp_path / "pgdata"),
-           "PSQL_OUT": psql_out, "PSQL_RC": str(psql_rc),
+           "PSQL_OUT": psql_out, "PSQL_RC": str(psql_rc), "PSQL_ERR": psql_err,
            "CTL_ID": ctl_id, "CTL_RC": str(ctl_rc)}
     p = subprocess.run(["bash", str(RUN)], env=env, capture_output=True,
                        text=True, timeout=30)
@@ -67,6 +67,7 @@ def test_mismatch_halts_with_both_ids(tmp_path):
     {"psql_rc": 2},
     {"psql_out": ""},
     {"ctl_rc": 1},
+    {"ctl_id": ""},  # pg_controldata exits 0 but yields no identifier
 ])
 def test_unreadable_halts_and_never_execs(tmp_path, kw):
     p, rec = _drive(tmp_path, **kw)
@@ -81,3 +82,8 @@ def test_psql_is_non_interactive_and_bounded(tmp_path):
     assert "-X" in argv and "-w" in argv
     assert "PGCONNECT_TIMEOUT=" in (rec / "psql_env").read_text()
     assert (rec / "psql_env").read_text().strip() != "PGCONNECT_TIMEOUT="
+
+
+def test_unreadable_reason_carries_the_tool_stderr(tmp_path):
+    p, rec = _drive(tmp_path, psql_rc=2, psql_err="FATAL: password authentication failed")
+    assert "password authentication failed" in (rec / "halt").read_text()

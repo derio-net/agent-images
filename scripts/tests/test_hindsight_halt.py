@@ -4,6 +4,7 @@ Writes the exit code to s6-overlay v3's container results file, then execs
 s6's halt. Both paths are env seams so the test never touches /run.
 """
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -42,8 +43,15 @@ def test_missing_code_is_usage_error(tmp_path):
 
 
 def test_every_new_script_is_chmodded_in_dockerfile():
+    # The scripts must exist AND sit inside the Dockerfile's `chmod +x` list —
+    # not merely be mentioned somewhere (e.g. a comment).
     text = DOCKERFILE.read_text()
+    m = re.search(r"chmod \+x \\\n((?:[ \t]+\S+[ \t]*\\?\n)+)", text)
+    assert m, "Dockerfile has no multi-line `chmod +x` list"
+    listed = {line.strip().rstrip("\\").strip() for line in m.group(1).splitlines()}
     for rel in ("usr/local/lib/hindsight/halt-container",
-                "etc/cont-init.d/35-hindsight-port-preflight"):
-        if (IMAGE / "rootfs" / rel).exists():
-            assert f"/{rel}" in text, f"Dockerfile chmod +x list misses /{rel}"
+                "etc/cont-init.d/35-hindsight-port-preflight",
+                "etc/services.d/postgres/finish",
+                "etc/services.d/hindsight-api/run"):
+        assert (IMAGE / "rootfs" / rel).is_file(), f"missing rootfs/{rel}"
+        assert f"/{rel}" in listed, f"Dockerfile chmod +x list misses /{rel}"

@@ -96,8 +96,9 @@ helper is `chmod +x`'d in the Dockerfile with the other scripts and has its own 
   is less predictable than letting stage 2 fail. Under `S6_BEHAVIOUR_IF_STAGE2_FAILS=2`
   (agent-shell-base/Dockerfile:55), a failed cont-init stops the container before any
   services.d longrun starts, so no postmaster ever runs. The container's exit code on
-  this path is s6-overlay's stage-2 failure code, not one we choose. The smoke step
-  records it with `docker inspect` and asserts that exact value. A pod netns outlives
+  this path is s6-overlay's stage-2 failure code, not one we choose. It cannot be
+  known offline, so the smoke step prints it (`docker inspect`) and asserts it is
+  non-zero (phase-1 review p1-r1); the PR body records the value the branch build saw. A pod netns outlives
   container restarts, so a stray holder trips this on every restart: kubelet's
   CrashLoopBackOff, capped at 5 minutes, is the bounded retry.
 - **Identity check (R2):** `services.d/hindsight-api/run` keeps its `pg_isready` wait.
@@ -144,8 +145,8 @@ stubbed binaries on PATH, the same harness style as `test_hindsight_pg_backoff.p
 CI smoke jobs in `.github/workflows/build.yaml` (`smoke-test-hermes-agent-shell-hindsight`):
 - **Pre-flight.** The existing #160 collision step (build.yaml:996-1042) becomes: 5433
   is held by the pg-holder listener, and the container (not `--rm`, so its logs and state
-  survive) exits within 60s. The step asserts `docker inspect -f '{{.State.ExitCode}}'`
-  equals the recorded stage-2 code, the log names the pre-flight, and the log has zero
+  survive) exits within 60s. The step prints `docker inspect -f '{{.State.ExitCode}}'`
+  and asserts it is non-zero, the log names the pre-flight, and the log has zero
   `could not create any TCP/IP sockets` lines.
 - **Give-up.** A new step first initialises a PGDATA on a host dir with a short first
   `docker run` of the image under the K8s-equivalent flags. It waits for `pg_isready`,
