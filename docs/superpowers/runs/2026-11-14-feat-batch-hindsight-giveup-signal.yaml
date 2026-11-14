@@ -32,7 +32,15 @@ steps:
           reviewer: a544a99eb1e6e9a66
           findings: f-1,f-2,f-3,f-4,f-5,f-6,f-7,f-8,f-9,f-10,f-11
   plan:
-    state: pending
+    state: running
+    at: '2026-11-14T21:32:51+00:00'
+    units:
+      step/plan:
+        attempts:
+        - dispatched: '2026-11-14T21:32:51+00:00'
+          harness: claude-code
+          model: claude-opus-5-5
+          session: 985bb351-d51d-4643-a7a8-0836c02ecbbe
   plan-review:
     state: pending
   implement:
