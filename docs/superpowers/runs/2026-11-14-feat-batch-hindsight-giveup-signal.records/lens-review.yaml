@@ -1,0 +1,24 @@
+schema_version: 12
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+step: lens-review
+outcome: done
+journal:
+  - {kind: finding, id: l-errors-r1, global: true, review_scope: in, title: "finish passed the give-up reason as two args but halt-container printed only $2, dropping the 'check the log above (port 5433)' hint", body: "Verified. The bug came from the p1-r4 rewrap, and the test stubs recording \"$@\" hid it. Fixed: halt-container prints ${*:2}. New test_multi_word_reason_is_printed_whole."}
+  - {kind: finding, id: l-errors-r2, global: true, review_scope: in, title: "halt-container checked neither the exitcode write nor the halt exec", body: "Verified. A write failure now prints FATAL but still halts, since a stopped container beats a running one with a dead service. An exec failure prints FATAL and exits 111; this needed `shopt -s execfail`, because a failed exec otherwise kills a non-interactive shell. In hindsight-api/run, the callers sleep 60s after a failed halt so s6 does not retry at 1 Hz. Two new tests."}
+  - {kind: finding, id: l-errors-r3, global: true, review_scope: in, title: "The mktemp fallback to /dev/null made the halt reason claim 'stderr: none'", body: "Verified. The fallback now reports 'not captured (mktemp failed)'."}
+  - {kind: finding, id: l-errors-r4, global: true, review_scope: in, title: "The 5433 smoke step grepped a bare 'already in use', which postgres's own bind error also matches", body: "Verified (build.yaml:1034). It now greps '[hindsight-preflight] FATAL: 127.0.0.1:5433 is already in use'."}
+  - {kind: finding, id: l-tests-r1, global: true, review_scope: in, title: "The pinned end_session:False reuse tests left the default fenced path's reuse guarantee unchecked", body: "Verified. Added test_default_fenced_send_reuses_live_session_then_ends_it: a slow-live session under the default gets exactly one kill-session, after the last paste, and no new-session."}
+  - {kind: finding, id: l-tests-r2, global: true, review_scope: in, title: "The identity tests' pg_controldata stub printed English regardless of locale", body: "Verified. The stub is localised unless LC_ALL=C and the harness runs under es_ES, so dropping LC_ALL=C from run now fails the match test."}
+  - {kind: finding, id: l-tests-r3, global: true, review_scope: in, title: "The pre-flight treated a probe error as 'port free' (fail-open), and no test pinned it", body: "Verified. The pre-flight now fails closed on probe rc 124 or 126/127, with a FATAL naming the rc. On loopback a free port refuses at once, so only rc 0 or 1 is conclusive. New test test_probe_error_fails_closed[124,127]."}
+  - {kind: finding, id: l-tests-r4, global: true, review_scope: in, title: "The clean-stop and long-uptime backoff tests never asserted that no halt happened", body: "Verified. Both now assert svc.halts() == []."}
+  - {kind: review, id: lens-review-1, global: true, title: "Lens review (errors, tests): 8 in-scope findings, all fixed", body: "One reviewer per lens over the diff from dbdf5f6 to HEAD. errors raised l-errors-r1..r4 (r1 a real regression from the p1-r4 rewrap); tests raised l-tests-r1..r4. All are fixed with tests. Afterwards scripts has 156 passed, agent-session's new test passes, and shellcheck is clean. The s6 exit codes are confirmed by the branch build smoke steps at deliver."}
+resolves:
+  - {id: l-errors-r1, state: fixed, body: "halt-container prints ${*:2}; tested."}
+  - {id: l-errors-r2, state: fixed, body: "Both steps are checked, with execfail; the callers bound the retry loop; tested."}
+  - {id: l-errors-r3, state: fixed, body: "The fallback reports 'not captured'."}
+  - {id: l-errors-r4, state: fixed, body: "The smoke step greps the pre-flight's FATAL line."}
+  - {id: l-tests-r1, state: fixed, body: "Added a default-path reuse-then-fence test."}
+  - {id: l-tests-r2, state: fixed, body: "The stub is locale-sensitive."}
+  - {id: l-tests-r3, state: fixed, body: "The pre-flight fails closed on a probe error; tested."}
+  - {id: l-tests-r4, state: fixed, body: "Added halts()==[] asserts."}
+evidence: {review: lens-review-1, reviewer: "errors=ac2b435f0f00d3138,tests=a800883131b7a6e0a"}
