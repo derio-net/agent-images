@@ -336,3 +336,8 @@ Filed at deliver as https://github.com/derio-net/agent-images/issues/182.
 ### p3-r3-resolved-2 · finding [deferred → https://github.com/derio-net/agent-images/issues/183] · resolves p3-r3: fr's archive gate and fr status don't recognise squash merges (phase 3)
 
 Filed at deliver as https://github.com/derio-net/agent-images/issues/183.
+
+<!-- fr:journal kind=finding scope=plan id=fr-status-sweep-plan-resolved-2 created=2026-11-14T22:16:34+00:00 state=open resolves=fr-status-sweep-plan tracked_by=derio-net/agent-images#183 -->
+### fr-status-sweep-plan-resolved-2 · finding [deferred → derio-net/agent-images#183] · resolves fr-status-sweep-plan: fr status still lists the version-sweep plan as unmerged, and origin/main could not be parsed for it
+
+Same root as p3-r3 (squash merge not recognised); tracked together in #183.
