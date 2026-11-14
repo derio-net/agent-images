@@ -236,3 +236,88 @@ Original start date recorded in journal entry archived-sweep-run-provenance.
 ### p3-r3-resolved · finding [out-of-scope] · resolves p3-r3: fr's archive gate and fr status don't recognise squash merges (phase 3)
 
 fr tool behaviour (squash merges not recognised); not caused by this change, and filed as a follow-up.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r1 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-errors-r1 · finding [open] (reviewer: in scope) · finish passed the give-up reason as two args but halt-container printed only $2, dropping the 'check the log above (port 5433)' hint
+
+Verified. The bug came from the p1-r4 rewrap, and the test stubs recording "$@" hid it. Fixed: halt-container prints ${*:2}. New test_multi_word_reason_is_printed_whole.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r2 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-errors-r2 · finding [open] (reviewer: in scope) · halt-container checked neither the exitcode write nor the halt exec
+
+Verified. A write failure now prints FATAL but still halts, since a stopped container beats a running one with a dead service. An exec failure prints FATAL and exits 111; this needed `shopt -s execfail`, because a failed exec otherwise kills a non-interactive shell. In hindsight-api/run, the callers sleep 60s after a failed halt so s6 does not retry at 1 Hz. Two new tests.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r3 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-errors-r3 · finding [open] (reviewer: in scope) · The mktemp fallback to /dev/null made the halt reason claim 'stderr: none'
+
+Verified. The fallback now reports 'not captured (mktemp failed)'.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r4 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-errors-r4 · finding [open] (reviewer: in scope) · The 5433 smoke step grepped a bare 'already in use', which postgres's own bind error also matches
+
+Verified (build.yaml:1034). It now greps '[hindsight-preflight] FATAL: 127.0.0.1:5433 is already in use'.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r1 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-tests-r1 · finding [open] (reviewer: in scope) · The pinned end_session:False reuse tests left the default fenced path's reuse guarantee unchecked
+
+Verified. Added test_default_fenced_send_reuses_live_session_then_ends_it: a slow-live session under the default gets exactly one kill-session, after the last paste, and no new-session.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r2 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-tests-r2 · finding [open] (reviewer: in scope) · The identity tests' pg_controldata stub printed English regardless of locale
+
+Verified. The stub is localised unless LC_ALL=C and the harness runs under es_ES, so dropping LC_ALL=C from run now fails the match test.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r3 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-tests-r3 · finding [open] (reviewer: in scope) · The pre-flight treated a probe error as 'port free' (fail-open), and no test pinned it
+
+Verified. The pre-flight now fails closed on probe rc 124 or 126/127, with a FATAL naming the rc. On loopback a free port refuses at once, so only rc 0 or 1 is conclusive. New test test_probe_error_fails_closed[124,127].
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r4 created=2026-11-14T22:11:59+00:00 state=open review_scope=in -->
+### l-tests-r4 · finding [open] (reviewer: in scope) · The clean-stop and long-uptime backoff tests never asserted that no halt happened
+
+Verified. Both now assert svc.halts() == [].
+
+<!-- fr:journal kind=review scope=plan id=lens-review-1 created=2026-11-14T22:11:59+00:00 -->
+### lens-review-1 · review · Lens review (errors, tests): 8 in-scope findings, all fixed
+
+One reviewer per lens over the diff from dbdf5f6 to HEAD. errors raised l-errors-r1..r4 (r1 a real regression from the p1-r4 rewrap); tests raised l-tests-r1..r4. All are fixed with tests. Afterwards scripts has 156 passed, agent-session's new test passes, and shellcheck is clean. The s6 exit codes are confirmed by the branch build smoke steps at deliver.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r1-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-errors-r1 -->
+### l-errors-r1-resolved · finding [fixed] · resolves l-errors-r1: finish passed the give-up reason as two args but halt-container printed only $2, dropping the 'check the log above (port 5433)' hint
+
+halt-container prints ${*:2}; tested.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r2-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-errors-r2 -->
+### l-errors-r2-resolved · finding [fixed] · resolves l-errors-r2: halt-container checked neither the exitcode write nor the halt exec
+
+Both steps are checked, with execfail; the callers bound the retry loop; tested.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r3-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-errors-r3 -->
+### l-errors-r3-resolved · finding [fixed] · resolves l-errors-r3: The mktemp fallback to /dev/null made the halt reason claim 'stderr: none'
+
+The fallback reports 'not captured'.
+
+<!-- fr:journal kind=finding scope=plan id=l-errors-r4-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-errors-r4 -->
+### l-errors-r4-resolved · finding [fixed] · resolves l-errors-r4: The 5433 smoke step grepped a bare 'already in use', which postgres's own bind error also matches
+
+The smoke step greps the pre-flight's FATAL line.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r1-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-tests-r1 -->
+### l-tests-r1-resolved · finding [fixed] · resolves l-tests-r1: The pinned end_session:False reuse tests left the default fenced path's reuse guarantee unchecked
+
+Added a default-path reuse-then-fence test.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r2-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-tests-r2 -->
+### l-tests-r2-resolved · finding [fixed] · resolves l-tests-r2: The identity tests' pg_controldata stub printed English regardless of locale
+
+The stub is locale-sensitive.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r3-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-tests-r3 -->
+### l-tests-r3-resolved · finding [fixed] · resolves l-tests-r3: The pre-flight treated a probe error as 'port free' (fail-open), and no test pinned it
+
+The pre-flight fails closed on a probe error; tested.
+
+<!-- fr:journal kind=finding scope=plan id=l-tests-r4-resolved created=2026-11-14T22:11:59+00:00 state=fixed resolves=l-tests-r4 -->
+### l-tests-r4-resolved · finding [fixed] · resolves l-tests-r4: The clean-stop and long-uptime backoff tests never asserted that no halt happened
+
+Added halts()==[] asserts.
