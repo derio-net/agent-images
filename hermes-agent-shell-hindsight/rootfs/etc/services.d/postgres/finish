@@ -11,8 +11,9 @@
 # Policy: a FAST failure (postgres died within FAST_WINDOW seconds of starting)
 # raises the backoff the next `run` sleeps before exec'ing postgres; after
 # MAX_FAST_FAILURES in a row we exit 125, s6's "permanent failure, do not
-# restart" code, and the service stays down until `s6-svc -u` or a container
-# restart. A crash after a long healthy uptime starts the count afresh, and a
+# restart" code, and then halt-container stops the WHOLE container with exit
+# code 125 (agent-images#170) so the kubelet shows CrashLoopBackOff instead of a
+# Running pod whose database is silently dead. A crash after a long healthy uptime starts the count afresh, and a
 # clean stop (exit 0 / SIGTERM / SIGINT / SIGQUIT) is not a failure at all.
 #
 # The sleep happens in `run`, not here: s6 SIGKILLs a finish script after 5s
@@ -48,9 +49,9 @@ fi
 
 if [ "$fails" -ge "$MAX_FAST_FAILURES" ]; then
   echo "0 0 0" > ./backoff
-  echo "[s6] postgres FAILED to start ${fails} times in a row (each within ${FAST_WINDOW}s);" \
-       "giving up — the service stays DOWN. Check the log above (e.g. port 5433 already" \
-       "in use in the pod netns), then 's6-svc -u' the service or restart the container." >&2
+  echo "[s6] postgres FAILED to start ${fails} times in a row (each within ${FAST_WINDOW}s); giving up" >&2
+  "${HINDSIGHT_HALT:-/usr/local/lib/hindsight/halt-container}" 125 \
+    "postgres gave up after ${fails} fast failures, stopping the container; check the log above (e.g. port 5433 already in use in the pod netns)"
   exit 125
 fi
 

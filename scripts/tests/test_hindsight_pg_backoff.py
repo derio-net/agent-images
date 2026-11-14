@@ -57,7 +57,12 @@ def svc(tmp_path):
     (bindir / "micromamba").write_text("#!/bin/sh\nexit 1\n")
     for f in bindir.iterdir():
         f.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    halts = tmp_path / "halts.log"
+    halt_stub = tmp_path / "halt-stub"
+    halt_stub.write_text(f'#!/bin/sh\necho "$@" >> "{halts}"\n')
+    halt_stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "HINDSIGHT_HALT": str(halt_stub)}
 
     class Svc:
         dir = svcdir
@@ -70,6 +75,9 @@ def svc(tmp_path):
             return subprocess.run(["bash", str(FINISH), str(code), str(sig)],
                                   cwd=svcdir, env=env, capture_output=True,
                                   text=True, timeout=30)
+
+        def halts(self):
+            return halts.read_text().splitlines() if halts.exists() else []
 
         def sleeps(self):
             if not sleeps.exists():
@@ -103,6 +111,20 @@ def test_fatal_startup_failure_gives_up(svc):
     attempts = _crash_loop(svc)
     assert attempts is not None, "finish never exited 125: s6 would restart forever"
     assert attempts <= MAX_ATTEMPTS
+
+
+def test_give_up_halts_container_with_125(svc):
+    """#170: giving up must stop the container, not leave a Running pod."""
+    for _ in range(MAX_ATTEMPTS):
+        svc.run()
+        p = svc.finish(1)
+        if p.returncode == 125:
+            break
+    assert p.returncode == 125
+    calls = svc.halts()
+    assert len(calls) == 1
+    assert calls[0].split()[0] == "125"
+    assert "stopping the container" in calls[0]
 
 
 def test_restarts_back_off(svc):
