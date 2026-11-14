@@ -326,3 +326,8 @@ Added halts()==[] asserts.
 ### p2-r3-resolved-2 · finding [deferred → https://github.com/derio-net/agent-images/issues/181] · resolves p2-r3: ensure_session() runs outside _send_locked's try/finally, so a failure there is unfenced although the README says the fence covers a failure before submit (phase 2)
 
 Filed at deliver as https://github.com/derio-net/agent-images/issues/181.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r4-resolved-2 created=2026-11-14T22:15:56+00:00 phase=2 state=open resolves=p2-r4 tracked_by=https://github.com/derio-net/agent-images/issues/182 -->
+### p2-r4-resolved-2 · finding [deferred → https://github.com/derio-net/agent-images/issues/182] · resolves p2-r4: A non-object JSON body crashes send() with AttributeError and no HTTP response (phase 2)
+
+Filed at deliver as https://github.com/derio-net/agent-images/issues/182.
