@@ -232,6 +232,7 @@ cursor-less, is not part of #170 and is left alone.
 gate: tester
 gate: hindsight-port-preflight=tester
 gate: hindsight-identity-check=tester
+gate: hindsight-giveup-halts=tester
 
 ## Test Plan
 
