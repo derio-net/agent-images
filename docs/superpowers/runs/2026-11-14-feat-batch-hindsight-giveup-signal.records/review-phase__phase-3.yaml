@@ -1,0 +1,25 @@
+schema_version: 12
+run: 2026-11-14-feat-batch-hindsight-giveup-signal
+step: review-phase
+item: phase/3
+outcome: done
+journal:
+  - {kind: finding, id: p3-r1, phase: 3, review_scope: in, title: "adopt --supersede reset the archived version-sweep run's started timestamp (2026-10-11 to 2026-11-14) without noting it", body: "Verified from the 7648186 diff. fr's adopt rebuilds the cursor, and hand-editing the run yaml is out of bounds, so the provenance is recorded in the journal instead (archived-sweep-run-provenance)."}
+  - {kind: finding, id: p3-r2, phase: 3, review_scope: in, title: "The archived run yaml records phase/6 done with no #155 reference", body: "Verified. Run units carry no free-text note field, so #155 is recorded in the journal entry archived-sweep-run-provenance alongside the plan's 06.yaml notes."}
+  - {kind: finding, id: p3-r3, phase: 3, review_scope: out, title: "fr's archive gate and fr status don't recognise squash merges", body: "fr tool behaviour that predates this change: it also flags the unrelated upgrade-session plan. This is the reason --force was needed."}
+  - kind: discovery
+    id: archived-sweep-run-provenance
+    phase: 3
+    title: "Provenance of the archived run 2026-10-11-feat-upstream-version-sweep"
+    body: |
+      Started 2026-10-11T08:01:28 (feat/upstream-version-sweep, PR #155). Its `started` was rewritten to
+      2026-11-14T21:59:02 by `fr run adopt --supersede` during the #170 close-out (commit 7648186).
+      phase/6/implement-phase is done at #155's merge (squash c7a80f6 on main); phase/7 is manual, with P7.T1.S2
+      ticked and P7.T1.S1 superseded by agent-images#180. Archived with `fr archive --force` (decision
+      archive-version-sweep-force).
+  - {kind: review, id: review-phase3-1, phase: 3, title: "Phase 3 review: R8 met; 2 minor provenance findings fixed via journal, 1 fr-tool finding out of scope", body: "Independent reviewer over f2e55d3..HEAD. Phase 6 and P7 ticks are correct. Issue #180 is complete and is not a tracking_issue. The cursor moved by fr commands only, with no hand-edits, and --force is justified (c7a80f6 on origin/main). fr validate artifacts passes, the upgrade-session plan is untouched, and no code changed. Findings p3-r1 and p3-r2 (in) are fixed by journal note; p3-r3 (out) is fr's squash-merge recognition."}
+resolves:
+  - {id: p3-r1, state: fixed, body: "Original start date recorded in journal entry archived-sweep-run-provenance."}
+  - {id: p3-r2, state: fixed, body: "#155's merge recorded against phase/6 in archived-sweep-run-provenance."}
+  - {id: p3-r3, state: out-of-scope, body: "fr tool behaviour (squash merges not recognised); not caused by this change, and filed as a follow-up."}
+evidence: {review: review-phase3-1, reviewer: a2127bd598d3c8bd0, model: claude-opus-5-5}
