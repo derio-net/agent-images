@@ -220,3 +220,6 @@ run_kind: none
 
 <!-- fr:journal kind=decision scope=spec id=phase-split-2026-11-14-hindsight-giveup-signal-p2 created=2026-11-14T21:35:38+00:00 -->
 ### phase-split-2026-11-14-hindsight-giveup-signal-p2 · decision · ask: the agent-session fence default (R5–R6) is a separate image and a separate ask from the hindsight work
+
+<!-- fr:journal kind=decision scope=spec id=phase-split-2026-11-14-hindsight-giveup-signal-p3 created=2026-11-14T21:35:40+00:00 -->
+### phase-split-2026-11-14-hindsight-giveup-signal-p3 · decision · tier: the version-sweep close-out (R8) is mechanical docs/cursor housekeeping, a cheaper tier than phases 1–2
