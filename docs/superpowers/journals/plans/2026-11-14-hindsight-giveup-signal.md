@@ -321,3 +321,8 @@ The pre-flight fails closed on a probe error; tested.
 ### l-tests-r4-resolved · finding [fixed] · resolves l-tests-r4: The clean-stop and long-uptime backoff tests never asserted that no halt happened
 
 Added halts()==[] asserts.
+
+<!-- fr:journal kind=finding scope=plan id=p2-r3-resolved-2 created=2026-11-14T22:15:49+00:00 phase=2 state=open resolves=p2-r3 tracked_by=https://github.com/derio-net/agent-images/issues/181 -->
+### p2-r3-resolved-2 · finding [deferred → https://github.com/derio-net/agent-images/issues/181] · resolves p2-r3: ensure_session() runs outside _send_locked's try/finally, so a failure there is unfenced although the README says the fence covers a failure before submit (phase 2)
+
+Filed at deliver as https://github.com/derio-net/agent-images/issues/181.
