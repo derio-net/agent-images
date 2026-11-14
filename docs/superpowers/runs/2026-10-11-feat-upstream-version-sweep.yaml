@@ -37,5 +37,7 @@ steps:
         state: manual
   journal-check:
     state: pending
+  lens-review:
+    state: pending
   deliver:
     state: pending
