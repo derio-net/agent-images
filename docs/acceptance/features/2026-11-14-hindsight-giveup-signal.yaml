@@ -1,0 +1,84 @@
+# Acceptance rows owned by one feature (spec 2026-11-04-repo-feature-settings R16).
+# The effective matrix is a fold over every fragment in this directory
+# (`fr acceptance status`); it is never stored. Write rows with
+# `fr acceptance add` / `set-status`, never by hand. Keep `rows:` before
+# `amendments:`.
+schema_version: 1
+feature: 2026-11-14-hindsight-giveup-signal
+repo: derio-net/agent-images
+rows:
+  - id: hindsight-port-preflight
+    capability: hindsight sidecar boot safety
+    acceptance: When something already listens on 127.0.0.1:5433, the hindsight container
+      fails boot naming the port and exits non-zero without starting a postmaster.
+    origin:
+    - spec:2026-11-14-hindsight-giveup-signal#R1
+    levels: {}
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
+    verify: none
+  - id: hindsight-identity-check
+    capability: hindsight sidecar boot safety
+    acceptance: hindsight-api starts only when the postgres on 127.0.0.1:5433 is the
+      cluster in our PGDATA (matching system identifier); otherwise it refuses, says
+      why, and the container exits non-zero.
+    origin:
+    - spec:2026-11-14-hindsight-giveup-signal#R2
+    - spec:2026-11-14-hindsight-giveup-signal#R4
+    levels: {}
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
+    verify: none
+  - id: hindsight-giveup-halts
+    capability: hindsight sidecar boot safety
+    acceptance: When postgres exhausts its bounded restart backoff, the hindsight container
+      exits non-zero (so the pod shows restarts) instead of staying up with postgres
+      down, and /health never answers healthy meanwhile.
+    origin:
+    - spec:2026-11-14-hindsight-giveup-signal#R3
+    - spec:2026-11-14-hindsight-giveup-signal#R4
+    levels: {}
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
+    verify: none
+  - id: agent-session-fence-default
+    capability: agent-session exactly-once turns
+    acceptance: Every agent-session send path (legacy /session/send, /v1/session/send,
+      the send CLI) ends the harness session after the turn by default; only end_session:false
+      keeps it, and the next send resumes the same conversation.
+    origin:
+    - spec:2026-11-14-hindsight-giveup-signal#R5
+    - spec:2026-11-14-hindsight-giveup-signal#R6
+    levels: {}
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
+    verify: none
+  - id: hindsight-version-strings
+    capability: hindsight image documentation
+    acceptance: Every hindsight-api version the image's README, Dockerfile comment and
+      run script mention equals the pinned ARG HINDSIGHT_API_VERSION, and a test fails
+      when they drift.
+    origin:
+    - spec:2026-11-14-hindsight-giveup-signal#R7
+    levels: {}
+    status: unwired
+    notes: Unit tests exist and pass locally (deliver log). The repo is ci none, so
+      build.yaml's pytest/smoke jobs run only on push to main or dispatch; the branch
+      build covers them pre-merge (#170).
+    verify: none
+amendments:
+  - row: agent-session-fence-default
+    op: reword
+    base: 0
+    acceptance: Every agent-session send path (legacy /session/send, /v1/session/send,
+      the send CLI) ends the harness session after the turn by default; only end_session:false
+      keeps it, and for claude the next send resumes the same conversation.
+    why: 'spec-review f-2: resume holds for claude only'

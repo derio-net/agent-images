@@ -1,2 +1,2 @@
-<!-- fr:journal-schema=3 -->
+<!-- fr:journal-schema=4 -->
 # Journal: 2026-10-31--life--upgrade-session-image

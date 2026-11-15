@@ -1,0 +1,38 @@
+#!/bin/bash
+# Stop the whole container with a chosen exit code (agent-images#170).
+#
+# s6-overlay v3 reads the container's exit code from
+# /run/s6-linux-init-container-results/exitcode when it is halted, so we write
+# the code there and then exec s6's halt. This works rootless because
+# agent-shell-base chowns /run to the agent UID. A halted container makes the
+# kubelet report a terminated container, so the pod shows CrashLoopBackOff
+# instead of a Running pod with a silently dead service.
+#
+# usage: halt-container <exit-code> [reason...]
+# Exit 111 (to the caller) only when s6's halt cannot be exec'd.
+# Env seams (tests): S6_RESULTS_DIR, S6_HALT.
+set -u
+
+if [ $# -lt 1 ]; then
+  echo "usage: halt-container <exit-code> [reason]" >&2
+  exit 2
+fi
+
+# The reason is every argument after the code, so a caller may wrap it.
+reason=${*:2}
+echo "[halt-container] ${reason:-halting}" >&2
+results=${S6_RESULTS_DIR:-/run/s6-linux-init-container-results}
+if ! printf '%s\n' "$1" > "$results/exitcode"; then
+  # Still halt: a stopped container with the wrong code beats a running one
+  # with a dead service. But say so, or the exit code will mislead.
+  echo "[halt-container] FATAL: could not write exit code $1 to $results/exitcode;" \
+       "the container will stop with s6's default code instead" >&2
+fi
+halt=${S6_HALT:-/run/s6/basedir/bin/halt}
+# execfail: a failed exec returns here instead of killing the shell, so the
+# failure is reported rather than surfacing as a bare 126/127.
+shopt -s execfail
+exec "$halt" || {
+  echo "[halt-container] FATAL: could not exec $halt; the container is NOT stopping" >&2
+  exit 111
+}

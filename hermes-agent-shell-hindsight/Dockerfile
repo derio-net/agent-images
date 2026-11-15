@@ -12,7 +12,7 @@ USER root
 # Hindsight backend stack — the permanent, image-baked form of the stack that
 # was hand-run on the migrate pod (derio-net/willikins#285). Ground-truth
 # recipe extracted verbatim from the live env: PostgreSQL 18.4 + pgvector 0.8.3
-# (conda-forge) and hindsight-api-slim[local-ml] 0.8.4 (public PyPI → torch-CPU
+# (conda-forge) and hindsight-api-slim[local-ml] 0.8.5 (public PyPI → torch-CPU
 # + sentence-transformers). Baked into the IMAGE at /opt/micromamba, so a pod
 # restart never loses the stack; only DATA lives on the PVC.
 #
@@ -132,9 +132,11 @@ ENV HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:hindsight@127.0.0.1:5433/p
 RUN install -d -o ${AGENT_UID} -g ${AGENT_GID} -m 0755 /opt/hindsight \
  && chmod +x \
       /etc/cont-init.d/30-hindsight-initdb \
+      /etc/cont-init.d/35-hindsight-port-preflight \
       /etc/services.d/postgres/run \
       /etc/services.d/postgres/finish \
-      /etc/services.d/hindsight-api/run
+      /etc/services.d/hindsight-api/run \
+      /usr/local/lib/hindsight/halt-container
 
 USER ${AGENT_USER}
 WORKDIR ${AGENT_HOME}

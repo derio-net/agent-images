@@ -237,7 +237,7 @@ POST /v1/session/send   Authorization: Bearer <runner-token>   (when a token is 
                         {session_id, agent, message, timeout_s?, capability?, fresh?, end_session?}
                      -> {session_id, agent, status, turn, payload, started, error_code}
 POST /session/send      (legacy alias of /v1/session/send — kept one migration cycle;
-                         differs only in the end_session default, see below)
+                         identical behaviour, including the end_session default)
 GET  /healthz           -> 200 {"status":"ok"}   (unauthenticated; leaks no metadata)
 ```
 
@@ -262,15 +262,23 @@ finishing, make it resume itself and act on the turn again with no new send
 harness process to exit, escalating to SIGTERM and then SIGKILL on its process
 group after `AGENT_SESSION_END_GRACE_S` each. For claude the transcript persists,
 so a later send with the same `session_id` resumes it. Other agents start a fresh
-conversation. **Default: on for `/v1/session/send`** (cncd sends one
-`session_id` per run, never reused; an explicit `null` counts as unset), **off
-for `/session/send` and the CLI** (persistent conversations). Pass it explicitly
-to override either default. **A persistent-conversation consumer migrating from
-`/session/send` to `/v1` must send `end_session: false`**, or every turn becomes a
-cold start plus a resume.
+conversation (see the cost below).
 
-Both flags are JSON booleans. Only `true` enables one; a string such as `"false"`
-does not.
+**Default: on, on every path** (`/v1/session/send`, the legacy `/session/send`
+and the CLI). Only an explicit JSON `false` disables it; a missing, `null` or
+non-boolean value (such as the string `"false"`) keeps the fence on. The cost:
+every turn is a cold start of the claude harness, resumed with `--resume` on the
+stored transcript, and the proactive `/compact` is skipped because the session is
+ending anyway (claude's own near-limit auto-compact still runs, so the resumed
+transcript stays bounded). Non-claude agent profiles have no resume, so each fenced turn
+starts a fresh conversation unless the caller sends `end_session: false`. **A
+persistent-conversation consumer (a long-lived `session_id` reused across turns,
+such as alert-agent or n8n) must send `end_session: false`** to keep a warm
+session; this applies to every path, including a migration from `/session/send`
+to `/v1`.
+
+`fresh` is a JSON boolean that only `true` enables; a string such as `"false"`
+does not. `end_session` is the reverse: it is disabled only by `false`.
 
 **Auth & bind (CNC /v1 upgrade).** The bind defaults to `127.0.0.1` — the legacy
 pod-local posture — so existing loopback consumers are unchanged. A consumer that

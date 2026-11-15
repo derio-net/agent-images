@@ -570,10 +570,11 @@ def _send_locked(req):
     # `fresh` (#157): force the context reset in _turn for THIS turn — a one-shot
     # wake grounded only in its own payload, on the same session (no new process).
     # `end_session` (#152): end the harness once the driver is done with the turn.
-    # serve() defaults it on for /v1. Both are JSON booleans: only `true` enables
-    # (a string "false" must not switch a flag on).
+    # On by default on every send path; only an explicit JSON false disables it
+    # (a missing, null or non-boolean value errs to the fence). `fresh` is the
+    # opposite: only a JSON `true` enables it.
     fresh = req.get("fresh") is True
-    end_session = req.get("end_session") is True
+    end_session = req.get("end_session") is not False
     # session_id is validated in send() before any path is built. The agent-enum
     # check is cncd's adapter's job (spec b Scope 1); the node keeps
     # launch_command's lenient fallback so existing image consumers are unaffected.
@@ -745,14 +746,8 @@ def serve():
                 self._json(400, {"status": "error", "error": "bad json",
                                  "started": False, "error_code": "not_started"})
                 return
-            # /v1 is the cncd contract: session_id is the run id and is never
-            # reused, so the post-turn fence is on unless the caller opts out. The
-            # legacy path serves persistent conversations and keeps the session.
-            # An explicit null counts as unset (a client serialising an unset
-            # optional must not silently lose the fence).
-            if self.path == "/v1/session/send" and isinstance(req, dict) \
-                    and req.get("end_session") is None:
-                req["end_session"] = True
+            # The end_session default lives in _send_locked, so every path
+            # (legacy, /v1, CLI) shares it; nothing is defaulted here.
             idem = self.headers.get("Idempotency-Key", "")
             self._json(200, send_idempotent(req, idem))
 

@@ -3,3 +3,5 @@ __pycache__/
 .env
 package-lock.json
 node_modules/
+docs/acceptance/report.html
+docs/acceptance/report.md

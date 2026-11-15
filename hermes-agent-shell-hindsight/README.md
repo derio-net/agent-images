@@ -26,7 +26,7 @@ UID-1000 `agent` user, and the baked `claude`/`codex` CLIs used by the
 `claude-code` retain provider. On top:
 
 - **micromamba env `hindsight-pg`** (baked into the image, not the PVC):
-  `postgresql=18.4` + `hindsight-api-slim[local-ml]==0.8.4` (public PyPI) →
+  `postgresql=18.4` + `hindsight-api-slim[local-ml]==0.8.5` (public PyPI) →
   torch-CPU + sentence-transformers.
 - **`BAAI/bge-small-en-v1.5`** pre-baked into the image HF cache (offline, CPU).
 - **tiktoken `cl100k_base`** pre-baked at `TIKTOKEN_CACHE_DIR=/opt/hindsight-tiktoken`:
@@ -50,6 +50,23 @@ Recall works with no LLM. Retain (writing new memories) uses
 `HINDSIGHT_API_LLM_PROVIDER=claude-code` (set by the frank manifest, Sonnet),
 reusing the pre-migration provider. Left wired-dark until the model var is
 confirmed; recall is unaffected.
+
+## Failing loudly (agent-images#170)
+
+The sidecar shares the pod netns, so a stray postgres on `127.0.0.1:5433`
+(frank's ssh-sidecar once held it) used to leave a Running pod whose database
+was dead. Now it stops the pod instead:
+
+- **Port pre-flight** (`35-hindsight-port-preflight`): if 5433 is already
+  listening, boot fails before any service starts.
+- **Identity check** (`hindsight-api/run`): before hindsight-api starts, the
+  system identifier reported by the server on 5433 must equal our PGDATA's
+  (`pg_controldata`). A mismatch or an unreadable answer halts the container.
+- **Give-up halts the container**: when postgres fails fast too many times in a
+  row, `halt-container` stops the whole container with exit code 125, so the
+  kubelet shows `CrashLoopBackOff` - that is the signal to look at.
+- `/health` therefore never answers healthy from a given-up or foreign
+  postgres.
 
 ## Smoke test
 

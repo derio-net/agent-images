@@ -1,0 +1,91 @@
+schema_version: 2
+phase:
+  number: 2
+  title: agent-session — fence on by default on every send path (TDD)
+  tag: agentic
+  depends_on:
+  - 1
+  tracking_issue: null
+  acceptance:
+  - agent-session-fence-default
+  tier: standard
+  files:
+  - multi-agent-shell/rootfs/usr/local/lib/multi-agent-shell/agent-session
+  - multi-agent-shell/tests/test_agent_session.py
+  - multi-agent-shell/README.md
+  estimate_lines: 220
+tasks:
+- number: 1
+  title: Tests for the new default (red)
+  steps:
+  - id: P2.T1.S1
+    text: |-
+      RED. In `multi-agent-shell/tests/test_agent_session.py`:
+      - rename `test_v1_ends_session_by_default_legacy_path_does_not` (:864) to
+        `test_every_path_ends_session_by_default`, asserting kill-session for
+        legacy `/session/send`, `/v1/session/send` and the CLI;
+      - invert `test_cli_send_keeps_session_by_default` (:858) into
+        `test_cli_send_ends_session_by_default`, plus
+        `test_explicit_false_keeps_session` over all three paths;
+      - split `test_flags_require_json_true` (:915) into its unchanged `fresh` half
+        and `test_end_session_only_false_disables` (string "false" → fenced, JSON
+        false → kept);
+      - add a legacy-path twin of `test_v1_explicit_null_keeps_fence_on` (:925).
+      Run `uv run pytest tests/test_agent_session.py -q` from `multi-agent-shell/`.
+      Expected: the new and inverted tests FAIL.
+  - id: P2.T1.S2
+    text: |-
+      In `test_live_existing_session_is_reused` (:388),
+      `test_slow_live_existing_session_reused` (:405),
+      `test_absent_session_still_creates` (:421) and
+      `test_compacts_when_context_over_threshold` (:587), send
+      `end_session: False` explicitly. They pin warm reuse or compaction, and keep
+      their assertions. Confirm they still pass on the OLD code (they should).
+- number: 2
+  title: Flip the default (green)
+  steps:
+  - id: P2.T2.S1
+    text: |-
+      GREEN. In agent-session `_send_locked` (:576), set
+      `end_session = req.get("end_session") is not False`, and update the comment
+      above it: only an explicit JSON false disables; a non-boolean errs to the
+      fence. Remove the `/v1`-only defaulting block in `serve()` (:745-755) and
+      rewrite its comment to say the default lives in `_send_locked` for every
+      path. Run the whole multi-agent-shell suite: `uv run pytest tests/ -q`
+      (green).
+  - id: P2.T2.S2
+    text: |-
+      REFACTOR + docs. In `multi-agent-shell/README.md`:
+      - rewrite the legacy-alias line (:239-240);
+      - rewrite the `end_session` paragraph and the `/session/send` → `/v1`
+        migration note (:257-270), covering the single default, the cost (claude
+        cold start per turn, resume via --resume, no proactive /compact), and that
+        non-claude agent profiles start a fresh conversation each fenced turn
+        unless they send `end_session: false`;
+      - rewrite the JSON-boolean rule (:272-273): `fresh` still needs `true`, and
+        `end_session` is disabled only by `false`.
+      Re-run the suite after the last code commit into a log outside the repo:
+      `uv run pytest tests/ -q > "$TMPDIR/p2-suite.log" 2>&1` (green). Commit and
+      return the log as `tests_log`.
+state:
+  steps:
+    P2.T1.S1:
+      state: x
+      ticked_at: '2026-11-14T21:54:26+00:00'
+      note: null
+    P2.T1.S2:
+      state: x
+      ticked_at: '2026-11-14T21:54:26+00:00'
+      note: null
+    P2.T2.S1:
+      state: x
+      ticked_at: '2026-11-14T21:54:26+00:00'
+      note: null
+    P2.T2.S2:
+      state: x
+      ticked_at: '2026-11-14T21:54:26+00:00'
+      note: null
+  completion:
+    at: '2026-11-14T21:54:26+00:00'
+    note: null
+    observed_prs: []
